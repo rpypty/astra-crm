@@ -21,6 +21,7 @@ type RouterConfig struct {
 	PayoutService    TraderPayoutService
 	ImportService    ImportService
 	OrderReadService OrderReadService
+	ReadmodelService TeamleadReadmodelService
 	ReconcileService interface {
 		TraderReconciliationService
 		TeamleadReconciliationService
@@ -46,6 +47,7 @@ func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
 	traderPayoutHandler := NewTraderPayoutHandler(cfg.PayoutService)
 	importHandler := NewImportHandler(cfg.ImportService, cfg.ShiftService)
 	orderReadHandler := NewOrderReadHandler(cfg.OrderReadService)
+	readmodelHandler := NewTeamleadReadmodelHandler(cfg.ReadmodelService)
 	traderReconciliationHandler := NewTraderReconciliationHandler(cfg.ReconcileService, cfg.ShiftService)
 	teamleadReconciliationHandler := NewTeamleadReconciliationHandler(cfg.ReconcileService)
 	router.Route("/api/v1", func(r chi.Router) {
@@ -81,6 +83,8 @@ func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
 			r.Get("/outbound/dashboard", orderReadHandler.TeamleadOutboundDashboard)
 			r.Get("/outbound/orders", orderReadHandler.TeamleadOutboundOrders)
 			r.Post("/outbound/import", importHandler.TeamleadOutbound)
+			r.Get("/periods", readmodelHandler.Periods)
+			r.Get("/audit", readmodelHandler.Audit)
 			r.Get("/periods/{periodId}/reconciliation/inbound", teamleadReconciliationHandler.PeriodInbound)
 			r.Get("/periods/{periodId}/reconciliation/items", teamleadReconciliationHandler.PeriodItems)
 			r.NotFound(func(w http.ResponseWriter, r *http.Request) {

@@ -19,6 +19,7 @@ import (
 	"github.com/ashpak/astra-crm-backend/internal/payouts"
 	"github.com/ashpak/astra-crm-backend/internal/platform/logger"
 	"github.com/ashpak/astra-crm-backend/internal/platform/postgres"
+	"github.com/ashpak/astra-crm-backend/internal/readmodels"
 	"github.com/ashpak/astra-crm-backend/internal/reconciliation"
 	"github.com/ashpak/astra-crm-backend/internal/requisites"
 	"github.com/ashpak/astra-crm-backend/internal/shifts"
@@ -61,6 +62,7 @@ func run() int {
 	var payoutService *payouts.Service
 	var importService *imports.Service
 	var orderReadService *orders.Service
+	var readmodelService *readmodels.Service
 	var reconciliationService *reconciliation.Service
 	if dbPool != nil {
 		queries := db.New(dbPool.Raw())
@@ -83,6 +85,7 @@ func run() int {
 		payoutService = payouts.NewService(payoutRepository, auditService, reconciliationService)
 		importService = imports.NewService(importRepository, auditService, reconciliationService)
 		orderReadService = orders.NewService(orderReadRepository)
+		readmodelService = readmodels.NewService(dbPool.Raw())
 	}
 
 	router := httpserver.NewRouter(log, httpserver.RouterConfig{
@@ -94,6 +97,7 @@ func run() int {
 		PayoutService:     payoutService,
 		ImportService:     importService,
 		OrderReadService:  orderReadService,
+		ReadmodelService:  readmodelService,
 		ReconcileService:  reconciliationService,
 		SessionCookieName: cfg.SessionCookieName,
 		SessionSecure:     cfg.SessionSecure,

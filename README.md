@@ -41,3 +41,42 @@
 ## Важное
 
 Этот пакет фиксирует решения на момент проектирования MVP. Если решение меняется, обновляй соответствующий `.md`, чтобы Codex не работал по устаревшему контексту.
+
+## Local Dev Stack
+
+1. Скопируй `.env.example` в `.env` при необходимости изменить порты или пароли.
+2. Запусти локальный stack:
+
+```bash
+docker compose up --build
+```
+
+Compose поднимает PostgreSQL, применяет SQL migrations, выполняет seed и запускает backend/frontend.
+
+Локальные URL:
+
+- Frontend: http://localhost:5173
+- Backend health: http://localhost:8080/health
+- Backend readiness: http://localhost:8080/ready
+- API base path: http://localhost:8080/api/v1
+
+Seed users для локальной разработки:
+
+```text
+teamlead / demo123
+trader_ivan / demo123
+trader_anna / demo123
+trader_oleg / demo123
+```
+
+OpenAPI contract лежит в `docs/openapi.yaml`.
+
+## API Smoke
+
+После запуска compose:
+
+```bash
+node scripts/smoke-api.mjs
+```
+
+Скрипт проходит критический API path: login, create trader, create requisite, take requisite into work, add turnover, create payout, add transfer, import inbound/outbound CSV, close shift, затем отдельный mismatch flow с accept comment и закрытием `closed_with_discrepancy`.

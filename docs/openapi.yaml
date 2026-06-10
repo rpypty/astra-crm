@@ -1,0 +1,480 @@
+openapi: 3.1.0
+info:
+  title: p2p-crm API
+  version: 0.1.0
+servers:
+  - url: /api/v1
+security:
+  - sessionCookie: []
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: p2p_crm_session
+      description: Server-side session token. Cookie is httpOnly, SameSite=Lax, Secure outside local development.
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              examples: [VALIDATION_ERROR, UNAUTHORIZED, FORBIDDEN, NOT_FOUND, DOMAIN_ERROR]
+            message:
+              type: string
+            fields:
+              type: object
+              additionalProperties:
+                type: string
+            details:
+              type: array
+              items:
+                type: string
+    User:
+      type: object
+      required: [id, teamId, role, login, status]
+      properties:
+        id: { type: integer, format: int64 }
+        teamId: { type: integer, format: int64 }
+        role: { type: string, enum: [teamlead, trader] }
+        login: { type: string }
+        status: { type: string, enum: [active, disabled, deleted] }
+    Trader:
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          required: [salaryRateBps, externalWorkerName, createdAt, updatedAt]
+          properties:
+            salaryRateBps: { type: integer, format: int64 }
+            externalWorkerName: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    Requisite:
+      type: object
+      required: [id, teamId, phone, methodType, status, createdAt, updatedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        teamId: { type: integer, format: int64 }
+        phone: { type: string }
+        methodType: { type: string }
+        proxy: { type: string }
+        status: { type: string, enum: [active, disabled, archived] }
+        assignedTraderId: { type: integer, format: int64 }
+        assignedTraderLogin: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Shift:
+      type: object
+      required: [id, teamId, traderId, startedAt, status, inboundReconciliationStatus, outboundReconciliationStatus, createdAt, updatedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        teamId: { type: integer, format: int64 }
+        traderId: { type: integer, format: int64 }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time }
+        status: { type: string, enum: [open, closing, closed, closed_with_discrepancy] }
+        inboundReconciliationStatus: { type: string }
+        outboundReconciliationStatus: { type: string }
+        closeComment: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        closedAt: { type: string, format: date-time }
+    ShiftRequisite:
+      type: object
+      required: [id, teamId, shiftId, traderId, requisiteId, cardNumber, holderName, takenAt, status, createdAt, updatedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        teamId: { type: integer, format: int64 }
+        shiftId: { type: integer, format: int64 }
+        traderId: { type: integer, format: int64 }
+        requisiteId: { type: integer, format: int64 }
+        assignmentId: { type: integer, format: int64 }
+        cardNumber: { type: string }
+        holderName: { type: string }
+        takenAt: { type: string, format: date-time }
+        releasedAt: { type: string, format: date-time }
+        status: { type: string, enum: [active, released] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Order:
+      type: object
+      required: [id, externalOrderId, externalId, externalInnerId, workerName, amountMinor, currency, rawStatus, normalizedStatus, createdAtExternal, importBatchId]
+      properties:
+        id: { type: integer, format: int64 }
+        externalOrderId: { type: integer, format: int64 }
+        externalId: { type: string }
+        externalInnerId: { type: string }
+        workerName: { type: string }
+        traderId: { type: integer, format: int64 }
+        traderLogin: { type: string }
+        requisiteRaw: { type: string }
+        requisitePhone: { type: string }
+        methodType: { type: string }
+        methodName: { type: string }
+        amountMinor: { type: integer, format: int64 }
+        currency: { type: string }
+        rawStatus: { type: string }
+        normalizedStatus: { type: string, enum: [success, corrected, failed, cancelled, unknown] }
+        createdAtExternal: { type: string, format: date-time }
+        importBatchId: { type: integer, format: int64 }
+    ReconciliationRun:
+      type: object
+      required: [id, teamId, type, scopeType, expectedAmountMinor, actualAmountMinor, diffAmountMinor, status, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        teamId: { type: integer, format: int64 }
+        type: { type: string }
+        scopeType: { type: string, enum: [trader_shift, teamlead_period] }
+        shiftId: { type: integer, format: int64 }
+        accountingPeriodId: { type: integer, format: int64 }
+        traderId: { type: integer, format: int64 }
+        importBatchId: { type: integer, format: int64 }
+        expectedAmountMinor: { type: integer, format: int64 }
+        actualAmountMinor: { type: integer, format: int64 }
+        diffAmountMinor: { type: integer, format: int64 }
+        successAmountMinor: { type: integer, format: int64 }
+        successCount: { type: integer, format: int64 }
+        failedAmountMinor: { type: integer, format: int64 }
+        failedCount: { type: integer, format: int64 }
+        totalAmountMinor: { type: integer, format: int64 }
+        totalCount: { type: integer, format: int64 }
+        status: { type: string, enum: [matched, mismatch, accepted_with_comment] }
+        comment: { type: string }
+        confirmedBy: { type: integer, format: int64 }
+        confirmedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    ImportResult:
+      type: object
+      required: [importBatchId, status, rowsCount, createdOrders, updatedOrders, deactivatedScopeItems, activeScopeItems, supersededBatches]
+      properties:
+        importBatchId: { type: integer, format: int64 }
+        status: { type: string }
+        rowsCount: { type: integer, format: int64 }
+        createdOrders: { type: integer, format: int64 }
+        updatedOrders: { type: integer, format: int64 }
+        deactivatedScopeItems: { type: integer, format: int64 }
+        activeScopeItems: { type: integer, format: int64 }
+        supersededBatches: { type: integer, format: int64 }
+        rawStatusCounts:
+          type: object
+          additionalProperties: { type: integer }
+        normalizedStatusCounts:
+          type: object
+          additionalProperties: { type: integer }
+        unknownStatuses:
+          type: array
+          items: { type: string }
+  responses:
+    Error:
+      description: API error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+paths:
+  /auth/login:
+    post:
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login, password]
+              properties:
+                login: { type: string }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Login result and Set-Cookie session
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+        default: { $ref: "#/components/responses/Error" }
+  /auth/logout:
+    post:
+      responses:
+        "200": { description: Session revoked }
+        default: { $ref: "#/components/responses/Error" }
+  /auth/me:
+    get:
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user]
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/traders:
+    get:
+      responses:
+        "200":
+          description: Traders
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Trader" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [login, password, salaryRateBps, externalWorkerName]
+              properties:
+                login: { type: string }
+                password: { type: string, format: password }
+                salaryRateBps: { type: integer, format: int64 }
+                externalWorkerName: { type: string }
+      responses:
+        "201": { description: Trader created }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/traders/{traderId}:
+    parameters:
+      - name: traderId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      responses:
+        "200": { description: Trader }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      responses:
+        "200": { description: Trader updated }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      responses:
+        "200": { description: Trader disabled/deleted }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/traders/{traderId}/reset-password:
+    post:
+      parameters:
+        - name: traderId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Temporary password returned once }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/requisites:
+    get:
+      responses:
+        "200": { description: Requisites }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      responses:
+        "201": { description: Requisite created }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/requisites/{requisiteId}:
+    parameters:
+      - name: requisiteId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      responses:
+        "200": { description: Requisite }
+        default: { $ref: "#/components/responses/Error" }
+    patch:
+      responses:
+        "200": { description: Requisite updated }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      responses:
+        "200": { description: Requisite archived }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/requisites/{requisiteId}/assign:
+    post:
+      parameters:
+        - name: requisiteId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Assignment created }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/requisites/{requisiteId}/unassign:
+    post:
+      parameters:
+        - name: requisiteId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Assignment closed }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/requisites/{requisiteId}/assignment-history:
+    get:
+      parameters:
+        - name: requisiteId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Assignment history }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/shift/current:
+    get:
+      responses:
+        "200": { description: Current shift, nullable when absent }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/shift/current/checklist:
+    get:
+      responses:
+        "200": { description: Shift close checklist }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/requisites:
+    get:
+      responses:
+        "200": { description: Assigned requisites with in-work state }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/requisites/{requisiteId}/take:
+    post:
+      parameters:
+        - name: requisiteId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "201": { description: Shift requisite created }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/shift/current/turnovers:
+    get:
+      responses:
+        "200": { description: Latest turnover entries }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      responses:
+        "201": { description: Turnover entry created }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/payouts:
+    get:
+      responses:
+        "200": { description: Manual payout orders }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      responses:
+        "201": { description: Manual payout created }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/{direction}/import:
+    post:
+      parameters:
+        - name: direction
+          in: path
+          required: true
+          schema: { type: string, enum: [inbound, outbound] }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: Import applied
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result: { $ref: "#/components/schemas/ImportResult" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/{direction}/orders:
+    get:
+      parameters:
+        - name: direction
+          in: path
+          required: true
+          schema: { type: string, enum: [inbound, outbound] }
+      responses:
+        "200": { description: Active trader order scope }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/{direction}/reconciliation/latest:
+    get:
+      parameters:
+        - name: direction
+          in: path
+          required: true
+          schema: { type: string, enum: [inbound, outbound] }
+      responses:
+        "200": { description: Latest trader reconciliation run }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/{direction}/reconciliation/{runId}/accept:
+    post:
+      parameters:
+        - name: direction
+          in: path
+          required: true
+          schema: { type: string, enum: [inbound, outbound] }
+        - name: runId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200": { description: Mismatch accepted with required comment }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/{direction}/import:
+    post:
+      parameters:
+        - name: direction
+          in: path
+          required: true
+          schema: { type: string, enum: [inbound, outbound] }
+        - name: accountingPeriodId
+          in: query
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "201": { description: Period import applied }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/{direction}/orders:
+    get:
+      parameters:
+        - name: direction
+          in: path
+          required: true
+          schema: { type: string, enum: [inbound, outbound] }
+      responses:
+        "200": { description: Active teamlead order scope }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/inbound/reconciliation/latest:
+    get:
+      responses:
+        "200": { description: Latest teamlead inbound period reconciliation run }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/periods:
+    get:
+      responses:
+        "200": { description: Accounting periods read model }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/audit:
+    get:
+      responses:
+        "200": { description: Latest team audit events }
+        default: { $ref: "#/components/responses/Error" }
