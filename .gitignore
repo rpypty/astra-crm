@@ -1,0 +1,40 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Go
+bin/
+build/
+coverage.out
+*.test
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Generated frontend config emitted by tsc from vite.config.ts
+astra-crm-frontend/vite.config.js
+astra-crm-frontend/vite.config.d.ts
+
+# Temporary files
+tmp/
+temp/
