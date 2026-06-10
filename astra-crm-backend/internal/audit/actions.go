@@ -1,0 +1,25 @@
+package audit
+
+const (
+	ActionUserCreated                       = "user.created"
+	ActionUserUpdated                       = "user.updated"
+	ActionUserPasswordReset                 = "user.password_reset"
+	ActionRequisiteCreated                  = "requisite.created"
+	ActionRequisiteUpdated                  = "requisite.updated"
+	ActionRequisiteArchived                 = "requisite.archived"
+	ActionRequisiteAssigned                 = "requisite.assigned"
+	ActionRequisiteReassigned               = "requisite.reassigned"
+	ActionRequisiteUnassigned               = "requisite.unassigned"
+	ActionShiftCreated                      = "shift.created"
+	ActionShiftRequisiteTaken               = "shift.requisite_taken"
+	ActionShiftDailyDetailsUpdated          = "shift.daily_details_updated"
+	ActionShiftTurnoverAdded                = "shift.turnover_added"
+	ActionManualPayoutCreated               = "manual_payout.created"
+	ActionManualPayoutUpdated               = "manual_payout.updated"
+	ActionManualPayoutCancelled             = "manual_payout.cancelled"
+	ActionManualPayoutTransferAdded         = "manual_payout.transfer_added"
+	ActionManualPayoutTransferDeleted       = "manual_payout.transfer_deleted"
+	ActionImportApplied                     = "import.applied"
+	ActionReconciliationAcceptedWithComment = "reconciliation.accepted_with_comment"
+	ActionShiftClosed                       = "shift.closed"
+)

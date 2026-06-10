@@ -1,0 +1,24 @@
+{
+  "project": "p2p-crm",
+  "generated_at": "2026-06-05",
+  "purpose": "Context pack for Codex / repo docs",
+  "files": [
+    "AGENTS.md",
+    "README.md",
+    "docs/api-outline.md",
+    "docs/architecture-decisions.md",
+    "docs/assets/ui-mockup.png",
+    "docs/codex-task-prompts.md",
+    "docs/csv-imports.md",
+    "docs/database-design.md",
+    "docs/domain-model.md",
+    "docs/frontend-design-system.md",
+    "docs/open-questions.md",
+    "docs/product-context.md",
+    "docs/reconciliation-rules.md",
+    "docs/security-and-audit.md",
+    "docs/testing-strategy.md",
+    "docs/ui-pages-and-dialogs.md",
+    "docs/ux-flows.md"
+  ]
+}
