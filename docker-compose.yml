@@ -47,6 +47,9 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgres://astra:astra@postgres:5432/astra_crm?sslmode=disable}
       SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-p2p_crm_session}
       SESSION_SECURE: ${SESSION_SECURE:-false}
+      CSRF_ALLOWED_ORIGINS: ${CSRF_ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174}
+      LOGIN_RATE_LIMIT_REQUESTS: ${LOGIN_RATE_LIMIT_REQUESTS:-10}
+      LOGIN_RATE_LIMIT_WINDOW: ${LOGIN_RATE_LIMIT_WINDOW:-1m}
     ports:
       - "8080:8080"
     depends_on:

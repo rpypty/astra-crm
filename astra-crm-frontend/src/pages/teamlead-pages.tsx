@@ -10,13 +10,14 @@ import { EmptyState } from "@/components/crm/empty-state";
 import { FormField } from "@/components/crm/form-field";
 import { AcceptMismatchDialog, ImportCsvDialog, MismatchAlert } from "@/components/crm/import-components";
 import { MoneyCell } from "@/components/crm/money-cell";
+import { OrderDashboard } from "@/components/crm/order-dashboard";
 import { PageHeader } from "@/components/crm/page-header";
 import { RequisiteCell } from "@/components/crm/requisite-cell";
 import { StatusBadge } from "@/components/crm/status-badge";
 import { UserCell } from "@/components/crm/user-cell";
 import { DataTable } from "@/components/table/data-table";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -30,7 +31,7 @@ import { Select } from "@/components/ui/select";
 import type { AccountingPeriod, AuditLogEntry, Order, Requisite, Trader } from "@/lib/domain";
 import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/query-keys";
-import { bpsToPercent, formatMoneyMinor, percentToBps } from "@/lib/utils";
+import { bpsToPercent, formatDateTime, formatMoneyMinor, percentToBps } from "@/lib/utils";
 
 const traderSchema = z
   .object({
@@ -364,6 +365,7 @@ export function TeamleadRequisitesPage() {
             methodType: values.methodType,
             proxy: values.proxy,
             assignedTraderId: values.assignedTraderId === "unassigned" ? undefined : Number(values.assignedTraderId),
+            wasAssigned: Boolean(editingRequisite?.assignedTraderId),
             status: values.status,
           })
         }
@@ -374,27 +376,32 @@ export function TeamleadRequisitesPage() {
 }
 
 export function TeamleadDashboardPage() {
+  const inboundDashboardQuery = useQuery({
+    queryKey: queryKeys.teamlead.dashboard("inbound"),
+    queryFn: () => api.orders.dashboard("teamlead", "inbound"),
+  });
+  const outboundDashboardQuery = useQuery({
+    queryKey: queryKeys.teamlead.dashboard("outbound"),
+    queryFn: () => api.orders.dashboard("teamlead", "outbound"),
+  });
+
   return (
     <div className="space-y-6">
       <PageHeader title="Дашборд" description="Сводка по активному периоду, импортам и расхождениям." />
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {[
-          { label: "Успешный оборот", value: "265 300 ₽", detail: "1 284 ордера" },
-          { label: "Неуспешный оборот", value: "18 900 ₽", detail: "42 ордера" },
-          { label: "Конверсия", value: "96.8%", detail: "hand_success + corrected" },
-          { label: "Расхождения", value: "3", detail: "требуют комментария", warning: true },
-        ].map((metric) => (
-          <Card key={metric.label} className={metric.warning ? "border-red-200 bg-red-50" : undefined}>
-            <CardHeader>
-              <div className="text-xs font-medium uppercase tracking-normal text-muted-foreground">{metric.label}</div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-semibold">{metric.value}</div>
-              <div className="mt-1 text-sm text-muted-foreground">{metric.detail}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <OrderDashboard
+        title="Входы"
+        dashboard={inboundDashboardQuery.data}
+        direction="inbound"
+        isLoading={inboundDashboardQuery.isLoading}
+        error={inboundDashboardQuery.error instanceof Error ? inboundDashboardQuery.error : null}
+      />
+      <OrderDashboard
+        title="Выплаты"
+        dashboard={outboundDashboardQuery.data}
+        direction="outbound"
+        isLoading={outboundDashboardQuery.isLoading}
+        error={outboundDashboardQuery.error instanceof Error ? outboundDashboardQuery.error : null}
+      />
       <OrdersPage direction="inbound" scope="teamlead" embedded />
     </div>
   );
@@ -412,6 +419,15 @@ export function OrdersPage({
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
+  const [detailsOrder, setDetailsOrder] = useState<Order | null>(null);
+  const dashboardQuery = useQuery({
+    queryKey:
+      scope === "teamlead"
+        ? queryKeys.teamlead.dashboard(direction)
+        : queryKeys.trader.dashboard(direction),
+    queryFn: () => api.orders.dashboard(scope, direction),
+    enabled: !embedded,
+  });
   const ordersQuery = useQuery({
     queryKey:
       scope === "teamlead"
@@ -431,7 +447,18 @@ export function OrdersPage({
       { accessorKey: "requisite", header: "Реквизит", cell: ({ row }) => <RequisiteCell phone={row.original.requisite} method={row.original.method} /> },
       { accessorKey: "bankName", header: "Банк" },
       { accessorKey: "amountMinor", header: () => <div className="text-right">Сумма</div>, cell: ({ row }) => <MoneyCell valueMinor={row.original.amountMinor} /> },
-      { accessorKey: "status", header: "Статус", cell: ({ row }) => <StatusBadge status={row.original.status} /> },
+      {
+        accessorKey: "normalizedStatus",
+        header: "Статус",
+        cell: ({ row }) => (
+          <div className="space-y-1">
+            <StatusBadge status={row.original.normalizedStatus} />
+            {row.original.rawStatus !== row.original.normalizedStatus ? (
+              <div className="text-xs text-muted-foreground">{row.original.rawStatus}</div>
+            ) : null}
+          </div>
+        ),
+      },
       { accessorKey: "innerId", header: "innerId" },
     ],
     [],
@@ -452,6 +479,14 @@ export function OrdersPage({
               direction={direction}
             />
           }
+        />
+      ) : null}
+      {!embedded ? (
+        <OrderDashboard
+          dashboard={dashboardQuery.data}
+          direction={direction}
+          isLoading={dashboardQuery.isLoading}
+          error={dashboardQuery.error instanceof Error ? dashboardQuery.error : null}
         />
       ) : null}
       {reconciliationQuery.data ? <MismatchAlert summary={reconciliationQuery.data} /> : null}
@@ -483,20 +518,33 @@ export function OrdersPage({
         toolbarFilters={
           <Select className="w-44" value={status} onChange={(event) => setStatus(event.target.value)}>
             <option value="all">Все статусы</option>
-            <option value="hand_success">Успех</option>
+            <option value="success">Успех</option>
             <option value="corrected">Исправлен</option>
-            <option value="mismatch">Расхождение</option>
+            <option value="failed">Неуспех</option>
+            <option value="cancelled">Отменен</option>
+            <option value="unknown">Неизвестно</option>
           </Select>
         }
         isLoading={ordersQuery.isLoading}
         error={ordersQuery.error instanceof Error ? ordersQuery.error.message : null}
+        emptyTitle="Ордеров пока нет"
+        emptyDescription="После CSV-импорта активного scope здесь появятся ордера."
+        actions={[{ label: "Детали", onSelect: (row) => setDetailsOrder(row) }]}
       />
+      <OrderDetailsDialog order={detailsOrder} onClose={() => setDetailsOrder(null)} />
     </div>
   );
 }
 
 export function TeamleadPeriodsPage() {
   const periodsQuery = useQuery({ queryKey: ["teamlead", "periods"], queryFn: api.periods.list });
+  const [detailsPeriod, setDetailsPeriod] = useState<AccountingPeriod | null>(null);
+  const periods = periodsQuery.data ?? [];
+  const openCount = periods.filter((period) => period.status === "open").length;
+  const mismatchCount = periods.filter(
+    (period) => period.inboundStatus === "mismatch" || period.outboundStatus === "mismatch",
+  ).length;
+  const discrepancyCount = periods.filter((period) => period.status === "closed_with_discrepancy").length;
   const columns = useMemo<ColumnDef<AccountingPeriod>[]>(
     () => [
       { accessorKey: "title", header: "Период" },
@@ -510,63 +558,189 @@ export function TeamleadPeriodsPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Периоды" description="Учетные периоды и итоговая сверка." />
+      <div className="grid gap-4 md:grid-cols-3">
+        <ReadMetricCard label="Открытые периоды" value={String(openCount)} />
+        <ReadMetricCard label="Расхождения" value={String(mismatchCount)} warning={mismatchCount > 0} />
+        <ReadMetricCard label="Закрыты с расхождением" value={String(discrepancyCount)} warning={discrepancyCount > 0} />
+      </div>
       <DataTable
         columns={columns}
-        data={periodsQuery.data ?? []}
-        rowCount={periodsQuery.data?.length ?? 0}
+        data={periods}
+        rowCount={periods.length}
         pagination={{ pageIndex: 0, pageSize: 8 }}
         onPaginationChange={() => undefined}
         isLoading={periodsQuery.isLoading}
+        error={periodsQuery.error instanceof Error ? periodsQuery.error.message : null}
+        emptyTitle="Периодов пока нет"
+        emptyDescription="Периоды появляются после создания accounting period."
+        actions={[{ label: "Детали", onSelect: (row) => setDetailsPeriod(row) }]}
       />
+      <PeriodDetailsDialog period={detailsPeriod} onClose={() => setDetailsPeriod(null)} />
     </div>
   );
 }
 
 export function TeamleadAuditPage() {
   const auditQuery = useQuery({ queryKey: queryKeys.teamlead.audit(), queryFn: api.audit.list });
+  const [search, setSearch] = useState("");
+  const [detailsEntry, setDetailsEntry] = useState<AuditLogEntry | null>(null);
+  const auditItems = auditQuery.data ?? [];
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredAuditItems = normalizedSearch
+    ? auditItems.filter((item) =>
+        [item.actorLogin, item.action, item.entityType, item.entityId, item.comment ?? ""].some((value) =>
+          value.toLowerCase().includes(normalizedSearch),
+        ),
+      )
+    : auditItems;
+  const actorsCount = new Set(auditItems.map((item) => item.actorLogin)).size;
   const columns = useMemo<ColumnDef<AuditLogEntry>[]>(
     () => [
       { accessorKey: "createdAt", header: "Время", cell: ({ row }) => <DateTimeCell value={row.original.createdAt} /> },
       { accessorKey: "actorLogin", header: "Автор" },
       { accessorKey: "action", header: "Действие" },
       { accessorKey: "entityType", header: "Сущность" },
-      {
-        id: "details",
-        header: "",
-        cell: ({ row }) => (
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button type="button" variant="outline" size="sm">
-                <Eye className="h-4 w-4" />
-                Детали
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle className="text-base font-semibold">Аудит #{row.original.id}</DialogTitle>
-                <DialogDescription>Чувствительные значения отображаются только если backend уже вернул их замаскированными.</DialogDescription>
-              </DialogHeader>
-              <pre className="overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-50">
-                {JSON.stringify(row.original.maskedPayload, null, 2)}
-              </pre>
-            </DialogContent>
-          </Dialog>
-        ),
-      },
+      { accessorKey: "entityId", header: "ID" },
+      { accessorKey: "comment", header: "Комментарий", cell: ({ row }) => row.original.comment ?? "—" },
     ],
     [],
   );
   return (
     <div className="space-y-6">
       <PageHeader title="Аудит" description="Журнал изменений по команде." />
+      <div className="grid gap-4 md:grid-cols-3">
+        <ReadMetricCard label="События" value={String(auditItems.length)} />
+        <ReadMetricCard label="Авторы" value={String(actorsCount)} />
+        <ReadMetricCard label="Последнее событие" value={auditItems[0] ? formatDateTime(auditItems[0].createdAt) : "—"} />
+      </div>
       <DataTable
         columns={columns}
-        data={auditQuery.data ?? []}
-        rowCount={auditQuery.data?.length ?? 0}
+        data={filteredAuditItems}
+        rowCount={filteredAuditItems.length}
         pagination={{ pageIndex: 0, pageSize: 8 }}
         onPaginationChange={() => undefined}
+        search={search}
+        onSearchChange={setSearch}
         isLoading={auditQuery.isLoading}
+        error={auditQuery.error instanceof Error ? auditQuery.error.message : null}
+        emptyTitle="Событий аудита нет"
+        emptyDescription="Мутации в системе будут отображаться здесь."
+        actions={[{ label: "Детали", onSelect: (row) => setDetailsEntry(row) }]}
       />
+      <AuditDetailsDialog entry={detailsEntry} onClose={() => setDetailsEntry(null)} />
+    </div>
+  );
+}
+
+function OrderDetailsDialog({ order, onClose }: { order: Order | null; onClose: () => void }) {
+  return (
+    <Dialog open={Boolean(order)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="text-base font-semibold">Ордер {order?.innerId}</DialogTitle>
+          <DialogDescription>Данные активного import scope из backend.</DialogDescription>
+        </DialogHeader>
+        {order ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <ReadOnlyField label="Время" value={formatDateTime(order.createdAt)} />
+              <ReadOnlyField label="Сумма" value={formatMoneyMinor(order.amountMinor)} />
+              <ReadOnlyField label="Трейдер" value={order.trader} />
+              <ReadOnlyField label="Worker" value={order.workerName} />
+              <ReadOnlyField label="Реквизит" value={order.requisite || "—"} />
+              <ReadOnlyField label="Метод/банк" value={order.bankName || order.method || "—"} />
+              <ReadOnlyField label="External ID" value={order.externalId} />
+              <ReadOnlyField label="Import batch" value={String(order.importBatchId)} />
+            </div>
+            <div className="rounded-md border border-border p-3">
+              <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">Статус</div>
+              <div className="flex flex-wrap items-center gap-3">
+                <StatusBadge status={order.normalizedStatus} />
+                <span className="text-sm text-muted-foreground">raw: {order.rawStatus}</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PeriodDetailsDialog({ period, onClose }: { period: AccountingPeriod | null; onClose: () => void }) {
+  return (
+    <Dialog open={Boolean(period)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="text-base font-semibold">{period?.title}</DialogTitle>
+          <DialogDescription>Состояние итоговой сверки по учетному периоду.</DialogDescription>
+        </DialogHeader>
+        {period ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <ReadOnlyField label="Даты" value={period.dateRange} />
+              <div className="rounded-md border border-border p-3">
+                <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">Статус периода</div>
+                <StatusBadge status={period.status} />
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">Входы</div>
+                <StatusBadge status={period.inboundStatus} />
+              </div>
+              <div className="rounded-md border border-border p-3">
+                <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">Выплаты</div>
+                <StatusBadge status={period.outboundStatus} />
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AuditDetailsDialog({ entry, onClose }: { entry: AuditLogEntry | null; onClose: () => void }) {
+  return (
+    <Dialog open={Boolean(entry)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="text-base font-semibold">Аудит #{entry?.id}</DialogTitle>
+          <DialogDescription>Payload отображается в том виде, в котором backend вернул read model.</DialogDescription>
+        </DialogHeader>
+        {entry ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-2">
+              <ReadOnlyField label="Время" value={formatDateTime(entry.createdAt)} />
+              <ReadOnlyField label="Автор" value={entry.actorLogin} />
+              <ReadOnlyField label="Действие" value={entry.action} />
+              <ReadOnlyField label="Сущность" value={`${entry.entityType} #${entry.entityId}`} />
+            </div>
+            {entry.comment ? <ReadOnlyField label="Комментарий" value={entry.comment} /> : null}
+            <pre className="max-h-96 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-50">
+              {JSON.stringify(entry.maskedPayload, null, 2)}
+            </pre>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ReadMetricCard({ label, value, warning }: { label: string; value: string; warning?: boolean }) {
+  return (
+    <Card className={warning ? "border-amber-200 bg-amber-50" : undefined}>
+      <CardContent className="p-4">
+        <div className="text-xs font-medium uppercase tracking-normal text-muted-foreground">{label}</div>
+        <div className="mt-2 text-2xl font-semibold">{value}</div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ReadOnlyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border p-3">
+      <div className="mb-1 text-xs font-medium uppercase text-muted-foreground">{label}</div>
+      <div className="break-words text-sm font-medium">{value}</div>
     </div>
   );
 }

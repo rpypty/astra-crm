@@ -29,6 +29,7 @@ const teamleadNavigation = [
 const traderNavigation = [
   { label: "Мои реквизиты", to: "/trader/requisites", icon: CreditCard },
   { label: "Входы", to: "/trader/inbound", icon: ReceiptText },
+  { label: "Исходящие", to: "/trader/outbound", icon: BriefcaseBusiness },
   { label: "Выплаты", to: "/trader/payouts", icon: Landmark },
   { label: "Аналитика", to: "/trader/analytics", icon: BarChart3 },
 ] as const;

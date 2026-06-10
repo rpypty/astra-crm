@@ -89,18 +89,21 @@ func run() int {
 	}
 
 	router := httpserver.NewRouter(log, httpserver.RouterConfig{
-		ReadyPinger:       dbPool,
-		AuthService:       authService,
-		TraderService:     traderService,
-		RequisiteService:  requisiteService,
-		ShiftService:      shiftService,
-		PayoutService:     payoutService,
-		ImportService:     importService,
-		OrderReadService:  orderReadService,
-		ReadmodelService:  readmodelService,
-		ReconcileService:  reconciliationService,
-		SessionCookieName: cfg.SessionCookieName,
-		SessionSecure:     cfg.SessionSecure,
+		ReadyPinger:            dbPool,
+		AuthService:            authService,
+		TraderService:          traderService,
+		RequisiteService:       requisiteService,
+		ShiftService:           shiftService,
+		PayoutService:          payoutService,
+		ImportService:          importService,
+		OrderReadService:       orderReadService,
+		ReadmodelService:       readmodelService,
+		ReconcileService:       reconciliationService,
+		SessionCookieName:      cfg.SessionCookieName,
+		SessionSecure:          cfg.SessionSecure,
+		CSRFAllowedOrigins:     cfg.CSRFAllowedOrigins,
+		LoginRateLimitRequests: cfg.LoginRateLimitRequests,
+		LoginRateLimitWindow:   cfg.LoginRateLimitWindow,
 	})
 	server := httpserver.New(cfg.HTTPAddr, router)
 

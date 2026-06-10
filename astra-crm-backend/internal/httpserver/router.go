@@ -3,6 +3,7 @@ package httpserver
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/ashpak/astra-crm-backend/internal/users"
 	"github.com/go-chi/chi/v5"
@@ -26,8 +27,11 @@ type RouterConfig struct {
 		TraderReconciliationService
 		TeamleadReconciliationService
 	}
-	SessionCookieName string
-	SessionSecure     bool
+	SessionCookieName      string
+	SessionSecure          bool
+	CSRFAllowedOrigins     []string
+	LoginRateLimitRequests int
+	LoginRateLimitWindow   time.Duration
 }
 
 func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
@@ -50,8 +54,10 @@ func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
 	readmodelHandler := NewTeamleadReadmodelHandler(cfg.ReadmodelService)
 	traderReconciliationHandler := NewTraderReconciliationHandler(cfg.ReconcileService, cfg.ShiftService)
 	teamleadReconciliationHandler := NewTeamleadReconciliationHandler(cfg.ReconcileService)
+	loginRateLimiter := NewLoginRateLimiter(cfg.LoginRateLimitRequests, cfg.LoginRateLimitWindow)
 	router.Route("/api/v1", func(r chi.Router) {
-		r.Post("/auth/login", authHandler.Login)
+		r.Use(CSRFOriginGuard(cfg.CSRFAllowedOrigins))
+		r.With(loginRateLimiter.Middleware).Post("/auth/login", authHandler.Login)
 
 		r.Group(func(r chi.Router) {
 			r.Use(AuthMiddleware(cfg.AuthService, cfg.SessionCookieName))

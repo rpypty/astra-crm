@@ -26,6 +26,7 @@ func AuthMiddleware(authenticator Authenticator, cookieName string) func(http.Ha
 				return
 			}
 
+			SetRequestLogUser(r.Context(), user.ID, user.TeamID)
 			next.ServeHTTP(w, r.WithContext(ContextWithCurrentUser(r.Context(), user)))
 		})
 	}

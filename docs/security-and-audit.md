@@ -259,6 +259,31 @@ Recommended:
 
 ---
 
+## 11. MVP hardening checklist
+
+Implemented baseline:
+
+- Session cookie is `HttpOnly`, `SameSite=Lax`, and uses `Secure=true` outside local development by default.
+- Unsafe API methods (`POST`, `PATCH`, `PUT`, `DELETE`) are protected by an Origin guard.
+- Requests without `Origin` are allowed for local CLI/smoke scripts.
+- Same-origin requests are allowed.
+- Dev/proxy origins are configured through `CSRF_ALLOWED_ORIGINS`.
+- Login endpoint has an in-memory IP-based rate limit configured by:
+  - `LOGIN_RATE_LIMIT_REQUESTS`;
+  - `LOGIN_RATE_LIMIT_WINDOW`.
+- CSV upload body is capped by backend `MaxBytesReader`.
+- Request logs include request metadata and authenticated `user_id`/`team_id`, but do not log request bodies or cookies.
+- Panic logs redact panic values and keep only a panic type.
+- Audit payload redaction covers password/token/secret-like keys.
+- Unknown/internal errors are mapped to a user-safe response.
+
+Production notes:
+
+- Set `SESSION_SECURE=true` behind HTTPS.
+- Set `CSRF_ALLOWED_ORIGINS` to the public CRM origin, for example `https://crm.example.com`.
+- Keep login rate limit defaults conservative and tune only with monitoring.
+- For multi-instance deployment, replace the in-memory login limiter with a shared store if brute-force protection must be global across replicas.
+
 ## 11. Rate limiting
 
 MVP basic rate limits:

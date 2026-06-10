@@ -91,7 +91,45 @@ export type Order = {
   bankName: string;
   amountMinor: number;
   status: string;
+  rawStatus: string;
+  normalizedStatus: string;
   innerId: string;
+  externalId: string;
+  importBatchId: number;
+};
+
+export type OrderDashboardSummary = {
+  totalAmountMinor: number;
+  totalCount: number;
+  successAmountMinor: number;
+  successCount: number;
+  failedAmountMinor: number;
+  failedCount: number;
+  unknownAmountMinor: number;
+  unknownCount: number;
+};
+
+export type OrderStatusBreakdownItem = {
+  rawStatus: string;
+  normalizedStatus: string;
+  amountMinor: number;
+  count: number;
+};
+
+export type OrderImportHistoryItem = {
+  id: number;
+  fileName: string;
+  rowsCount: number;
+  status: string;
+  createdAt: string;
+  appliedAt?: string;
+};
+
+export type OrderDashboard = {
+  summary: OrderDashboardSummary;
+  statusBreakdown: OrderStatusBreakdownItem[];
+  unknownStatuses: string[];
+  recentImports: OrderImportHistoryItem[];
 };
 
 export type ImportIssue = {

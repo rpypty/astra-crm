@@ -1,12 +1,7 @@
+import type { ApiSchema } from "@/lib/generated/openapi";
+
 export type ApiErrorPayload = {
-  error?:
-    | string
-    | {
-        code?: string;
-        message?: string;
-        fields?: Record<string, string>;
-        details?: string[];
-      };
+  error?: string | ApiSchema<"ErrorResponse">["error"];
   message?: string;
   requestId?: string;
 };

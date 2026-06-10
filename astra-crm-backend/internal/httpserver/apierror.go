@@ -12,6 +12,7 @@ const (
 	CodeUnauthorized = "UNAUTHORIZED"
 	CodeForbidden    = "FORBIDDEN"
 	CodeNotFound     = "NOT_FOUND"
+	CodeRateLimited  = "RATE_LIMITED"
 	CodeUnavailable  = "SERVICE_UNAVAILABLE"
 	CodeInternal     = "INTERNAL_ERROR"
 )
@@ -84,6 +85,14 @@ func NotFoundError() *APIError {
 		Status:  http.StatusNotFound,
 		Code:    CodeNotFound,
 		Message: "Объект не найден",
+	}
+}
+
+func RateLimitedError() *APIError {
+	return &APIError{
+		Status:  http.StatusTooManyRequests,
+		Code:    CodeRateLimited,
+		Message: "Слишком много попыток. Попробуйте позже",
 	}
 }
 

@@ -11,6 +11,7 @@ import { DateTimeCell } from "@/components/crm/date-time-cell";
 import { EmptyState } from "@/components/crm/empty-state";
 import { FormField } from "@/components/crm/form-field";
 import { MoneyCell } from "@/components/crm/money-cell";
+import { OrderDashboard } from "@/components/crm/order-dashboard";
 import { PageHeader } from "@/components/crm/page-header";
 import { RequisiteCell } from "@/components/crm/requisite-cell";
 import { StatusBadge } from "@/components/crm/status-badge";
@@ -58,11 +59,17 @@ const transferSchema = z.object({
 export function TraderRequisitesPage() {
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
+  const [lastClosedStatus, setLastClosedStatus] = useState<"closed" | "closed_with_discrepancy" | null>(null);
   const shiftQuery = useQuery({ queryKey: queryKeys.trader.currentShift, queryFn: api.traderShift.current });
   const requisitesQuery = useQuery({ queryKey: queryKeys.trader.requisites(), queryFn: api.traderShift.requisites });
   const closeMutation = useMutation({
     mutationFn: api.traderShift.close,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.trader.currentShift }),
+    onSuccess: async (shift) => {
+      if (shift.status === "closed" || shift.status === "closed_with_discrepancy") {
+        setLastClosedStatus(shift.status);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["trader"] });
+    },
   });
 
   const columns = useMemo<ColumnDef<ShiftRequisite>[]>(
@@ -81,7 +88,11 @@ export function TraderRequisitesPage() {
         header: () => <div className="text-right">Оборот</div>,
         cell: ({ row }) => <MoneyCell valueMinor={row.original.latestTurnoverMinor} />,
       },
-      { accessorKey: "status", header: "Статус", cell: ({ row }) => <StatusBadge status={row.original.status} /> },
+      {
+        accessorKey: "status",
+        header: "Статус",
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
+      },
       {
         id: "work",
         header: "",
@@ -111,6 +122,7 @@ export function TraderRequisitesPage() {
             <div className="flex items-center gap-2">
               <span className="font-semibold">Текущая смена</span>
               {shiftQuery.data?.shift ? <StatusBadge status={shiftQuery.data.shift.status} /> : null}
+              {!shiftQuery.data?.shift && lastClosedStatus ? <StatusBadge status={lastClosedStatus} /> : null}
             </div>
             <div className="text-sm text-muted-foreground">
               Смена стартует автоматически, когда трейдер берет первый назначенный реквизит в работу.
@@ -165,7 +177,11 @@ export function TraderPayoutsPage() {
         header: () => <div className="text-right">Остаток</div>,
         cell: ({ row }) => <MoneyCell valueMinor={row.original.amountMinor - row.original.paidMinor} />,
       },
-      { accessorKey: "status", header: "Статус", cell: ({ row }) => <StatusBadge status={row.original.status} /> },
+      {
+        accessorKey: "status",
+        header: "Статус",
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
+      },
     ],
     [],
   );
@@ -204,6 +220,10 @@ export function TraderPayoutsPage() {
 }
 
 export function TraderOrdersPage({ direction }: { direction: "inbound" | "outbound" }) {
+  const dashboardQuery = useQuery({
+    queryKey: queryKeys.trader.dashboard(direction),
+    queryFn: () => api.orders.dashboard("trader", direction),
+  });
   const reconciliationQuery = useQuery({
     queryKey: ["trader", direction, "reconciliation"],
     queryFn: () => api.orders.reconciliation("trader", direction),
@@ -222,6 +242,12 @@ export function TraderOrdersPage({ direction }: { direction: "inbound" | "outbou
           />
         }
       />
+      <OrderDashboard
+        dashboard={dashboardQuery.data}
+        direction={direction}
+        isLoading={dashboardQuery.isLoading}
+        error={dashboardQuery.error instanceof Error ? dashboardQuery.error : null}
+      />
       {reconciliationQuery.data ? <MismatchAlert summary={reconciliationQuery.data} /> : null}
       {reconciliationQuery.data?.status === "mismatch" && reconciliationQuery.data.runId ? (
         <AcceptMismatchDialog scope="trader" direction={direction} runId={reconciliationQuery.data.runId} />
@@ -232,15 +258,36 @@ export function TraderOrdersPage({ direction }: { direction: "inbound" | "outbou
 }
 
 export function TraderAnalyticsPage() {
+  const inboundDashboardQuery = useQuery({
+    queryKey: queryKeys.trader.dashboard("inbound"),
+    queryFn: () => api.orders.dashboard("trader", "inbound"),
+  });
+  const outboundDashboardQuery = useQuery({
+    queryKey: queryKeys.trader.dashboard("outbound"),
+    queryFn: () => api.orders.dashboard("trader", "outbound"),
+  });
+
   return (
     <div className="space-y-6">
       <PageHeader title="Аналитика" description="Показатели текущей и прошлых смен." />
-      <div className="grid gap-4 md:grid-cols-3">
-        <SummaryCard label="Успешный оборот" value="12 500 ₽" />
-        <SummaryCard label="Выплаты" value="16 500 ₽" />
-        <SummaryCard label="Расхождения" value="1" warning />
-      </div>
-      <EmptyState title="Графики будут подключены к dashboard API" />
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Входы</h2>
+        <OrderDashboard
+          dashboard={inboundDashboardQuery.data}
+          direction="inbound"
+          isLoading={inboundDashboardQuery.isLoading}
+          error={inboundDashboardQuery.error instanceof Error ? inboundDashboardQuery.error : null}
+        />
+      </section>
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Выплаты</h2>
+        <OrderDashboard
+          dashboard={outboundDashboardQuery.data}
+          direction="outbound"
+          isLoading={outboundDashboardQuery.isLoading}
+          error={outboundDashboardQuery.error instanceof Error ? outboundDashboardQuery.error : null}
+        />
+      </section>
     </div>
   );
 }
@@ -439,8 +486,10 @@ function TurnoverList({ entries }: { entries: TurnoverEntry[] }) {
 }
 
 function CloseShiftDialog({ blockers, canClose, onClose }: { blockers: string[]; canClose: boolean; onClose: () => void }) {
+  const [open, setOpen] = useState(false);
+
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button type="button" variant={canClose ? "default" : "outline"}>
           Закрыть смену
@@ -462,7 +511,14 @@ function CloseShiftDialog({ blockers, canClose, onClose }: { blockers: string[];
             <div className="rounded-md border border-emerald-200 bg-emerald-50 p-2 text-emerald-800">Все проверки пройдены.</div>
           )}
         </div>
-        <Button type="button" disabled={!canClose} onClick={onClose}>
+        <Button
+          type="button"
+          disabled={!canClose}
+          onClick={() => {
+            onClose();
+            setOpen(false);
+          }}
+        >
           Закрыть смену
         </Button>
       </DialogContent>
@@ -673,7 +729,18 @@ function TraderOrdersTable({ direction }: { direction: "inbound" | "outbound" })
       { accessorKey: "requisite", header: "Реквизит", cell: ({ row }) => <RequisiteCell phone={row.original.requisite} method={row.original.method} /> },
       { accessorKey: "bankName", header: "Банк" },
       { accessorKey: "amountMinor", header: () => <div className="text-right">Сумма</div>, cell: ({ row }) => <MoneyCell valueMinor={row.original.amountMinor} /> },
-      { accessorKey: "status", header: "Статус", cell: ({ row }) => <StatusBadge status={row.original.status} /> },
+      {
+        accessorKey: "normalizedStatus",
+        header: "Статус",
+        cell: ({ row }) => (
+          <div className="space-y-1">
+            <StatusBadge status={row.original.normalizedStatus} />
+            {row.original.rawStatus !== row.original.normalizedStatus ? (
+              <div className="text-xs text-muted-foreground">{row.original.rawStatus}</div>
+            ) : null}
+          </div>
+        ),
+      },
       { accessorKey: "innerId", header: "innerId" },
     ],
     [],

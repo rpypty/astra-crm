@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run openapi:check && tsc -b && vite build",
+    "openapi:generate": "node scripts/generate-openapi-types.mjs",
+    "openapi:check": "node scripts/generate-openapi-types.mjs --check",
     "preview": "vite preview",
     "test": "vitest run --config vitest.config.ts",
+    "test:e2e": "playwright test",
     "test:watch": "vitest --config vitest.config.ts"
   },
   "dependencies": {
@@ -31,6 +34,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.5.2",
@@ -44,6 +48,7 @@
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",
     "vite": "^6.0.3",
-    "vitest": "^2.1.8"
+    "vitest": "^2.1.8",
+    "yaml": "^2.4.2"
   }
 }

@@ -109,6 +109,12 @@ const traderInboundRoute = createRoute({
   component: () => <TraderOrdersPage direction="inbound" />,
 });
 
+const traderOutboundRoute = createRoute({
+  getParentRoute: () => traderRoute,
+  path: "outbound",
+  component: () => <TraderOrdersPage direction="outbound" />,
+});
+
 const traderPayoutsRoute = createRoute({
   getParentRoute: () => traderRoute,
   path: "payouts",
@@ -133,7 +139,13 @@ const routeTree = rootRoute.addChildren([
     teamleadPeriodsRoute,
     teamleadAuditRoute,
   ]),
-  traderRoute.addChildren([traderRequisitesRoute, traderInboundRoute, traderPayoutsRoute, traderAnalyticsRoute]),
+  traderRoute.addChildren([
+    traderRequisitesRoute,
+    traderInboundRoute,
+    traderOutboundRoute,
+    traderPayoutsRoute,
+    traderAnalyticsRoute,
+  ]),
 ]);
 
 export const router = createRouter({
