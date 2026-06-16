@@ -75,6 +75,19 @@ func (s *Service) TeamleadDashboard(ctx context.Context, teamID int64, direction
 }
 
 func normalizeFilters(filters Filters) Filters {
+	if filters.TraderID != nil {
+		seen := false
+		for _, traderID := range filters.TraderIDs {
+			if traderID == *filters.TraderID {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			filters.TraderIDs = append(filters.TraderIDs, *filters.TraderID)
+		}
+		filters.TraderID = nil
+	}
 	if filters.Page <= 0 {
 		filters.Page = DefaultPage
 	}

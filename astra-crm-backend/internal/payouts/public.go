@@ -83,4 +83,3 @@ func PublicTransfers(items []Transfer) []PublicTransfer {
 
 	return result
 }
-

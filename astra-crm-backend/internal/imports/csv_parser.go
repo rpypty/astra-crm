@@ -47,8 +47,9 @@ var (
 )
 
 type ParseOptions struct {
-	ColumnSet string
-	Location  *time.Location
+	ColumnSet         string
+	Location          *time.Location
+	DefaultWorkerName string
 }
 
 type ParseResult struct {
@@ -148,7 +149,7 @@ func ParseCSV(reader io.Reader, options ParseOptions) (ParseResult, error) {
 		return result, ErrValidation
 	}
 
-	for _, column := range requiredColumns {
+	for _, column := range requiredColumnsForOptions(options, result.ColumnSet) {
 		if _, ok := columnIndex[column]; !ok {
 			result.Errors = append(result.Errors, ParseError{
 				Code:    ParseCodeMissingRequiredColumn,
@@ -178,7 +179,7 @@ func ParseCSV(reader io.Reader, options ParseOptions) (ParseResult, error) {
 			rawPayload[column] = record[index]
 		}
 
-		row, rowErrors := parseOrderRow(rowNumber, rawPayload, location)
+		row, rowErrors := parseOrderRow(rowNumber, rawPayload, location, options)
 		if len(rowErrors) > 0 {
 			result.Errors = append(result.Errors, rowErrors...)
 			continue
@@ -210,7 +211,7 @@ func ParseCSV(reader io.Reader, options ParseOptions) (ParseResult, error) {
 	return result, nil
 }
 
-func parseOrderRow(rowNumber int, raw map[string]string, location *time.Location) (ParsedOrderRow, []ParseError) {
+func parseOrderRow(rowNumber int, raw map[string]string, location *time.Location, options ParseOptions) (ParsedOrderRow, []ParseError) {
 	var errorsList []ParseError
 
 	externalID, ok := requiredValue(raw, "id")
@@ -239,7 +240,10 @@ func parseOrderRow(rowNumber int, raw map[string]string, location *time.Location
 	}
 	workerName, ok := requiredValue(raw, "workerName")
 	if !ok {
-		errorsList = append(errorsList, missingValueError(rowNumber, "workerName"))
+		workerName = strings.TrimSpace(options.DefaultWorkerName)
+		if workerName == "" {
+			errorsList = append(errorsList, missingValueError(rowNumber, "workerName"))
+		}
 	}
 	if len(errorsList) > 0 {
 		return ParsedOrderRow{}, errorsList
@@ -353,13 +357,13 @@ func parseOrderRow(rowNumber int, raw map[string]string, location *time.Location
 		OldAmountMinor:      oldAmountMinor,
 		HadDispute:          hadDispute,
 		Receipt:             optionalString(raw["receipt"]),
-		OrderComment:        optionalString(raw["orderComment"]),
+		OrderComment:        optionalString(firstNonEmpty(raw["orderComment"], raw["comment"])),
 		WorkerName:          workerName,
 		WorkerAmount:        optionalString(raw["workerAmount"]),
 		WorkerProfit:        optionalString(raw["workerProfit"]),
 		Ordered:             ordered,
 		Counted:             counted,
-		Initials:            optionalString(raw["initials"]),
+		Initials:            optionalString(firstNonEmpty(raw["initials"], raw["clientInitials"])),
 	}, nil
 }
 
@@ -424,17 +428,29 @@ func ParseMoneyMinor(value string) (int64, error) {
 
 func NormalizeStatus(rawStatus string) string {
 	switch strings.TrimSpace(rawStatus) {
-	case "hand_success":
+	case "hand_success", "paid":
 		return NormalizedStatusSuccess
 	case "corrected":
 		return NormalizedStatusCorrected
 	case "auto_decline":
 		return NormalizedStatusFailed
-	case "cancelled":
+	case "cancelled", "chargeback":
 		return NormalizedStatusCancelled
 	default:
 		return NormalizedStatusUnknown
 	}
+}
+
+func requiredColumnsForOptions(options ParseOptions, columnSet string) []string {
+	required := make([]string, 0, len(requiredColumns))
+	for _, column := range requiredColumns {
+		if column == "workerName" && columnSet == ColumnSetTrader && strings.TrimSpace(options.DefaultWorkerName) != "" {
+			continue
+		}
+		required = append(required, column)
+	}
+
+	return required
 }
 
 func resolveColumnSet(columnSet string, columns map[string]int) string {
@@ -539,6 +555,16 @@ func optionalString(value string) *string {
 	}
 
 	return &trimmed
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if !isNone(value) {
+			return value
+		}
+	}
+
+	return ""
 }
 
 func requiredValue(raw map[string]string, field string) (string, bool) {

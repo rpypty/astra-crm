@@ -92,6 +92,64 @@ func TestParseCSVTraderColumnsAndUnknownStatus(t *testing.T) {
 	}
 }
 
+func TestParseCSVTraderPayoutReportWithoutWorkerName(t *testing.T) {
+	result := parseFixtureWithOptions(t, "../../../docs/dealsPayoutReport-1781288762.csv", ParseOptions{
+		ColumnSet:         ColumnSetTrader,
+		Location:          time.FixedZone("UTC+3", 3*60*60),
+		DefaultWorkerName: "trader:3",
+	})
+
+	if result.ColumnSet != ColumnSetTrader {
+		t.Fatalf("column set = %q, want %q", result.ColumnSet, ColumnSetTrader)
+	}
+	if len(result.Rows) != 659 {
+		t.Fatalf("rows count = %d, want 659", len(result.Rows))
+	}
+	first := result.Rows[0]
+	if first.ExternalInnerID != "4c647d41-da94-41a8-914a-3342b92e5727" {
+		t.Fatalf("innerId = %q, want first payout innerId", first.ExternalInnerID)
+	}
+	if first.WorkerName != "trader:3" {
+		t.Fatalf("worker name = %q, want fallback trader:3", first.WorkerName)
+	}
+	if first.AmountMinor != 700000 {
+		t.Fatalf("amount minor = %d, want 700000", first.AmountMinor)
+	}
+	if first.NormalizedStatus != NormalizedStatusSuccess {
+		t.Fatalf("normalized status = %q, want success", first.NormalizedStatus)
+	}
+	if result.RawStatusCounts["paid"] != 507 || result.RawStatusCounts["cancelled"] != 152 {
+		t.Fatalf("raw status counts = %+v, want paid=507 cancelled=152", result.RawStatusCounts)
+	}
+}
+
+func TestParseCSVTeamleadPayoutReport(t *testing.T) {
+	result := parseFixtureWithOptions(t, "../../../docs/payoutReport-1781288788.csv", ParseOptions{
+		ColumnSet: ColumnSetTeamlead,
+		Location:  time.FixedZone("UTC+3", 3*60*60),
+	})
+
+	if result.ColumnSet != ColumnSetTeamlead {
+		t.Fatalf("column set = %q, want %q", result.ColumnSet, ColumnSetTeamlead)
+	}
+	if len(result.Rows) != 8029 {
+		t.Fatalf("rows count = %d, want 8029", len(result.Rows))
+	}
+	first := result.Rows[0]
+	if first.WorkerName != "Bliss_OP8" {
+		t.Fatalf("worker name = %q, want Bliss_OP8", first.WorkerName)
+	}
+	if first.OrderComment == nil || *first.OrderComment != "Максимум 3 чека" {
+		t.Fatalf("comment = %v, want payout comment", first.OrderComment)
+	}
+	if first.NormalizedStatus != NormalizedStatusUnknown {
+		t.Fatalf("first normalized status = %q, want unknown for pending", first.NormalizedStatus)
+	}
+	if result.RawStatusCounts["paid"] != 7077 || result.RawStatusCounts["pending"] != 5 || result.RawStatusCounts["chargeback"] != 3 {
+		t.Fatalf("raw status counts = %+v, want paid=7077 pending=5 chargeback=3", result.RawStatusCounts)
+	}
+}
+
 func TestParseMoneyMinor(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -189,13 +247,19 @@ func TestParseCSVRejectsInvalidMoney(t *testing.T) {
 func parseFixture(t *testing.T, path string) ParseResult {
 	t.Helper()
 
+	return parseFixtureWithOptions(t, path, parseOptions())
+}
+
+func parseFixtureWithOptions(t *testing.T, path string, options ParseOptions) ParseResult {
+	t.Helper()
+
 	file, err := os.Open(path)
 	if err != nil {
 		t.Fatalf("open fixture: %v", err)
 	}
 	defer file.Close()
 
-	result, err := ParseCSV(file, parseOptions())
+	result, err := ParseCSV(file, options)
 	if err != nil {
 		t.Fatalf("ParseCSV() error = %v; validation errors: %+v", err, result.Errors)
 	}

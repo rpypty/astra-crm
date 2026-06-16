@@ -71,6 +71,39 @@ func TestServiceAfterImportAppliedRecalculatesActiveTeamleadPeriodsAfterTraderIn
 	}
 }
 
+func TestServiceAfterImportAppliedRecalculatesActiveTeamleadPeriodsAfterTraderOutbound(t *testing.T) {
+	store := &fakeStore{
+		activeTeamleadOutboundScopes: []TeamleadOutboundPeriodScope{
+			{AccountingPeriodID: 65, ImportBatchID: 600},
+			{AccountingPeriodID: 66, ImportBatchID: 601},
+		},
+	}
+	service := NewService(store, nil)
+	shiftID := int64(10)
+	traderID := int64(3)
+
+	err := service.AfterImportApplied(context.Background(), imports.ApplyResult{
+		Batch: imports.ImportBatch{
+			ID:        100,
+			TeamID:    2,
+			ScopeType: imports.ScopeTypeTraderShift,
+			Direction: imports.DirectionOutbound,
+			ShiftID:   &shiftID,
+			TraderID:  &traderID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("AfterImportApplied() error = %v", err)
+	}
+
+	if len(store.teamleadPeriodOutboundRecalculateRecords) != 2 {
+		t.Fatalf("teamlead outbound period recalculate count = %d, want 2", len(store.teamleadPeriodOutboundRecalculateRecords))
+	}
+	if store.teamleadPeriodOutboundRecalculateRecords[0].AccountingPeriodID != 65 || store.teamleadPeriodOutboundRecalculateRecords[1].AccountingPeriodID != 66 {
+		t.Fatalf("teamlead outbound period recalculate records = %+v, want periods 65 and 66", store.teamleadPeriodOutboundRecalculateRecords)
+	}
+}
+
 func TestServiceAfterImportAppliedRecalculatesTraderOutbound(t *testing.T) {
 	store := &fakeStore{}
 	service := NewService(store, nil)
@@ -125,6 +158,36 @@ func TestServiceAfterImportAppliedRecalculatesTeamleadPeriodInbound(t *testing.T
 	}
 	if record.ImportBatchID == nil || *record.ImportBatchID != 500 {
 		t.Fatalf("teamlead import batch id = %v, want 500", record.ImportBatchID)
+	}
+}
+
+func TestServiceAfterImportAppliedRecalculatesTeamleadPeriodOutbound(t *testing.T) {
+	store := &fakeStore{}
+	service := NewService(store, nil)
+	periodID := int64(55)
+
+	err := service.AfterImportApplied(context.Background(), imports.ApplyResult{
+		Batch: imports.ImportBatch{
+			ID:                 500,
+			TeamID:             2,
+			ScopeType:          imports.ScopeTypeTeamleadPeriod,
+			Direction:          imports.DirectionOutbound,
+			AccountingPeriodID: &periodID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("AfterImportApplied() error = %v", err)
+	}
+
+	if len(store.teamleadPeriodOutboundRecalculateRecords) != 1 {
+		t.Fatalf("teamlead outbound period recalculate count = %d, want 1", len(store.teamleadPeriodOutboundRecalculateRecords))
+	}
+	record := store.teamleadPeriodOutboundRecalculateRecords[0]
+	if record.TeamID != 2 || record.AccountingPeriodID != 55 {
+		t.Fatalf("teamlead outbound period recalculate record = %+v, want team/period 2/55", record)
+	}
+	if record.ImportBatchID == nil || *record.ImportBatchID != 500 {
+		t.Fatalf("teamlead outbound import batch id = %v, want 500", record.ImportBatchID)
 	}
 }
 
@@ -331,23 +394,25 @@ func TestServiceAcceptTraderOutboundAuditsMutation(t *testing.T) {
 }
 
 type fakeStore struct {
-	recalculateCalled                bool
-	recalculateRecord                RecalculateTraderInboundRecord
-	outboundRecalculateCalled        bool
-	outboundRecalculateRecord        RecalculateTraderOutboundRecord
-	teamleadPeriodRecalculateRecords []RecalculateTeamleadPeriodInboundRecord
-	latestCalled                     bool
-	latestRun                        Run
-	latestErr                        error
-	latestOutboundCalled             bool
-	latestOutboundRun                Run
-	latestOutboundErr                error
-	acceptRecord                     AcceptTraderInboundRecord
-	acceptedRun                      Run
-	acceptOutboundRecord             AcceptTraderOutboundRecord
-	acceptedOutboundRun              Run
-	activeTeamleadScopes             []TeamleadInboundPeriodScope
-	items                            []Item
+	recalculateCalled                        bool
+	recalculateRecord                        RecalculateTraderInboundRecord
+	outboundRecalculateCalled                bool
+	outboundRecalculateRecord                RecalculateTraderOutboundRecord
+	teamleadPeriodRecalculateRecords         []RecalculateTeamleadPeriodInboundRecord
+	teamleadPeriodOutboundRecalculateRecords []RecalculateTeamleadPeriodOutboundRecord
+	latestCalled                             bool
+	latestRun                                Run
+	latestErr                                error
+	latestOutboundCalled                     bool
+	latestOutboundRun                        Run
+	latestOutboundErr                        error
+	acceptRecord                             AcceptTraderInboundRecord
+	acceptedRun                              Run
+	acceptOutboundRecord                     AcceptTraderOutboundRecord
+	acceptedOutboundRun                      Run
+	activeTeamleadScopes                     []TeamleadInboundPeriodScope
+	activeTeamleadOutboundScopes             []TeamleadOutboundPeriodScope
+	items                                    []Item
 }
 
 func (s *fakeStore) RecalculateTraderInbound(ctx context.Context, record RecalculateTraderInboundRecord) (Run, error) {
@@ -394,6 +459,20 @@ func (s *fakeStore) RecalculateTeamleadPeriodInbound(ctx context.Context, record
 	}, nil
 }
 
+func (s *fakeStore) RecalculateTeamleadPeriodOutbound(ctx context.Context, record RecalculateTeamleadPeriodOutboundRecord) (Run, error) {
+	s.teamleadPeriodOutboundRecalculateRecords = append(s.teamleadPeriodOutboundRecalculateRecords, record)
+	return Run{
+		ID:                 81,
+		TeamID:             record.TeamID,
+		Type:               TypeTeamleadPeriodOutbound,
+		ScopeType:          imports.ScopeTypeTeamleadPeriod,
+		AccountingPeriodID: &record.AccountingPeriodID,
+		ImportBatchID:      record.ImportBatchID,
+		Status:             StatusMatched,
+		CreatedAt:          time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+	}, nil
+}
+
 func (s *fakeStore) LatestTraderInbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (Run, error) {
 	s.latestCalled = true
 	if s.latestErr != nil {
@@ -422,11 +501,34 @@ func (s *fakeStore) LatestTeamleadPeriodInbound(ctx context.Context, teamID int6
 	}, nil
 }
 
+func (s *fakeStore) LatestTeamleadPeriodOutbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error) {
+	return Run{
+		ID:                 81,
+		TeamID:             teamID,
+		Type:               TypeTeamleadPeriodOutbound,
+		ScopeType:          imports.ScopeTypeTeamleadPeriod,
+		AccountingPeriodID: &accountingPeriodID,
+		Status:             StatusMatched,
+		CreatedAt:          time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+	}, nil
+}
+
 func (s *fakeStore) LatestTeamleadInbound(ctx context.Context, teamID int64) (Run, error) {
 	return Run{
 		ID:        71,
 		TeamID:    teamID,
 		Type:      TypeTeamleadPeriodInbound,
+		ScopeType: imports.ScopeTypeTeamleadPeriod,
+		Status:    StatusMatched,
+		CreatedAt: time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+	}, nil
+}
+
+func (s *fakeStore) LatestTeamleadOutbound(ctx context.Context, teamID int64) (Run, error) {
+	return Run{
+		ID:        81,
+		TeamID:    teamID,
+		Type:      TypeTeamleadPeriodOutbound,
 		ScopeType: imports.ScopeTypeTeamleadPeriod,
 		Status:    StatusMatched,
 		CreatedAt: time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
@@ -439,6 +541,10 @@ func (s *fakeStore) ListItems(ctx context.Context, runID int64) ([]Item, error) 
 
 func (s *fakeStore) ListActiveTeamleadInboundPeriodScopes(ctx context.Context, teamID int64) ([]TeamleadInboundPeriodScope, error) {
 	return s.activeTeamleadScopes, nil
+}
+
+func (s *fakeStore) ListActiveTeamleadOutboundPeriodScopes(ctx context.Context, teamID int64) ([]TeamleadOutboundPeriodScope, error) {
+	return s.activeTeamleadOutboundScopes, nil
 }
 
 func (s *fakeStore) AcceptTraderInbound(ctx context.Context, record AcceptTraderInboundRecord) (Run, error) {

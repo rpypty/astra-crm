@@ -11,8 +11,11 @@ import (
 
 type TeamleadReconciliationService interface {
 	LatestTeamleadInbound(ctx context.Context, teamID int64) (reconciliation.Run, error)
+	LatestTeamleadOutbound(ctx context.Context, teamID int64) (reconciliation.Run, error)
 	LatestTeamleadPeriodInbound(ctx context.Context, teamID int64, accountingPeriodID int64) (reconciliation.Run, error)
+	LatestTeamleadPeriodOutbound(ctx context.Context, teamID int64, accountingPeriodID int64) (reconciliation.Run, error)
 	ListTeamleadPeriodInboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]reconciliation.Item, error)
+	ListTeamleadPeriodOutboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]reconciliation.Item, error)
 }
 
 type TeamleadReconciliationHandler struct {
@@ -28,6 +31,14 @@ type reconciliationItemsResponse struct {
 }
 
 func (h *TeamleadReconciliationHandler) LatestInbound(w http.ResponseWriter, r *http.Request) {
+	h.latest(w, r, "inbound")
+}
+
+func (h *TeamleadReconciliationHandler) LatestOutbound(w http.ResponseWriter, r *http.Request) {
+	h.latest(w, r, "outbound")
+}
+
+func (h *TeamleadReconciliationHandler) latest(w http.ResponseWriter, r *http.Request, direction string) {
 	actor, ok := CurrentUser(r.Context())
 	if !ok {
 		RespondError(w, UnauthorizedError())
@@ -38,7 +49,19 @@ func (h *TeamleadReconciliationHandler) LatestInbound(w http.ResponseWriter, r *
 		return
 	}
 
-	run, err := h.service.LatestTeamleadInbound(r.Context(), actor.TeamID)
+	var (
+		run reconciliation.Run
+		err error
+	)
+	switch direction {
+	case "inbound":
+		run, err = h.service.LatestTeamleadInbound(r.Context(), actor.TeamID)
+	case "outbound":
+		run, err = h.service.LatestTeamleadOutbound(r.Context(), actor.TeamID)
+	default:
+		RespondError(w, NotFoundError())
+		return
+	}
 	if err != nil {
 		RespondError(w, mapReconciliationError(err))
 		return
@@ -50,6 +73,14 @@ func (h *TeamleadReconciliationHandler) LatestInbound(w http.ResponseWriter, r *
 }
 
 func (h *TeamleadReconciliationHandler) PeriodInbound(w http.ResponseWriter, r *http.Request) {
+	h.period(w, r, "inbound")
+}
+
+func (h *TeamleadReconciliationHandler) PeriodOutbound(w http.ResponseWriter, r *http.Request) {
+	h.period(w, r, "outbound")
+}
+
+func (h *TeamleadReconciliationHandler) period(w http.ResponseWriter, r *http.Request, direction string) {
 	actor, ok := CurrentUser(r.Context())
 	if !ok {
 		RespondError(w, UnauthorizedError())
@@ -65,7 +96,19 @@ func (h *TeamleadReconciliationHandler) PeriodInbound(w http.ResponseWriter, r *
 		return
 	}
 
-	run, err := h.service.LatestTeamleadPeriodInbound(r.Context(), actor.TeamID, periodID)
+	var (
+		run reconciliation.Run
+		err error
+	)
+	switch direction {
+	case "inbound":
+		run, err = h.service.LatestTeamleadPeriodInbound(r.Context(), actor.TeamID, periodID)
+	case "outbound":
+		run, err = h.service.LatestTeamleadPeriodOutbound(r.Context(), actor.TeamID, periodID)
+	default:
+		RespondError(w, NotFoundError())
+		return
+	}
 	if err != nil {
 		RespondError(w, mapReconciliationError(err))
 		return
@@ -76,7 +119,19 @@ func (h *TeamleadReconciliationHandler) PeriodInbound(w http.ResponseWriter, r *
 	})
 }
 
+func (h *TeamleadReconciliationHandler) PeriodInboundItems(w http.ResponseWriter, r *http.Request) {
+	h.periodItems(w, r, "inbound")
+}
+
+func (h *TeamleadReconciliationHandler) PeriodOutboundItems(w http.ResponseWriter, r *http.Request) {
+	h.periodItems(w, r, "outbound")
+}
+
 func (h *TeamleadReconciliationHandler) PeriodItems(w http.ResponseWriter, r *http.Request) {
+	h.PeriodInboundItems(w, r)
+}
+
+func (h *TeamleadReconciliationHandler) periodItems(w http.ResponseWriter, r *http.Request, direction string) {
 	actor, ok := CurrentUser(r.Context())
 	if !ok {
 		RespondError(w, UnauthorizedError())
@@ -92,7 +147,19 @@ func (h *TeamleadReconciliationHandler) PeriodItems(w http.ResponseWriter, r *ht
 		return
 	}
 
-	items, err := h.service.ListTeamleadPeriodInboundItems(r.Context(), actor.TeamID, periodID)
+	var (
+		items []reconciliation.Item
+		err   error
+	)
+	switch direction {
+	case "inbound":
+		items, err = h.service.ListTeamleadPeriodInboundItems(r.Context(), actor.TeamID, periodID)
+	case "outbound":
+		items, err = h.service.ListTeamleadPeriodOutboundItems(r.Context(), actor.TeamID, periodID)
+	default:
+		RespondError(w, NotFoundError())
+		return
+	}
 	if err != nil {
 		RespondError(w, mapReconciliationError(err))
 		return

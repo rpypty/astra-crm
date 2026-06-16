@@ -150,18 +150,13 @@ teamlead_orders AS (
     ORDER BY osi.external_inner_id, osi.created_at DESC, osi.id DESC
 ),
 trader_orders AS (
-    SELECT DISTINCT ON (osi.external_inner_id)
-        osi.external_inner_id,
-        osi.amount_minor,
-        osi.normalized_status
-    FROM order_scope_items osi
-    CROSS JOIN period p
-    WHERE osi.team_id = $1
-      AND osi.scope_type = 'trader_shift'
-      AND osi.direction = 'inbound'
-      AND osi.is_active = TRUE
-      AND osi.created_at_external::date BETWEEN p.date_from AND p.date_to
-    ORDER BY osi.external_inner_id, osi.created_at DESC, osi.id DESC
+    SELECT
+        sr.id AS shift_requisite_id,
+        sr.inbound_turnover_minor AS amount_minor
+    FROM shift_requisites sr
+    JOIN period p ON COALESCE(sr.released_at, sr.taken_at)::date BETWEEN p.date_from AND p.date_to
+    WHERE sr.team_id = $1
+      AND sr.status IN ('worked', 'blocked', 'correction')
 )
 SELECT
     COALESCE((SELECT sum(amount_minor) FROM teamlead_orders WHERE normalized_status IN ('success', 'corrected')), 0)::bigint AS expected_amount_minor,
@@ -170,8 +165,8 @@ SELECT
     COALESCE((SELECT count(*) FROM teamlead_orders WHERE normalized_status IN ('failed', 'cancelled')), 0)::bigint AS failed_count,
     COALESCE((SELECT sum(amount_minor) FROM teamlead_orders), 0)::bigint AS total_amount_minor,
     COALESCE((SELECT count(*) FROM teamlead_orders), 0)::bigint AS total_count,
-    COALESCE((SELECT sum(amount_minor) FROM trader_orders WHERE normalized_status IN ('success', 'corrected')), 0)::bigint AS actual_amount_minor,
-    COALESCE((SELECT count(*) FROM trader_orders WHERE normalized_status IN ('success', 'corrected')), 0)::bigint AS actual_success_count
+    COALESCE((SELECT sum(amount_minor) FROM trader_orders), 0)::bigint AS actual_amount_minor,
+    COALESCE((SELECT count(*) FROM trader_orders), 0)::bigint AS actual_success_count
 `
 
 type CalculateTeamleadPeriodInboundSummaryParams struct {
@@ -193,6 +188,83 @@ type CalculateTeamleadPeriodInboundSummaryRow struct {
 func (q *Queries) CalculateTeamleadPeriodInboundSummary(ctx context.Context, arg CalculateTeamleadPeriodInboundSummaryParams) (CalculateTeamleadPeriodInboundSummaryRow, error) {
 	row := q.db.QueryRow(ctx, calculateTeamleadPeriodInboundSummary, arg.TeamID, arg.AccountingPeriodID)
 	var i CalculateTeamleadPeriodInboundSummaryRow
+	err := row.Scan(
+		&i.ExpectedAmountMinor,
+		&i.ExpectedSuccessCount,
+		&i.FailedAmountMinor,
+		&i.FailedCount,
+		&i.TotalAmountMinor,
+		&i.TotalCount,
+		&i.ActualAmountMinor,
+		&i.ActualSuccessCount,
+	)
+	return i, err
+}
+
+const calculateTeamleadPeriodOutboundSummary = `-- name: CalculateTeamleadPeriodOutboundSummary :one
+WITH period AS (
+    SELECT date_from, date_to
+    FROM accounting_periods ap
+    WHERE ap.team_id = $1
+      AND ap.id = $2
+),
+teamlead_orders AS (
+    SELECT DISTINCT ON (osi.external_inner_id)
+        osi.external_inner_id,
+        osi.amount_minor,
+        osi.normalized_status
+    FROM order_scope_items osi
+    WHERE osi.team_id = $1
+      AND osi.scope_type = 'teamlead_period'
+      AND osi.accounting_period_id = $2
+      AND osi.direction = 'outbound'
+      AND osi.is_active = TRUE
+    ORDER BY osi.external_inner_id, osi.created_at DESC, osi.id DESC
+),
+trader_orders AS (
+    SELECT
+        mpo.id AS manual_payout_order_id,
+        COALESCE(sum(mpt.amount_minor), 0)::bigint AS amount_minor
+    FROM manual_payout_orders mpo
+    LEFT JOIN manual_payout_transfers mpt ON mpt.manual_payout_order_id = mpo.id
+    JOIN trader_shifts ts ON ts.id = mpo.shift_id
+    JOIN period p ON mpo.created_at::date BETWEEN p.date_from AND p.date_to
+    WHERE mpo.team_id = $1
+      AND mpo.deleted_at IS NULL
+      AND mpo.status <> 'cancelled'
+      AND ts.team_id = $1
+    GROUP BY mpo.id
+)
+SELECT
+    COALESCE((SELECT sum(amount_minor) FROM teamlead_orders WHERE normalized_status IN ('success', 'corrected')), 0)::bigint AS expected_amount_minor,
+    COALESCE((SELECT count(*) FROM teamlead_orders WHERE normalized_status IN ('success', 'corrected')), 0)::bigint AS expected_success_count,
+    COALESCE((SELECT sum(amount_minor) FROM teamlead_orders WHERE normalized_status IN ('failed', 'cancelled')), 0)::bigint AS failed_amount_minor,
+    COALESCE((SELECT count(*) FROM teamlead_orders WHERE normalized_status IN ('failed', 'cancelled')), 0)::bigint AS failed_count,
+    COALESCE((SELECT sum(amount_minor) FROM teamlead_orders), 0)::bigint AS total_amount_minor,
+    COALESCE((SELECT count(*) FROM teamlead_orders), 0)::bigint AS total_count,
+    COALESCE((SELECT sum(amount_minor) FROM trader_orders), 0)::bigint AS actual_amount_minor,
+    COALESCE((SELECT count(*) FROM trader_orders), 0)::bigint AS actual_success_count
+`
+
+type CalculateTeamleadPeriodOutboundSummaryParams struct {
+	TeamID             int64
+	AccountingPeriodID int64
+}
+
+type CalculateTeamleadPeriodOutboundSummaryRow struct {
+	ExpectedAmountMinor  int64
+	ExpectedSuccessCount int64
+	FailedAmountMinor    int64
+	FailedCount          int64
+	TotalAmountMinor     int64
+	TotalCount           int64
+	ActualAmountMinor    int64
+	ActualSuccessCount   int64
+}
+
+func (q *Queries) CalculateTeamleadPeriodOutboundSummary(ctx context.Context, arg CalculateTeamleadPeriodOutboundSummaryParams) (CalculateTeamleadPeriodOutboundSummaryRow, error) {
+	row := q.db.QueryRow(ctx, calculateTeamleadPeriodOutboundSummary, arg.TeamID, arg.AccountingPeriodID)
+	var i CalculateTeamleadPeriodOutboundSummaryRow
 	err := row.Scan(
 		&i.ExpectedAmountMinor,
 		&i.ExpectedSuccessCount,
@@ -304,8 +376,12 @@ func (q *Queries) CalculateTraderOutboundActual(ctx context.Context, arg Calcula
 
 const calculateTraderOutboundExpected = `-- name: CalculateTraderOutboundExpected :one
 SELECT
-    COALESCE(sum(osi.amount_minor), 0)::bigint AS expected_amount_minor,
-    count(*)::bigint AS order_count
+    COALESCE(sum(CASE WHEN osi.normalized_status IN ('success', 'corrected') THEN osi.amount_minor ELSE 0 END), 0)::bigint AS expected_amount_minor,
+    count(*) FILTER (WHERE osi.normalized_status IN ('success', 'corrected'))::bigint AS success_count,
+    COALESCE(sum(CASE WHEN osi.normalized_status IN ('failed', 'cancelled') THEN osi.amount_minor ELSE 0 END), 0)::bigint AS failed_amount_minor,
+    count(*) FILTER (WHERE osi.normalized_status IN ('failed', 'cancelled'))::bigint AS failed_count,
+    COALESCE(sum(osi.amount_minor), 0)::bigint AS total_amount_minor,
+    count(*)::bigint AS total_count
 FROM order_scope_items osi
 WHERE osi.team_id = $1
   AND osi.scope_type = 'trader_shift'
@@ -321,13 +397,24 @@ type CalculateTraderOutboundExpectedParams struct {
 
 type CalculateTraderOutboundExpectedRow struct {
 	ExpectedAmountMinor int64
-	OrderCount          int64
+	SuccessCount        int64
+	FailedAmountMinor   int64
+	FailedCount         int64
+	TotalAmountMinor    int64
+	TotalCount          int64
 }
 
 func (q *Queries) CalculateTraderOutboundExpected(ctx context.Context, arg CalculateTraderOutboundExpectedParams) (CalculateTraderOutboundExpectedRow, error) {
 	row := q.db.QueryRow(ctx, calculateTraderOutboundExpected, arg.TeamID, arg.ShiftID)
 	var i CalculateTraderOutboundExpectedRow
-	err := row.Scan(&i.ExpectedAmountMinor, &i.OrderCount)
+	err := row.Scan(
+		&i.ExpectedAmountMinor,
+		&i.SuccessCount,
+		&i.FailedAmountMinor,
+		&i.FailedCount,
+		&i.TotalAmountMinor,
+		&i.TotalCount,
+	)
 	return i, err
 }
 
@@ -344,6 +431,8 @@ teamlead_orders AS (
         osi.external_inner_id,
         osi.worker_name,
         osi.trader_id,
+        osi.requisite_raw,
+        osi.requisite_phone,
         osi.amount_minor,
         osi.normalized_status
     FROM order_scope_items osi
@@ -355,21 +444,21 @@ teamlead_orders AS (
     ORDER BY osi.external_inner_id, osi.created_at DESC, osi.id DESC
 ),
 trader_orders AS (
-    SELECT DISTINCT ON (osi.external_inner_id)
-        osi.external_order_id,
-        osi.external_inner_id,
-        osi.worker_name,
-        osi.trader_id,
-        osi.amount_minor,
-        osi.normalized_status
-    FROM order_scope_items osi
-    CROSS JOIN period p
-    WHERE osi.team_id = $2
-      AND osi.scope_type = 'trader_shift'
-      AND osi.direction = 'inbound'
-      AND osi.is_active = TRUE
-      AND osi.created_at_external::date BETWEEN p.date_from AND p.date_to
-    ORDER BY osi.external_inner_id, osi.created_at DESC, osi.id DESC
+    SELECT
+        sr.id AS shift_requisite_id,
+        sr.requisite_id,
+        r.phone AS requisite_phone,
+        r.bank_code,
+        sr.trader_id,
+        u.login AS trader_login,
+        sr.inbound_turnover_minor AS amount_minor,
+        sr.status AS shift_requisite_status
+    FROM shift_requisites sr
+    JOIN requisites r ON r.id = sr.requisite_id
+    JOIN users u ON u.id = sr.trader_id
+    JOIN period p ON COALESCE(sr.released_at, sr.taken_at)::date BETWEEN p.date_from AND p.date_to
+    WHERE sr.team_id = $2
+      AND sr.status IN ('worked', 'blocked', 'correction')
 ),
 teamlead_success_total AS (
     SELECT
@@ -383,7 +472,6 @@ trader_success_total AS (
         COALESCE(sum(amount_minor), 0)::bigint AS amount_minor,
         count(*)::bigint AS count
     FROM trader_orders
-    WHERE normalized_status IN ('success', 'corrected')
 ),
 total_items AS (
     SELECT
@@ -398,111 +486,72 @@ total_items AS (
             'successAmountMinor', tr.amount_minor,
             'successCount', tr.count
         ) AS trader_value_json,
-        'Teamlead period success total differs from trader imports'::text AS message
+        'Teamlead period invoice success total differs from trader closed requisites'::text AS message
     FROM teamlead_success_total tl
     CROSS JOIN trader_success_total tr
     WHERE tl.amount_minor <> tr.amount_minor
        OR tl.count <> tr.count
 ),
-teamlead_worker_totals AS (
+teamlead_requisite_totals AS (
     SELECT
-        worker_name,
+        COALESCE(requisite_phone, requisite_raw, '') AS requisite_key,
+        max(requisite_phone) AS requisite_phone,
         COALESCE(sum(amount_minor), 0)::bigint AS amount_minor,
         count(*)::bigint AS count
     FROM teamlead_orders
     WHERE normalized_status IN ('success', 'corrected')
-    GROUP BY worker_name
+    GROUP BY COALESCE(requisite_phone, requisite_raw, '')
 ),
-trader_worker_totals AS (
+trader_requisite_totals AS (
     SELECT
-        worker_name,
+        requisite_phone AS requisite_key,
+        max(requisite_id) AS requisite_id,
+        max(requisite_phone) AS requisite_phone,
+        max(bank_code) AS bank_code,
+        max(trader_id) AS trader_id,
+        max(trader_login) AS trader_login,
         COALESCE(sum(amount_minor), 0)::bigint AS amount_minor,
         count(*)::bigint AS count
     FROM trader_orders
-    WHERE normalized_status IN ('success', 'corrected')
-    GROUP BY worker_name
+    GROUP BY requisite_phone
 ),
-worker_total_items AS (
+requisite_total_items AS (
     SELECT
-        'total_amount_mismatch'::text AS issue_type,
+        'requisite_amount_mismatch'::text AS issue_type,
         NULL::bigint AS external_order_id,
         NULL::text AS external_inner_id,
         CASE
-            WHEN tl.worker_name IS NULL THEN NULL::jsonb
+            WHEN tl.requisite_key IS NULL THEN NULL::jsonb
             ELSE jsonb_build_object(
-                'workerName', tl.worker_name,
+                'requisitePhone', tl.requisite_phone,
                 'successAmountMinor', tl.amount_minor,
                 'successCount', tl.count
             )
         END AS teamlead_value_json,
         CASE
-            WHEN tr.worker_name IS NULL THEN NULL::jsonb
+            WHEN tr.requisite_key IS NULL THEN NULL::jsonb
             ELSE jsonb_build_object(
-                'workerName', tr.worker_name,
-                'successAmountMinor', tr.amount_minor,
-                'successCount', tr.count
+                'requisiteId', tr.requisite_id,
+                'requisitePhone', tr.requisite_phone,
+                'bankCode', tr.bank_code,
+                'traderId', tr.trader_id,
+                'traderLogin', tr.trader_login,
+                'closedInboundTurnoverMinor', tr.amount_minor,
+                'closedRequisitesCount', tr.count
             )
         END AS trader_value_json,
-        'Worker success total differs between teamlead period and trader imports'::text AS message
-    FROM teamlead_worker_totals tl
-    FULL JOIN trader_worker_totals tr ON tr.worker_name = tl.worker_name
+        'Requisite invoice turnover differs between teamlead period CSV and trader closed requisite turnover'::text AS message
+    FROM teamlead_requisite_totals tl
+    FULL JOIN trader_requisite_totals tr ON tr.requisite_key = tl.requisite_key
     WHERE COALESCE(tl.amount_minor, 0) <> COALESCE(tr.amount_minor, 0)
        OR COALESCE(tl.count, 0) <> COALESCE(tr.count, 0)
-),
-order_items AS (
-    SELECT
-        CASE
-            WHEN tr.external_inner_id IS NULL THEN 'missing_in_trader_import'
-            WHEN tl.external_inner_id IS NULL THEN 'extra_in_trader_import'
-            WHEN tl.amount_minor <> tr.amount_minor THEN 'amount_mismatch'
-            WHEN tl.normalized_status <> tr.normalized_status THEN 'status_mismatch'
-            WHEN tl.worker_name <> tr.worker_name THEN 'worker_mismatch'
-        END AS issue_type,
-        COALESCE(tl.external_order_id, tr.external_order_id) AS external_order_id,
-        COALESCE(tl.external_inner_id, tr.external_inner_id) AS external_inner_id,
-        CASE
-            WHEN tl.external_inner_id IS NULL THEN NULL::jsonb
-            ELSE jsonb_build_object(
-                'workerName', tl.worker_name,
-                'traderId', tl.trader_id,
-                'amountMinor', tl.amount_minor,
-                'normalizedStatus', tl.normalized_status
-            )
-        END AS teamlead_value_json,
-        CASE
-            WHEN tr.external_inner_id IS NULL THEN NULL::jsonb
-            ELSE jsonb_build_object(
-                'workerName', tr.worker_name,
-                'traderId', tr.trader_id,
-                'amountMinor', tr.amount_minor,
-                'normalizedStatus', tr.normalized_status
-            )
-        END AS trader_value_json,
-        CASE
-            WHEN tr.external_inner_id IS NULL THEN 'Order is present in teamlead period CSV but absent from trader imports'
-            WHEN tl.external_inner_id IS NULL THEN 'Order is present in trader imports but absent from teamlead period CSV'
-            WHEN tl.amount_minor <> tr.amount_minor THEN 'Order amount differs between teamlead period CSV and trader import'
-            WHEN tl.normalized_status <> tr.normalized_status THEN 'Order status differs between teamlead period CSV and trader import'
-            WHEN tl.worker_name <> tr.worker_name THEN 'Order worker differs between teamlead period CSV and trader import'
-        END AS message
-    FROM teamlead_orders tl
-    FULL JOIN trader_orders tr ON tr.external_inner_id = tl.external_inner_id
-    WHERE tr.external_inner_id IS NULL
-       OR tl.external_inner_id IS NULL
-       OR tl.amount_minor <> tr.amount_minor
-       OR tl.normalized_status <> tr.normalized_status
-       OR tl.worker_name <> tr.worker_name
 ),
 items AS (
     SELECT issue_type, external_order_id, external_inner_id, teamlead_value_json, trader_value_json, message
     FROM total_items
     UNION ALL
     SELECT issue_type, external_order_id, external_inner_id, teamlead_value_json, trader_value_json, message
-    FROM worker_total_items
-    UNION ALL
-    SELECT issue_type, external_order_id, external_inner_id, teamlead_value_json, trader_value_json, message
-    FROM order_items
-    WHERE issue_type IS NOT NULL
+    FROM requisite_total_items
 )
 INSERT INTO reconciliation_items (
     reconciliation_run_id,
@@ -611,6 +660,299 @@ type CreateTeamleadPeriodInboundReconciliationRunParams struct {
 
 func (q *Queries) CreateTeamleadPeriodInboundReconciliationRun(ctx context.Context, arg CreateTeamleadPeriodInboundReconciliationRunParams) (ReconciliationRun, error) {
 	row := q.db.QueryRow(ctx, createTeamleadPeriodInboundReconciliationRun,
+		arg.TeamID,
+		arg.AccountingPeriodID,
+		arg.ImportBatchID,
+		arg.ExpectedAmountMinor,
+		arg.ActualAmountMinor,
+		arg.DiffAmountMinor,
+		arg.SuccessAmountMinor,
+		arg.SuccessCount,
+		arg.FailedAmountMinor,
+		arg.FailedCount,
+		arg.TotalAmountMinor,
+		arg.TotalCount,
+		arg.Status,
+	)
+	var i ReconciliationRun
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.Type,
+		&i.ScopeType,
+		&i.ShiftID,
+		&i.AccountingPeriodID,
+		&i.TraderID,
+		&i.ImportBatchID,
+		&i.ExpectedAmountMinor,
+		&i.ActualAmountMinor,
+		&i.DiffAmountMinor,
+		&i.SuccessAmountMinor,
+		&i.SuccessCount,
+		&i.FailedAmountMinor,
+		&i.FailedCount,
+		&i.TotalAmountMinor,
+		&i.TotalCount,
+		&i.Status,
+		&i.Comment,
+		&i.ConfirmedBy,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createTeamleadPeriodOutboundReconciliationItems = `-- name: CreateTeamleadPeriodOutboundReconciliationItems :many
+WITH period AS (
+    SELECT date_from, date_to
+    FROM accounting_periods ap
+    WHERE ap.team_id = $2
+      AND ap.id = $3
+),
+teamlead_orders AS (
+    SELECT DISTINCT ON (osi.external_inner_id)
+        osi.external_order_id,
+        osi.external_inner_id,
+        osi.worker_name,
+        osi.trader_id,
+        osi.requisite_raw,
+        osi.requisite_phone,
+        osi.amount_minor,
+        osi.normalized_status
+    FROM order_scope_items osi
+    WHERE osi.team_id = $2
+      AND osi.scope_type = 'teamlead_period'
+      AND osi.accounting_period_id = $3
+      AND osi.direction = 'outbound'
+      AND osi.is_active = TRUE
+    ORDER BY osi.external_inner_id, osi.created_at DESC, osi.id DESC
+),
+trader_orders AS (
+    SELECT
+        mpo.id AS manual_payout_order_id,
+        mpo.destination_bank,
+        mpo.destination_requisite,
+        mpo.amount_minor,
+        COALESCE(sum(mpt.amount_minor), 0)::bigint AS paid_amount_minor,
+        mpo.trader_id,
+        u.login AS trader_login,
+        row_number() OVER (
+            PARTITION BY lower(btrim(mpo.destination_requisite)), mpo.amount_minor
+            ORDER BY mpo.id
+        ) AS match_number
+    FROM manual_payout_orders mpo
+    LEFT JOIN manual_payout_transfers mpt ON mpt.manual_payout_order_id = mpo.id
+    JOIN users u ON u.id = mpo.trader_id
+    JOIN trader_shifts ts ON ts.id = mpo.shift_id
+    JOIN period p ON mpo.created_at::date BETWEEN p.date_from AND p.date_to
+    WHERE mpo.team_id = $2
+      AND mpo.deleted_at IS NULL
+      AND mpo.status <> 'cancelled'
+      AND ts.team_id = $2
+    GROUP BY mpo.id, u.login
+),
+teamlead_success_total AS (
+    SELECT
+        COALESCE(sum(amount_minor), 0)::bigint AS amount_minor,
+        count(*)::bigint AS count
+    FROM teamlead_orders
+    WHERE normalized_status IN ('success', 'corrected')
+),
+trader_success_total AS (
+    SELECT
+        COALESCE(sum(paid_amount_minor), 0)::bigint AS amount_minor,
+        count(*)::bigint AS count
+    FROM trader_orders
+),
+total_items AS (
+    SELECT
+        'total_amount_mismatch'::text AS issue_type,
+        NULL::bigint AS external_order_id,
+        NULL::text AS external_inner_id,
+        jsonb_build_object(
+            'successAmountMinor', tl.amount_minor,
+            'successCount', tl.count
+        ) AS teamlead_value_json,
+        jsonb_build_object(
+            'successAmountMinor', tr.amount_minor,
+            'successCount', tr.count
+        ) AS trader_value_json,
+        'Teamlead period payout success total differs from trader manual payout transfers'::text AS message
+    FROM teamlead_success_total tl
+    CROSS JOIN trader_success_total tr
+    WHERE tl.amount_minor <> tr.amount_minor
+       OR tl.count <> tr.count
+),
+teamlead_matchable AS (
+    SELECT
+        tl.external_order_id, tl.external_inner_id, tl.worker_name, tl.trader_id, tl.requisite_raw, tl.requisite_phone, tl.amount_minor, tl.normalized_status,
+        COALESCE(tl.requisite_phone, tl.requisite_raw, '') AS destination_key,
+        row_number() OVER (
+            PARTITION BY lower(btrim(COALESCE(tl.requisite_phone, tl.requisite_raw, ''))), tl.amount_minor
+            ORDER BY tl.external_inner_id
+        ) AS match_number
+    FROM teamlead_orders tl
+    WHERE tl.normalized_status IN ('success', 'corrected')
+),
+order_items AS (
+    SELECT
+        CASE
+            WHEN tr.manual_payout_order_id IS NULL THEN 'missing_manual_payout_order'
+            WHEN tl.external_inner_id IS NULL THEN 'extra_manual_payout_order'
+            WHEN tr.paid_amount_minor <> tr.amount_minor THEN 'manual_payout_not_fully_paid'
+        END AS issue_type,
+        tl.external_order_id AS external_order_id,
+        tl.external_inner_id AS external_inner_id,
+        CASE
+            WHEN tl.external_inner_id IS NULL THEN NULL::jsonb
+            ELSE jsonb_build_object(
+                'workerName', tl.worker_name,
+                'traderId', tl.trader_id,
+                'destination', tl.destination_key,
+                'amountMinor', tl.amount_minor,
+                'normalizedStatus', tl.normalized_status
+            )
+        END AS teamlead_value_json,
+        CASE
+            WHEN tr.manual_payout_order_id IS NULL THEN NULL::jsonb
+            ELSE jsonb_build_object(
+                'manualPayoutOrderId', tr.manual_payout_order_id,
+                'destinationBank', tr.destination_bank,
+                'destinationRequisite', tr.destination_requisite,
+                'traderId', tr.trader_id,
+                'traderLogin', tr.trader_login,
+                'amountMinor', tr.amount_minor,
+                'paidAmountMinor', tr.paid_amount_minor
+            )
+        END AS trader_value_json,
+        CASE
+            WHEN tr.manual_payout_order_id IS NULL THEN 'Payout is present in teamlead period CSV but no matching manual payout order was created'
+            WHEN tl.external_inner_id IS NULL THEN 'Manual payout order has no matching payout in teamlead period CSV'
+            WHEN tr.paid_amount_minor <> tr.amount_minor THEN 'Manual payout order is not fully paid by transfers'
+        END AS message
+    FROM teamlead_matchable tl
+    FULL JOIN trader_orders tr ON lower(btrim(tr.destination_requisite)) = lower(btrim(tl.destination_key))
+        AND tr.amount_minor = tl.amount_minor
+        AND tr.match_number = tl.match_number
+    WHERE tr.manual_payout_order_id IS NULL
+       OR tl.external_inner_id IS NULL
+       OR tr.paid_amount_minor <> tr.amount_minor
+),
+items AS (
+    SELECT issue_type, external_order_id, external_inner_id, teamlead_value_json, trader_value_json, message
+    FROM total_items
+    UNION ALL
+    SELECT issue_type, external_order_id, external_inner_id, teamlead_value_json, trader_value_json, message
+    FROM order_items
+    WHERE issue_type IS NOT NULL
+)
+INSERT INTO reconciliation_items (
+    reconciliation_run_id,
+    issue_type,
+    external_order_id,
+    external_inner_id,
+    teamlead_value_json,
+    trader_value_json,
+    message
+)
+SELECT
+    $1,
+    issue_type,
+    external_order_id,
+    external_inner_id,
+    teamlead_value_json,
+    trader_value_json,
+    message
+FROM items
+RETURNING id
+`
+
+type CreateTeamleadPeriodOutboundReconciliationItemsParams struct {
+	RunID              int64
+	TeamID             int64
+	AccountingPeriodID int64
+}
+
+func (q *Queries) CreateTeamleadPeriodOutboundReconciliationItems(ctx context.Context, arg CreateTeamleadPeriodOutboundReconciliationItemsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, createTeamleadPeriodOutboundReconciliationItems, arg.RunID, arg.TeamID, arg.AccountingPeriodID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const createTeamleadPeriodOutboundReconciliationRun = `-- name: CreateTeamleadPeriodOutboundReconciliationRun :one
+INSERT INTO reconciliation_runs (
+    team_id,
+    type,
+    scope_type,
+    shift_id,
+    accounting_period_id,
+    trader_id,
+    import_batch_id,
+    expected_amount_minor,
+    actual_amount_minor,
+    diff_amount_minor,
+    success_amount_minor,
+    success_count,
+    failed_amount_minor,
+    failed_count,
+    total_amount_minor,
+    total_count,
+    status
+)
+VALUES (
+    $1,
+    'teamlead_period_outbound',
+    'teamlead_period',
+    NULL,
+    $2,
+    NULL,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10,
+    $11,
+    $12,
+    $13
+)
+RETURNING id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+`
+
+type CreateTeamleadPeriodOutboundReconciliationRunParams struct {
+	TeamID              int64
+	AccountingPeriodID  pgtype.Int8
+	ImportBatchID       pgtype.Int8
+	ExpectedAmountMinor int64
+	ActualAmountMinor   int64
+	DiffAmountMinor     int64
+	SuccessAmountMinor  int64
+	SuccessCount        int64
+	FailedAmountMinor   int64
+	FailedCount         int64
+	TotalAmountMinor    int64
+	TotalCount          int64
+	Status              string
+}
+
+func (q *Queries) CreateTeamleadPeriodOutboundReconciliationRun(ctx context.Context, arg CreateTeamleadPeriodOutboundReconciliationRunParams) (ReconciliationRun, error) {
+	row := q.db.QueryRow(ctx, createTeamleadPeriodOutboundReconciliationRun,
 		arg.TeamID,
 		arg.AccountingPeriodID,
 		arg.ImportBatchID,
@@ -790,11 +1132,11 @@ VALUES (
     $7,
     $5,
     $8,
-    0,
-    0,
-    $5,
-    $8,
-    $9
+    $9,
+    $10,
+    $11,
+    $12,
+    $13
 )
 RETURNING id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
 `
@@ -807,7 +1149,11 @@ type CreateTraderOutboundReconciliationRunParams struct {
 	ExpectedAmountMinor int64
 	ActualAmountMinor   int64
 	DiffAmountMinor     int64
-	OrderCount          int64
+	SuccessCount        int64
+	FailedAmountMinor   int64
+	FailedCount         int64
+	TotalAmountMinor    int64
+	TotalCount          int64
 	Status              string
 }
 
@@ -820,7 +1166,11 @@ func (q *Queries) CreateTraderOutboundReconciliationRun(ctx context.Context, arg
 		arg.ExpectedAmountMinor,
 		arg.ActualAmountMinor,
 		arg.DiffAmountMinor,
-		arg.OrderCount,
+		arg.SuccessCount,
+		arg.FailedAmountMinor,
+		arg.FailedCount,
+		arg.TotalAmountMinor,
+		arg.TotalCount,
 		arg.Status,
 	)
 	var i ReconciliationRun
@@ -946,6 +1296,45 @@ func (q *Queries) LatestTeamleadInboundReconciliationRun(ctx context.Context, te
 	return i, err
 }
 
+const latestTeamleadOutboundReconciliationRun = `-- name: LatestTeamleadOutboundReconciliationRun :one
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE team_id = $1
+  AND type = 'teamlead_period_outbound'
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`
+
+func (q *Queries) LatestTeamleadOutboundReconciliationRun(ctx context.Context, teamID int64) (ReconciliationRun, error) {
+	row := q.db.QueryRow(ctx, latestTeamleadOutboundReconciliationRun, teamID)
+	var i ReconciliationRun
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.Type,
+		&i.ScopeType,
+		&i.ShiftID,
+		&i.AccountingPeriodID,
+		&i.TraderID,
+		&i.ImportBatchID,
+		&i.ExpectedAmountMinor,
+		&i.ActualAmountMinor,
+		&i.DiffAmountMinor,
+		&i.SuccessAmountMinor,
+		&i.SuccessCount,
+		&i.FailedAmountMinor,
+		&i.FailedCount,
+		&i.TotalAmountMinor,
+		&i.TotalCount,
+		&i.Status,
+		&i.Comment,
+		&i.ConfirmedBy,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const latestTeamleadPeriodInboundReconciliationRun = `-- name: LatestTeamleadPeriodInboundReconciliationRun :one
 SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
 FROM reconciliation_runs
@@ -963,6 +1352,51 @@ type LatestTeamleadPeriodInboundReconciliationRunParams struct {
 
 func (q *Queries) LatestTeamleadPeriodInboundReconciliationRun(ctx context.Context, arg LatestTeamleadPeriodInboundReconciliationRunParams) (ReconciliationRun, error) {
 	row := q.db.QueryRow(ctx, latestTeamleadPeriodInboundReconciliationRun, arg.TeamID, arg.AccountingPeriodID)
+	var i ReconciliationRun
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.Type,
+		&i.ScopeType,
+		&i.ShiftID,
+		&i.AccountingPeriodID,
+		&i.TraderID,
+		&i.ImportBatchID,
+		&i.ExpectedAmountMinor,
+		&i.ActualAmountMinor,
+		&i.DiffAmountMinor,
+		&i.SuccessAmountMinor,
+		&i.SuccessCount,
+		&i.FailedAmountMinor,
+		&i.FailedCount,
+		&i.TotalAmountMinor,
+		&i.TotalCount,
+		&i.Status,
+		&i.Comment,
+		&i.ConfirmedBy,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const latestTeamleadPeriodOutboundReconciliationRun = `-- name: LatestTeamleadPeriodOutboundReconciliationRun :one
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE team_id = $1
+  AND accounting_period_id = $2
+  AND type = 'teamlead_period_outbound'
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`
+
+type LatestTeamleadPeriodOutboundReconciliationRunParams struct {
+	TeamID             int64
+	AccountingPeriodID pgtype.Int8
+}
+
+func (q *Queries) LatestTeamleadPeriodOutboundReconciliationRun(ctx context.Context, arg LatestTeamleadPeriodOutboundReconciliationRunParams) (ReconciliationRun, error) {
+	row := q.db.QueryRow(ctx, latestTeamleadPeriodOutboundReconciliationRun, arg.TeamID, arg.AccountingPeriodID)
 	var i ReconciliationRun
 	err := row.Scan(
 		&i.ID,
@@ -1113,6 +1547,45 @@ func (q *Queries) ListActiveTeamleadInboundPeriodScopes(ctx context.Context, tea
 	var items []ListActiveTeamleadInboundPeriodScopesRow
 	for rows.Next() {
 		var i ListActiveTeamleadInboundPeriodScopesRow
+		if err := rows.Scan(&i.AccountingPeriodID, &i.ImportBatchID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActiveTeamleadOutboundPeriodScopes = `-- name: ListActiveTeamleadOutboundPeriodScopes :many
+SELECT DISTINCT ON (ib.accounting_period_id)
+    ib.accounting_period_id,
+    ib.id AS import_batch_id
+FROM import_batches ib
+WHERE ib.team_id = $1
+  AND ib.scope_type = 'teamlead_period'
+  AND ib.direction = 'outbound'
+  AND ib.status IN ('applied', 'reconciled')
+  AND ib.accounting_period_id IS NOT NULL
+  AND ib.superseded_by_batch_id IS NULL
+ORDER BY ib.accounting_period_id, ib.applied_at DESC NULLS LAST, ib.id DESC
+`
+
+type ListActiveTeamleadOutboundPeriodScopesRow struct {
+	AccountingPeriodID pgtype.Int8
+	ImportBatchID      int64
+}
+
+func (q *Queries) ListActiveTeamleadOutboundPeriodScopes(ctx context.Context, teamID int64) ([]ListActiveTeamleadOutboundPeriodScopesRow, error) {
+	rows, err := q.db.Query(ctx, listActiveTeamleadOutboundPeriodScopes, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListActiveTeamleadOutboundPeriodScopesRow
+	for rows.Next() {
+		var i ListActiveTeamleadOutboundPeriodScopesRow
 		if err := rows.Scan(&i.AccountingPeriodID, &i.ImportBatchID); err != nil {
 			return nil, err
 		}

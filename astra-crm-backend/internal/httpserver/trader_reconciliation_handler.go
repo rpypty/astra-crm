@@ -14,8 +14,10 @@ import (
 
 type TraderReconciliationService interface {
 	LatestTraderInbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (reconciliation.Run, error)
+	ListTraderInboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]reconciliation.Item, error)
 	AcceptTraderInbound(ctx context.Context, params reconciliation.AcceptTraderInboundParams) (reconciliation.Run, error)
 	LatestTraderOutbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (reconciliation.Run, error)
+	ListTraderOutboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]reconciliation.Item, error)
 	AcceptTraderOutbound(ctx context.Context, params reconciliation.AcceptTraderOutboundParams) (reconciliation.Run, error)
 }
 
@@ -37,6 +39,10 @@ func NewTraderReconciliationHandler(service TraderReconciliationService, shiftSe
 
 type reconciliationRunResponse struct {
 	Run reconciliation.PublicRun `json:"run"`
+}
+
+type traderReconciliationItemsResponse struct {
+	Items []reconciliation.PublicItem `json:"items"`
 }
 
 type acceptReconciliationRequest struct {
@@ -70,6 +76,33 @@ func (h *TraderReconciliationHandler) LatestInbound(w http.ResponseWriter, r *ht
 	})
 }
 
+func (h *TraderReconciliationHandler) InboundItems(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil || h.shiftService == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	shift, ok := h.currentShift(w, r, actor.TeamID, actor.ID)
+	if !ok {
+		return
+	}
+
+	items, err := h.service.ListTraderInboundItems(r.Context(), actor.TeamID, actor.ID, shift.ID)
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, traderReconciliationItemsResponse{
+		Items: reconciliation.PublicItemsFromDomain(items),
+	})
+}
+
 func (h *TraderReconciliationHandler) LatestOutbound(w http.ResponseWriter, r *http.Request) {
 	actor, ok := CurrentUser(r.Context())
 	if !ok {
@@ -94,6 +127,33 @@ func (h *TraderReconciliationHandler) LatestOutbound(w http.ResponseWriter, r *h
 
 	WriteJSON(w, http.StatusOK, reconciliationRunResponse{
 		Run: reconciliation.PublicRunFromDomain(run),
+	})
+}
+
+func (h *TraderReconciliationHandler) OutboundItems(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil || h.shiftService == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	shift, ok := h.currentShift(w, r, actor.TeamID, actor.ID)
+	if !ok {
+		return
+	}
+
+	items, err := h.service.ListTraderOutboundItems(r.Context(), actor.TeamID, actor.ID, shift.ID)
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, traderReconciliationItemsResponse{
+		Items: reconciliation.PublicItemsFromDomain(items),
 	})
 }
 

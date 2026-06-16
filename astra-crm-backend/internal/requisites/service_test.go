@@ -24,7 +24,7 @@ func TestServiceCreateWithAssignedTraderCreatesAssignmentAndAudits(t *testing.T)
 		ActorID:          1,
 		TeamID:           2,
 		Phone:            "+79991234567",
-		MethodType:       "sbp",
+		BankCode:         "sber",
 		AssignedTraderID: &traderID,
 	})
 	if err != nil {
@@ -116,6 +116,7 @@ func (s *fakeStore) Create(ctx context.Context, params CreateRecord) (Requisite,
 		TeamID:     params.TeamID,
 		Phone:      params.Phone,
 		MethodType: params.MethodType,
+		BankCode:   params.BankCode,
 		Proxy:      params.Proxy,
 		Status:     StatusActive,
 		CreatedBy:  params.CreatedBy,
@@ -171,6 +172,38 @@ func (s *fakeStore) Unassign(ctx context.Context, teamID int64, requisiteID int6
 }
 
 func (s *fakeStore) AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64) ([]Assignment, error) {
+	return nil, nil
+}
+
+func (s *fakeStore) CreatePlan(ctx context.Context, params CreatePlanRecord) (Assignment, error) {
+	return Assignment{}, nil
+}
+
+func (s *fakeStore) ListPlans(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {
+	return nil, nil
+}
+
+func (s *fakeStore) ListActivity(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {
+	return nil, nil
+}
+
+func (s *fakeStore) GetAssignment(ctx context.Context, teamID int64, assignmentID int64) (Assignment, error) {
+	return Assignment{}, nil
+}
+
+func (s *fakeStore) UpdatePlan(ctx context.Context, params UpdatePlanRecord) (Assignment, error) {
+	return Assignment{}, nil
+}
+
+func (s *fakeStore) CancelPlan(ctx context.Context, teamID int64, assignmentID int64) (Assignment, error) {
+	return Assignment{}, nil
+}
+
+func (s *fakeStore) CreateAssignmentEvent(ctx context.Context, params AssignmentEventRecord) (AssignmentEvent, error) {
+	return AssignmentEvent{}, nil
+}
+
+func (s *fakeStore) AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]AssignmentEvent, error) {
 	return nil, nil
 }
 

@@ -5,18 +5,20 @@ import { AppShell } from "@/components/layout/app-shell";
 import { LoadingSkeleton } from "@/components/crm/loading-skeleton";
 import { LoginPage } from "@/pages/login-page";
 import {
-  OrdersPage,
   TeamleadAuditPage,
   TeamleadDashboardPage,
   TeamleadPeriodsPage,
+  TeamleadReportsPage,
   TeamleadRequisitesPage,
+  TeamleadTransactionsPage,
   TeamleadTradersPage,
 } from "@/pages/teamlead-pages";
 import {
   TraderAnalyticsPage,
-  TraderOrdersPage,
   TraderPayoutsPage,
+  TraderReportsPage,
   TraderRequisitesPage,
+  TraderTransactionsPage,
 } from "@/pages/trader-pages";
 
 const rootRoute = createRootRoute({
@@ -66,19 +68,31 @@ const teamleadTradersRoute = createRoute({
 const teamleadInboundRoute = createRoute({
   getParentRoute: () => teamleadRoute,
   path: "inbound",
-  component: () => <OrdersPage direction="inbound" scope="teamlead" />,
+  component: () => <TeamleadTransactionsPage initialDirection="inbound" />,
 });
 
 const teamleadOutboundRoute = createRoute({
   getParentRoute: () => teamleadRoute,
   path: "outbound",
-  component: () => <OrdersPage direction="outbound" scope="teamlead" />,
+  component: () => <TeamleadTransactionsPage initialDirection="outbound" />,
+});
+
+const teamleadTransactionsRoute = createRoute({
+  getParentRoute: () => teamleadRoute,
+  path: "transactions",
+  component: TeamleadTransactionsPage,
 });
 
 const teamleadPeriodsRoute = createRoute({
   getParentRoute: () => teamleadRoute,
   path: "periods",
   component: TeamleadPeriodsPage,
+});
+
+const teamleadReportsRoute = createRoute({
+  getParentRoute: () => teamleadRoute,
+  path: "reports",
+  component: TeamleadReportsPage,
 });
 
 const teamleadAuditRoute = createRoute({
@@ -106,13 +120,25 @@ const traderRequisitesRoute = createRoute({
 const traderInboundRoute = createRoute({
   getParentRoute: () => traderRoute,
   path: "inbound",
-  component: () => <TraderOrdersPage direction="inbound" />,
+  component: () => <TraderTransactionsPage initialDirection="inbound" />,
 });
 
 const traderOutboundRoute = createRoute({
   getParentRoute: () => traderRoute,
   path: "outbound",
-  component: () => <TraderOrdersPage direction="outbound" />,
+  component: () => <TraderTransactionsPage initialDirection="outbound" />,
+});
+
+const traderTransactionsRoute = createRoute({
+  getParentRoute: () => traderRoute,
+  path: "transactions",
+  component: TraderTransactionsPage,
+});
+
+const traderReportsRoute = createRoute({
+  getParentRoute: () => traderRoute,
+  path: "reports",
+  component: TraderReportsPage,
 });
 
 const traderPayoutsRoute = createRoute({
@@ -134,15 +160,19 @@ const routeTree = rootRoute.addChildren([
     teamleadDashboardRoute,
     teamleadRequisitesRoute,
     teamleadTradersRoute,
+    teamleadTransactionsRoute,
     teamleadInboundRoute,
     teamleadOutboundRoute,
     teamleadPeriodsRoute,
+    teamleadReportsRoute,
     teamleadAuditRoute,
   ]),
   traderRoute.addChildren([
     traderRequisitesRoute,
+    traderTransactionsRoute,
     traderInboundRoute,
     traderOutboundRoute,
+    traderReportsRoute,
     traderPayoutsRoute,
     traderAnalyticsRoute,
   ]),
@@ -163,13 +193,13 @@ function IndexRedirect() {
   const auth = useAuth();
   if (auth.isLoading) return <FullPageLoading />;
   if (!auth.user) return <Navigate to="/login" />;
-  return <Navigate to={auth.user.role === "teamlead" ? "/teamlead/dashboard" : "/trader/requisites"} />;
+  return <Navigate to={auth.user.role === "teamlead" ? "/teamlead/dashboard" : "/trader/analytics"} />;
 }
 
 function LoginRedirect() {
   const auth = useAuth();
   if (auth.isLoading) return <FullPageLoading />;
-  if (auth.user) return <Navigate to={auth.user.role === "teamlead" ? "/teamlead/dashboard" : "/trader/requisites"} />;
+  if (auth.user) return <Navigate to={auth.user.role === "teamlead" ? "/teamlead/dashboard" : "/trader/analytics"} />;
   return <LoginPage />;
 }
 
@@ -178,7 +208,7 @@ function ProtectedRole({ role, children }: { role: "teamlead" | "trader"; childr
   if (auth.isLoading) return <FullPageLoading />;
   if (!auth.user) return <Navigate to="/login" />;
   if (auth.user.role !== role) {
-    return <Navigate to={auth.user.role === "teamlead" ? "/teamlead/dashboard" : "/trader/requisites"} />;
+    return <Navigate to={auth.user.role === "teamlead" ? "/teamlead/dashboard" : "/trader/analytics"} />;
   }
   return children;
 }

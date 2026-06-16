@@ -12,6 +12,7 @@ import (
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
 	"github.com/ashpak/astra-crm-backend/internal/auth"
+	"github.com/ashpak/astra-crm-backend/internal/banks"
 	"github.com/ashpak/astra-crm-backend/internal/config"
 	"github.com/ashpak/astra-crm-backend/internal/httpserver"
 	"github.com/ashpak/astra-crm-backend/internal/imports"
@@ -64,10 +65,12 @@ func run() int {
 	var orderReadService *orders.Service
 	var readmodelService *readmodels.Service
 	var reconciliationService *reconciliation.Service
+	var bankService *banks.Service
 	if dbPool != nil {
 		queries := db.New(dbPool.Raw())
 		userRepository := users.NewRepository(queries)
-		requisiteRepository := requisites.NewRepository(queries)
+		bankRepository := banks.NewRepository(queries)
+		requisiteRepository := requisites.NewRepository(queries, dbPool.Raw())
 		shiftRepository := shifts.NewRepository(queries)
 		payoutRepository := payouts.NewRepository(queries)
 		importRepository := imports.NewRepository(dbPool.Raw())
@@ -78,6 +81,7 @@ func run() int {
 		auditService := audit.NewService(auditRepository)
 
 		authService = auth.NewService(userRepository, sessionRepository)
+		bankService = banks.NewService(bankRepository)
 		traderService = users.NewTraderService(userRepository, auditService, auth.HashPassword, auth.NewSessionToken)
 		requisiteService = requisites.NewService(requisiteRepository, userRepository, auditService)
 		reconciliationService = reconciliation.NewService(reconciliationRepository, auditService)
@@ -98,6 +102,7 @@ func run() int {
 		ImportService:          importService,
 		OrderReadService:       orderReadService,
 		ReadmodelService:       readmodelService,
+		BankService:            bankService,
 		ReconcileService:       reconciliationService,
 		SessionCookieName:      cfg.SessionCookieName,
 		SessionSecure:          cfg.SessionSecure,

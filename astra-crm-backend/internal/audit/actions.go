@@ -14,6 +14,7 @@ const (
 	ActionShiftRequisiteTaken               = "shift.requisite_taken"
 	ActionShiftDailyDetailsUpdated          = "shift.daily_details_updated"
 	ActionShiftTurnoverAdded                = "shift.turnover_added"
+	ActionShiftRequisiteClosed              = "shift.requisite_closed"
 	ActionManualPayoutCreated               = "manual_payout.created"
 	ActionManualPayoutUpdated               = "manual_payout.updated"
 	ActionManualPayoutCancelled             = "manual_payout.cancelled"

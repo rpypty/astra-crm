@@ -13,10 +13,17 @@ import (
 
 type TraderShiftService interface {
 	Current(ctx context.Context, teamID int64, traderID int64) (*shifts.Shift, error)
+	ShiftHistory(ctx context.Context, teamID int64, traderID int64, limit int32) ([]shifts.Shift, error)
+	TeamShiftHistory(ctx context.Context, teamID int64, limit int32) ([]shifts.Shift, error)
 	AssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]shifts.AssignedRequisite, error)
+	FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]shifts.AssignedRequisite, error)
+	HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]shifts.AssignedRequisite, error)
+	AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]shifts.AssignedRequisite, error)
+	AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64) ([]shifts.AssignedRequisite, error)
 	ShiftRequisites(ctx context.Context, teamID int64, traderID int64) ([]shifts.ShiftRequisite, error)
 	TakeRequisite(ctx context.Context, params shifts.TakeRequisiteParams) (shifts.TakeRequisiteResult, error)
 	UpdateShiftRequisite(ctx context.Context, params shifts.UpdateShiftRequisiteParams) (shifts.ShiftRequisite, error)
+	CloseShiftRequisite(ctx context.Context, params shifts.CloseShiftRequisiteParams) (shifts.ShiftRequisite, error)
 	LatestTurnovers(ctx context.Context, teamID int64, traderID int64) ([]shifts.TurnoverEntry, error)
 	TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]shifts.TurnoverEntry, error)
 	CreateTurnover(ctx context.Context, params shifts.CreateTurnoverParams) (shifts.TurnoverEntry, error)
@@ -34,6 +41,10 @@ func NewTraderShiftHandler(service TraderShiftService) *TraderShiftHandler {
 
 type currentShiftResponse struct {
 	Shift *shifts.PublicShift `json:"shift"`
+}
+
+type shiftHistoryResponse struct {
+	Items []shifts.PublicShift `json:"items"`
 }
 
 type assignedRequisitesResponse struct {
@@ -86,6 +97,14 @@ type createTurnoverRequest struct {
 	Comment          *string `json:"comment"`
 }
 
+type closeShiftRequisiteRequest struct {
+	InboundTurnoverMinor  int64   `json:"inboundTurnoverMinor"`
+	OutboundTurnoverMinor int64   `json:"outboundTurnoverMinor"`
+	ClosingBalanceMinor   int64   `json:"closingBalanceMinor"`
+	Blocked               bool    `json:"blocked"`
+	Comment               *string `json:"comment"`
+}
+
 type closeShiftRequest struct {
 	CloseComment *string `json:"closeComment"`
 }
@@ -117,6 +136,50 @@ func (h *TraderShiftHandler) Current(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *TraderShiftHandler) History(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	items, err := h.service.ShiftHistory(r.Context(), actor.TeamID, actor.ID, 30)
+	if err != nil {
+		RespondError(w, mapShiftError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, shiftHistoryResponse{
+		Items: shifts.PublicShiftsFromDomain(items),
+	})
+}
+
+func (h *TraderShiftHandler) TeamHistory(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	items, err := h.service.TeamShiftHistory(r.Context(), actor.TeamID, 100)
+	if err != nil {
+		RespondError(w, mapShiftError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, shiftHistoryResponse{
+		Items: shifts.PublicShiftsFromDomain(items),
+	})
+}
+
 func (h *TraderShiftHandler) AssignedRequisites(w http.ResponseWriter, r *http.Request) {
 	actor, ok := CurrentUser(r.Context())
 	if !ok {
@@ -129,6 +192,104 @@ func (h *TraderShiftHandler) AssignedRequisites(w http.ResponseWriter, r *http.R
 	}
 
 	items, err := h.service.AssignedRequisites(r.Context(), actor.TeamID, actor.ID)
+	if err != nil {
+		RespondError(w, mapShiftError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, assignedRequisitesResponse{
+		Items: shifts.PublicAssignedRequisites(items),
+	})
+}
+
+func (h *TraderShiftHandler) FutureAssignedRequisites(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	items, err := h.service.FutureAssignedRequisites(r.Context(), actor.TeamID, actor.ID)
+	if err != nil {
+		RespondError(w, mapShiftError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, assignedRequisitesResponse{
+		Items: shifts.PublicAssignedRequisites(items),
+	})
+}
+
+func (h *TraderShiftHandler) HistoricalAssignedRequisites(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	items, err := h.service.HistoricalAssignedRequisites(r.Context(), actor.TeamID, actor.ID)
+	if err != nil {
+		RespondError(w, mapShiftError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, assignedRequisitesResponse{
+		Items: shifts.PublicAssignedRequisites(items),
+	})
+}
+
+func (h *TraderShiftHandler) AssignedRequisitesByShift(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	shiftID, ok := shiftRequisiteRouteID(w, r, "shiftId", "Некорректный ID смены")
+	if !ok {
+		return
+	}
+
+	items, err := h.service.AssignedRequisitesByShift(r.Context(), actor.TeamID, actor.ID, shiftID)
+	if err != nil {
+		RespondError(w, mapShiftError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, assignedRequisitesResponse{
+		Items: shifts.PublicAssignedRequisites(items),
+	})
+}
+
+func (h *TraderShiftHandler) AssignedRequisitesByTeamShift(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	shiftID, ok := shiftRequisiteRouteID(w, r, "shiftId", "Некорректный ID смены")
+	if !ok {
+		return
+	}
+
+	items, err := h.service.AssignedRequisitesByTeamShift(r.Context(), actor.TeamID, shiftID)
 	if err != nil {
 		RespondError(w, mapShiftError(err))
 		return
@@ -238,6 +399,52 @@ func (h *TraderShiftHandler) UpdateShiftRequisite(w http.ResponseWriter, r *http
 		ShiftRequisiteID: shiftRequisiteID,
 		CardNumber:       request.CardNumber,
 		HolderName:       request.HolderName,
+	})
+	if err != nil {
+		RespondError(w, mapShiftError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, shiftRequisiteResponse{
+		ShiftRequisite: shifts.PublicShiftRequisiteFromDomain(item),
+	})
+}
+
+func (h *TraderShiftHandler) CloseShiftRequisite(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	shiftRequisiteID, ok := shiftRequisiteRouteID(w, r, "shiftRequisiteId", "Некорректный ID shift requisite")
+	if !ok {
+		return
+	}
+
+	var request closeShiftRequisiteRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	if fields := validateCloseShiftRequisiteRequest(request); len(fields) > 0 {
+		RespondError(w, ValidationError(fields))
+		return
+	}
+
+	item, err := h.service.CloseShiftRequisite(r.Context(), shifts.CloseShiftRequisiteParams{
+		ActorID:               actor.ID,
+		TeamID:                actor.TeamID,
+		TraderID:              actor.ID,
+		ShiftRequisiteID:      shiftRequisiteID,
+		InboundTurnoverMinor:  request.InboundTurnoverMinor,
+		OutboundTurnoverMinor: request.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   request.ClosingBalanceMinor,
+		Blocked:               request.Blocked,
+		Comment:               request.Comment,
 	})
 	if err != nil {
 		RespondError(w, mapShiftError(err))
@@ -436,6 +643,21 @@ func validateCreateTurnoverRequest(request createTurnoverRequest) map[string]str
 	}
 	if request.AmountMinor < 0 {
 		fields["amountMinor"] = "Оборот не может быть отрицательным"
+	}
+
+	return fields
+}
+
+func validateCloseShiftRequisiteRequest(request closeShiftRequisiteRequest) map[string]string {
+	fields := map[string]string{}
+	if request.InboundTurnoverMinor < 0 {
+		fields["inboundTurnoverMinor"] = "Оборот по оплатам не может быть отрицательным"
+	}
+	if request.OutboundTurnoverMinor < 0 {
+		fields["outboundTurnoverMinor"] = "Оборот по выплатам не может быть отрицательным"
+	}
+	if request.ClosingBalanceMinor < 0 {
+		fields["closingBalanceMinor"] = "Остаток не может быть отрицательным"
 	}
 
 	return fields

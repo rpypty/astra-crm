@@ -23,6 +23,7 @@ type RouterConfig struct {
 	ImportService    ImportService
 	OrderReadService OrderReadService
 	ReadmodelService TeamleadReadmodelService
+	BankService      BankService
 	ReconcileService interface {
 		TraderReconciliationService
 		TeamleadReconciliationService
@@ -52,6 +53,7 @@ func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
 	importHandler := NewImportHandler(cfg.ImportService, cfg.ShiftService)
 	orderReadHandler := NewOrderReadHandler(cfg.OrderReadService)
 	readmodelHandler := NewTeamleadReadmodelHandler(cfg.ReadmodelService)
+	banksHandler := NewBanksHandler(cfg.BankService)
 	traderReconciliationHandler := NewTraderReconciliationHandler(cfg.ReconcileService, cfg.ShiftService)
 	teamleadReconciliationHandler := NewTeamleadReconciliationHandler(cfg.ReconcileService)
 	loginRateLimiter := NewLoginRateLimiter(cfg.LoginRateLimitRequests, cfg.LoginRateLimitWindow)
@@ -63,6 +65,7 @@ func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
 			r.Use(AuthMiddleware(cfg.AuthService, cfg.SessionCookieName))
 			r.Post("/auth/logout", authHandler.Logout)
 			r.Get("/auth/me", authHandler.Me)
+			r.Get("/banks", banksHandler.List)
 		})
 
 		r.Route("/teamlead", func(r chi.Router) {
@@ -76,12 +79,20 @@ func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
 			r.Post("/traders/{traderId}/reset-password", tradersHandler.ResetPassword)
 			r.Get("/requisites", requisitesHandler.List)
 			r.Post("/requisites", requisitesHandler.Create)
+			r.Get("/requisites/activity", requisitesHandler.Activity)
+			r.Get("/requisites/plans", requisitesHandler.Plans)
+			r.Post("/requisites/plans", requisitesHandler.CreatePlan)
+			r.Patch("/requisites/plans/{assignmentId}", requisitesHandler.UpdatePlan)
+			r.Delete("/requisites/plans/{assignmentId}", requisitesHandler.CancelPlan)
+			r.Get("/requisites/plans/{assignmentId}/events", requisitesHandler.PlanEvents)
 			r.Get("/requisites/{requisiteId}", requisitesHandler.Get)
 			r.Patch("/requisites/{requisiteId}", requisitesHandler.Patch)
 			r.Delete("/requisites/{requisiteId}", requisitesHandler.Delete)
 			r.Post("/requisites/{requisiteId}/assign", requisitesHandler.Assign)
 			r.Post("/requisites/{requisiteId}/unassign", requisitesHandler.Unassign)
 			r.Get("/requisites/{requisiteId}/assignment-history", requisitesHandler.AssignmentHistory)
+			r.Get("/shift/history", traderShiftHandler.TeamHistory)
+			r.Get("/shifts/{shiftId}/requisites", traderShiftHandler.AssignedRequisitesByTeamShift)
 			r.Get("/inbound/dashboard", orderReadHandler.TeamleadInboundDashboard)
 			r.Get("/inbound/orders", orderReadHandler.TeamleadInboundOrders)
 			r.Post("/inbound/import", importHandler.TeamleadInbound)
@@ -89,9 +100,13 @@ func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
 			r.Get("/outbound/dashboard", orderReadHandler.TeamleadOutboundDashboard)
 			r.Get("/outbound/orders", orderReadHandler.TeamleadOutboundOrders)
 			r.Post("/outbound/import", importHandler.TeamleadOutbound)
+			r.Get("/outbound/reconciliation/latest", teamleadReconciliationHandler.LatestOutbound)
 			r.Get("/periods", readmodelHandler.Periods)
 			r.Get("/audit", readmodelHandler.Audit)
 			r.Get("/periods/{periodId}/reconciliation/inbound", teamleadReconciliationHandler.PeriodInbound)
+			r.Get("/periods/{periodId}/reconciliation/outbound", teamleadReconciliationHandler.PeriodOutbound)
+			r.Get("/periods/{periodId}/reconciliation/inbound/items", teamleadReconciliationHandler.PeriodInboundItems)
+			r.Get("/periods/{periodId}/reconciliation/outbound/items", teamleadReconciliationHandler.PeriodOutboundItems)
 			r.Get("/periods/{periodId}/reconciliation/items", teamleadReconciliationHandler.PeriodItems)
 			r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 				RespondError(w, NotFoundError())
@@ -101,15 +116,21 @@ func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
 		r.Route("/trader", func(r chi.Router) {
 			r.Use(AuthMiddleware(cfg.AuthService, cfg.SessionCookieName))
 			r.Use(RequireRole(users.RoleTrader))
+			r.Get("/profile", readmodelHandler.TraderProfile)
 			r.Get("/shift/current", traderShiftHandler.Current)
+			r.Get("/shift/history", traderShiftHandler.History)
+			r.Get("/shifts/{shiftId}/requisites", traderShiftHandler.AssignedRequisitesByShift)
 			r.Post("/shift/current/close", traderShiftHandler.CloseCurrent)
 			r.Get("/shift/current/checklist", traderShiftHandler.CloseChecklist)
 			r.Get("/shift/current/turnovers", traderShiftHandler.LatestTurnovers)
 			r.Post("/shift/current/turnovers", traderShiftHandler.CreateTurnover)
 			r.Get("/requisites", traderShiftHandler.AssignedRequisites)
+			r.Get("/requisites/future", traderShiftHandler.FutureAssignedRequisites)
+			r.Get("/requisites/history", traderShiftHandler.HistoricalAssignedRequisites)
 			r.Post("/requisites/{requisiteId}/take", traderShiftHandler.TakeRequisite)
 			r.Get("/shift-requisites", traderShiftHandler.ShiftRequisites)
 			r.Patch("/shift-requisites/{shiftRequisiteId}", traderShiftHandler.UpdateShiftRequisite)
+			r.Post("/shift-requisites/{shiftRequisiteId}/close", traderShiftHandler.CloseShiftRequisite)
 			r.Get("/shift-requisites/{shiftRequisiteId}/turnovers", traderShiftHandler.TurnoversByShiftRequisite)
 			r.Get("/payouts", traderPayoutHandler.List)
 			r.Post("/payouts", traderPayoutHandler.Create)
@@ -122,11 +143,13 @@ func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
 			r.Get("/inbound/orders", orderReadHandler.TraderInboundOrders)
 			r.Post("/inbound/import", importHandler.TraderInbound)
 			r.Get("/inbound/reconciliation/latest", traderReconciliationHandler.LatestInbound)
+			r.Get("/inbound/reconciliation/items", traderReconciliationHandler.InboundItems)
 			r.Post("/inbound/reconciliation/{runId}/accept", traderReconciliationHandler.AcceptInbound)
 			r.Get("/outbound/dashboard", orderReadHandler.TraderOutboundDashboard)
 			r.Get("/outbound/orders", orderReadHandler.TraderOutboundOrders)
 			r.Post("/outbound/import", importHandler.TraderOutbound)
 			r.Get("/outbound/reconciliation/latest", traderReconciliationHandler.LatestOutbound)
+			r.Get("/outbound/reconciliation/items", traderReconciliationHandler.OutboundItems)
 			r.Post("/outbound/reconciliation/{runId}/accept", traderReconciliationHandler.AcceptOutbound)
 			r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 				RespondError(w, NotFoundError())

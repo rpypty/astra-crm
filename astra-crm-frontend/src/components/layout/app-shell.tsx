@@ -1,15 +1,5 @@
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
-import {
-  BarChart3,
-  BriefcaseBusiness,
-  ClipboardList,
-  CreditCard,
-  History,
-  Landmark,
-  LayoutDashboard,
-  ReceiptText,
-  Users,
-} from "lucide-react";
+import { BarChart3, ClipboardList, CreditCard, Landmark, ReceiptText, Users } from "lucide-react";
 import { useAuth } from "@/app/auth";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -17,21 +7,20 @@ import { cn } from "@/lib/utils";
 type Role = "teamlead" | "trader";
 
 const teamleadNavigation = [
-  { label: "Дашборд", to: "/teamlead/dashboard", icon: LayoutDashboard },
+  { label: "Аналитика", to: "/teamlead/dashboard", icon: BarChart3 },
   { label: "Реквизиты", to: "/teamlead/requisites", icon: CreditCard },
   { label: "Сотрудники", to: "/teamlead/traders", icon: Users },
-  { label: "Входы", to: "/teamlead/inbound", icon: ReceiptText },
-  { label: "Выплаты", to: "/teamlead/outbound", icon: Landmark },
-  { label: "Периоды", to: "/teamlead/periods", icon: ClipboardList },
-  { label: "Аудит", to: "/teamlead/audit", icon: History },
+  { label: "Транзакции", to: "/teamlead/transactions", icon: ReceiptText },
+  { label: "Сверка", to: "/teamlead/periods", icon: ClipboardList },
+  { label: "Отчеты", to: "/teamlead/reports", icon: ClipboardList },
 ] as const;
 
 const traderNavigation = [
-  { label: "Мои реквизиты", to: "/trader/requisites", icon: CreditCard },
-  { label: "Входы", to: "/trader/inbound", icon: ReceiptText },
-  { label: "Исходящие", to: "/trader/outbound", icon: BriefcaseBusiness },
-  { label: "Выплаты", to: "/trader/payouts", icon: Landmark },
   { label: "Аналитика", to: "/trader/analytics", icon: BarChart3 },
+  { label: "Мои реквизиты", to: "/trader/requisites", icon: CreditCard },
+  { label: "Транзакции", to: "/trader/transactions", icon: ReceiptText },
+  { label: "Ручные выплаты", to: "/trader/payouts", icon: Landmark },
+  { label: "Отчеты", to: "/trader/reports", icon: ClipboardList },
 ] as const;
 
 export function AppShell({ role }: { role: Role }) {

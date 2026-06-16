@@ -30,7 +30,7 @@ export function LoginPage() {
     setServerError(null);
     try {
       const user = await auth.login(values);
-      await navigate({ to: user.role === "teamlead" ? "/teamlead/dashboard" : "/trader/requisites" });
+      await navigate({ to: user.role === "teamlead" ? "/teamlead/dashboard" : "/trader/analytics" });
     } catch (error) {
       setServerError(error instanceof Error ? error.message : "Сервис временно недоступен. Попробуйте позже.");
     }

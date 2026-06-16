@@ -19,15 +19,70 @@ export type Trader = {
   status: UserStatus;
 };
 
+export type Bank = {
+  code: string;
+  name: string;
+};
+
 export type Requisite = {
   id: number;
   phone: string;
   methodType: "SBP" | "C2C";
+  bankCode: string;
+  bankName: string;
   proxy: string;
+  employeeComment?: string;
+  holderName?: string;
+  cardNumber?: string;
+  detailsFilledAt?: string;
+  detailsFilledBy?: number;
   assignedTraderId?: number;
   assignedTraderLogin?: string;
+  assignmentStatus?: RequisiteAssignmentStatus;
+  assignedForDate?: string;
+  targetTurnoverMinor: number;
   status: "active" | "archived";
   updatedAt: string;
+};
+
+export type RequisiteAssignmentStatus = "planned" | "assigned" | "in_work" | "worked" | "blocked" | "cancelled" | "expired";
+
+export type RequisiteAssignmentWorkRow = {
+  assignmentId: number;
+  requisiteId: number;
+  phone: string;
+  bankCode: string;
+  bankName: string;
+  proxy: string;
+  traderId: number;
+  traderLogin: string;
+  status: RequisiteAssignmentStatus;
+  assignedForDate: string;
+  targetTurnoverMinor: number;
+  inboundTurnoverMinor: number;
+  outboundTurnoverMinor: number;
+  closingBalanceMinor: number;
+  cardNumber?: string;
+  holderName?: string;
+  takenAt?: string;
+  releasedAt?: string;
+  comment?: string;
+  assignedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt: string;
+  shiftRequisiteId?: number;
+};
+
+export type RequisiteAssignmentEvent = {
+  id: number;
+  assignmentId: number;
+  actorId: number;
+  action: string;
+  beforeJson?: Record<string, unknown>;
+  afterJson?: Record<string, unknown>;
+  comment?: string;
+  createdAt: string;
 };
 
 export type AssignmentHistoryItem = {
@@ -44,11 +99,32 @@ export type ShiftRequisite = {
   requisiteId: number;
   phone: string;
   methodType: "SBP" | "C2C";
+  bankCode: string;
+  bankName: string;
   proxy: string;
+  employeeComment?: string;
   cardNumber?: string;
   holderName?: string;
   latestTurnoverMinor: number;
-  status: "assigned" | "in_work";
+  inboundTurnoverMinor: number;
+  outboundTurnoverMinor: number;
+  closingBalanceMinor: number;
+  assignmentStatus: RequisiteAssignmentStatus;
+  assignedForDate: string;
+  targetTurnoverMinor: number;
+  status: "assigned" | "in_work" | "worked" | "correction" | "blocked";
+};
+
+export type ShiftReport = {
+  id: number;
+  traderId: number;
+  startedAt: string;
+  endedAt?: string;
+  closedAt?: string;
+  status: "closed" | "closed_with_discrepancy";
+  inboundReconciliationStatus: string;
+  outboundReconciliationStatus: string;
+  closeComment?: string;
 };
 
 export type TurnoverEntry = {
@@ -73,12 +149,21 @@ export type PayoutTransfer = {
   id: number;
   payoutId: number;
   sourceShiftRequisiteId: number;
+  sourceRequisiteId: number;
   amountMinor: number;
   comment?: string;
   createdAt: string;
 };
 
 export type OrderDirection = "inbound" | "outbound";
+
+export type OrderFilters = {
+  dateFrom?: string;
+  dateTo?: string;
+  search?: string;
+  status?: string;
+  traderIds?: number[];
+};
 
 export type Order = {
   id: string;
@@ -157,9 +242,22 @@ export type ReconciliationSummary = {
   runId?: number;
 };
 
+export type ReconciliationItem = {
+  id: number;
+  reconciliationRunId: number;
+  issueType: string;
+  externalInnerId?: string;
+  teamleadValue?: Record<string, unknown>;
+  traderValue?: Record<string, unknown>;
+  message?: string;
+  createdAt: string;
+};
+
 export type AccountingPeriod = {
   id: number;
   title: string;
+  dateFrom: string;
+  dateTo: string;
   dateRange: string;
   inboundStatus: "matched" | "mismatch" | "accepted_with_comment";
   outboundStatus: "matched" | "mismatch" | "accepted_with_comment";
@@ -175,4 +273,17 @@ export type AuditLogEntry = {
   entityId: string;
   comment?: string;
   maskedPayload: Record<string, unknown>;
+};
+
+export type TraderProfile = {
+  id: number;
+  login: string;
+  salaryRateBps: number;
+  externalWorkerName: string;
+  currentShiftSuccessInboundMinor: number;
+  currentShiftSalaryMinor: number;
+  periodId?: number;
+  periodTitle?: string;
+  periodSuccessInboundMinor: number;
+  periodSalaryMinor: number;
 };

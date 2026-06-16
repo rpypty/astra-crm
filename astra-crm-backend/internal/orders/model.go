@@ -28,6 +28,7 @@ type Filters struct {
 	DateFrom   *time.Time
 	DateTo     *time.Time
 	TraderID   *int64
+	TraderIDs  []int64
 	WorkerName *string
 	Requisite  *string
 	MethodType *string

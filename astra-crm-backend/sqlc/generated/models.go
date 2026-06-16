@@ -47,6 +47,15 @@ type AuthSession struct {
 	RevokedAt pgtype.Timestamptz
 }
 
+type Bank struct {
+	ID        int64
+	Code      string
+	Name      string
+	Status    string
+	SortOrder int64
+	CreatedAt pgtype.Timestamptz
+}
+
 type ExternalOrder struct {
 	ID                  int64
 	TeamID              int64
@@ -211,27 +220,53 @@ type ReconciliationRun struct {
 }
 
 type Requisite struct {
-	ID         int64
-	TeamID     int64
-	Phone      string
-	MethodType string
-	Proxy      pgtype.Text
-	Status     string
-	CreatedBy  int64
-	CreatedAt  pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
-	DeletedAt  pgtype.Timestamptz
+	ID              int64
+	TeamID          int64
+	Phone           string
+	MethodType      string
+	Proxy           pgtype.Text
+	Status          string
+	CreatedBy       int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+	BankCode        string
+	EmployeeComment pgtype.Text
+	HolderName      pgtype.Text
+	CardNumber      pgtype.Text
+	DetailsFilledAt pgtype.Timestamptz
+	DetailsFilledBy pgtype.Int8
 }
 
 type RequisiteAssignment struct {
+	ID                  int64
+	TeamID              int64
+	RequisiteID         int64
+	TraderID            int64
+	AssignedBy          int64
+	AssignedAt          pgtype.Timestamptz
+	UnassignedAt        pgtype.Timestamptz
+	Comment             pgtype.Text
+	Status              string
+	AssignedForDate     pgtype.Date
+	TargetTurnoverMinor int64
+	StartedAt           pgtype.Timestamptz
+	CompletedAt         pgtype.Timestamptz
+	CancelledAt         pgtype.Timestamptz
+	ShiftRequisiteID    pgtype.Int8
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type RequisiteAssignmentEvent struct {
 	ID           int64
 	TeamID       int64
-	RequisiteID  int64
-	TraderID     int64
-	AssignedBy   int64
-	AssignedAt   pgtype.Timestamptz
-	UnassignedAt pgtype.Timestamptz
+	AssignmentID int64
+	ActorID      int64
+	Action       string
+	BeforeJson   []byte
+	AfterJson    []byte
 	Comment      pgtype.Text
+	CreatedAt    pgtype.Timestamptz
 }
 
 type RequisiteTurnoverEntry struct {
@@ -248,19 +283,22 @@ type RequisiteTurnoverEntry struct {
 }
 
 type ShiftRequisite struct {
-	ID           int64
-	TeamID       int64
-	ShiftID      int64
-	TraderID     int64
-	RequisiteID  int64
-	AssignmentID pgtype.Int8
-	CardNumber   string
-	HolderName   string
-	TakenAt      pgtype.Timestamptz
-	ReleasedAt   pgtype.Timestamptz
-	Status       string
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	ID                    int64
+	TeamID                int64
+	ShiftID               int64
+	TraderID              int64
+	RequisiteID           int64
+	AssignmentID          pgtype.Int8
+	CardNumber            string
+	HolderName            string
+	TakenAt               pgtype.Timestamptz
+	ReleasedAt            pgtype.Timestamptz
+	Status                string
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	InboundTurnoverMinor  int64
+	OutboundTurnoverMinor int64
+	ClosingBalanceMinor   int64
 }
 
 type Team struct {

@@ -129,6 +129,79 @@ func TestServiceCreateTurnoverRejectsNegativeAmount(t *testing.T) {
 	}
 }
 
+func TestServiceCloseShiftRequisiteStoresFinalTurnoversAndAudits(t *testing.T) {
+	store := &fakeStore{}
+	auditService := &fakeAuditService{}
+	service := NewService(store, auditService)
+
+	comment := "карта отработала"
+	item, err := service.CloseShiftRequisite(context.Background(), CloseShiftRequisiteParams{
+		ActorID:               1,
+		TeamID:                2,
+		TraderID:              3,
+		ShiftRequisiteID:      20,
+		InboundTurnoverMinor:  150000,
+		OutboundTurnoverMinor: 25000,
+		ClosingBalanceMinor:   7500,
+		Blocked:               true,
+		Comment:               &comment,
+	})
+	if err != nil {
+		t.Fatalf("CloseShiftRequisite() error = %v", err)
+	}
+
+	if item.Status != RequisiteStatusBlocked {
+		t.Fatalf("status = %q, want %q", item.Status, RequisiteStatusBlocked)
+	}
+	if store.closedShiftRequisite.InboundTurnoverMinor != 150000 || store.closedShiftRequisite.OutboundTurnoverMinor != 25000 {
+		t.Fatalf("closed turnovers = %d/%d, want 150000/25000", store.closedShiftRequisite.InboundTurnoverMinor, store.closedShiftRequisite.OutboundTurnoverMinor)
+	}
+	if store.closedShiftRequisite.ClosingBalanceMinor != 7500 {
+		t.Fatalf("closing balance = %d, want 7500", store.closedShiftRequisite.ClosingBalanceMinor)
+	}
+	if !store.closedShiftRequisite.Blocked {
+		t.Fatal("blocked flag was not passed to store")
+	}
+	if len(auditService.events) != 1 {
+		t.Fatalf("audit events count = %d, want 1", len(auditService.events))
+	}
+	if auditService.events[0].Action != audit.ActionShiftRequisiteClosed {
+		t.Fatalf("audit action = %q, want %q", auditService.events[0].Action, audit.ActionShiftRequisiteClosed)
+	}
+}
+
+func TestServiceCloseShiftRequisiteRejectsNegativeTurnover(t *testing.T) {
+	service := NewService(&fakeStore{}, nil)
+
+	_, err := service.CloseShiftRequisite(context.Background(), CloseShiftRequisiteParams{
+		ActorID:              1,
+		TeamID:               2,
+		TraderID:             3,
+		ShiftRequisiteID:     20,
+		InboundTurnoverMinor: -1,
+	})
+	if err != ErrInvalidInput {
+		t.Fatalf("CloseShiftRequisite() error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestServiceCloseShiftRequisiteRejectsNegativeClosingBalance(t *testing.T) {
+	service := NewService(&fakeStore{}, nil)
+
+	_, err := service.CloseShiftRequisite(context.Background(), CloseShiftRequisiteParams{
+		ActorID:               1,
+		TeamID:                2,
+		TraderID:              3,
+		ShiftRequisiteID:      20,
+		InboundTurnoverMinor:  100,
+		OutboundTurnoverMinor: 0,
+		ClosingBalanceMinor:   -1,
+	})
+	if err != ErrInvalidInput {
+		t.Fatalf("CloseShiftRequisite() error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestServiceCloseCurrentBlocksWhenChecklistIncomplete(t *testing.T) {
 	service := NewService(&fakeStore{
 		checklist: CloseChecklist{
@@ -175,6 +248,45 @@ func TestServiceCloseCurrentBlocksWhenPayoutsAreUnpaidEvenIfReconciled(t *testin
 			AllPayoutsFullyPaid: false,
 			UnpaidPayoutCount:   1,
 			CanClose:            false,
+		},
+	}, nil)
+
+	_, err := service.CloseCurrent(context.Background(), CloseShiftParams{
+		ActorID:  1,
+		TeamID:   2,
+		TraderID: 3,
+	})
+	if err != ErrCloseBlocked {
+		t.Fatalf("CloseCurrent() error = %v, want ErrCloseBlocked", err)
+	}
+}
+
+func TestServiceCloseCurrentBlocksWhenRequisitesAreOpen(t *testing.T) {
+	service := NewService(&fakeStore{
+		checklist: CloseChecklist{
+			Shift: Shift{
+				ID:                           10,
+				TeamID:                       2,
+				TraderID:                     3,
+				Status:                       StatusOpen,
+				InboundReconciliationStatus:  "matched",
+				OutboundReconciliationStatus: "matched",
+			},
+			InboundImported:     true,
+			InboundOk:           true,
+			OutboundImported:    true,
+			OutboundOk:          true,
+			AllPayoutsFullyPaid: true,
+			CanClose:            true,
+		},
+		shiftRequisites: []ShiftRequisite{
+			{
+				ID:       20,
+				ShiftID:  10,
+				Status:   RequisiteStatusActive,
+				TeamID:   2,
+				TraderID: 3,
+			},
 		},
 	}, nil)
 
@@ -245,6 +357,8 @@ type fakeStore struct {
 	assignmentErr         error
 	createdShiftRequisite CreateShiftRequisiteRecord
 	createdTurnover       CreateTurnoverEntryRecord
+	closedShiftRequisite  CloseShiftRequisiteRecord
+	shiftRequisites       []ShiftRequisite
 	checklist             CloseChecklist
 	closeRecord           CloseShiftRecord
 	closedShift           Shift
@@ -276,6 +390,14 @@ func (s *fakeStore) CreateShift(ctx context.Context, teamID int64, traderID int6
 	return s.createdShift, nil
 }
 
+func (s *fakeStore) ShiftHistory(ctx context.Context, teamID int64, traderID int64, limit int32) ([]Shift, error) {
+	return nil, nil
+}
+
+func (s *fakeStore) TeamShiftHistory(ctx context.Context, teamID int64, limit int32) ([]Shift, error) {
+	return nil, nil
+}
+
 func (s *fakeStore) ActiveAssignment(ctx context.Context, teamID int64, traderID int64, requisiteID int64) (int64, error) {
 	if s.assignmentErr != nil {
 		return 0, s.assignmentErr
@@ -284,6 +406,22 @@ func (s *fakeStore) ActiveAssignment(ctx context.Context, teamID int64, traderID
 }
 
 func (s *fakeStore) AssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
+	return nil, nil
+}
+
+func (s *fakeStore) FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
+	return nil, nil
+}
+
+func (s *fakeStore) HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
+	return nil, nil
+}
+
+func (s *fakeStore) AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]AssignedRequisite, error) {
+	return nil, nil
+}
+
+func (s *fakeStore) AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64) ([]AssignedRequisite, error) {
 	return nil, nil
 }
 
@@ -306,6 +444,9 @@ func (s *fakeStore) CreateShiftRequisite(ctx context.Context, params CreateShift
 }
 
 func (s *fakeStore) ShiftRequisites(ctx context.Context, teamID int64, traderID int64) ([]ShiftRequisite, error) {
+	if s.shiftRequisites != nil {
+		return s.shiftRequisites, nil
+	}
 	return nil, nil
 }
 
@@ -326,6 +467,30 @@ func (s *fakeStore) CreateTurnoverEntry(ctx context.Context, params CreateTurnov
 		CreatedBy:        params.CreatedBy,
 		CreatedAt:        time.Date(2026, 6, 8, 11, 0, 0, 0, time.UTC),
 		Comment:          params.Comment,
+	}, nil
+}
+
+func (s *fakeStore) CloseShiftRequisite(ctx context.Context, params CloseShiftRequisiteRecord) (ShiftRequisite, error) {
+	s.closedShiftRequisite = params
+	status := RequisiteStatusWorked
+	if params.Blocked {
+		status = RequisiteStatusBlocked
+	}
+	return ShiftRequisite{
+		ID:                    params.ShiftRequisiteID,
+		TeamID:                params.TeamID,
+		ShiftID:               10,
+		TraderID:              params.TraderID,
+		RequisiteID:           4,
+		CardNumber:            "1234567890123456",
+		HolderName:            "Иванов Иван",
+		TakenAt:               time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+		Status:                status,
+		InboundTurnoverMinor:  params.InboundTurnoverMinor,
+		OutboundTurnoverMinor: params.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   params.ClosingBalanceMinor,
+		CreatedAt:             time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+		UpdatedAt:             time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC),
 	}, nil
 }
 

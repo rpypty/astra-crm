@@ -2,6 +2,7 @@ package reconciliation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -88,6 +89,12 @@ func (r *Repository) RecalculateTraderInbound(ctx context.Context, record Recalc
 		return Run{}, err
 	}
 
+	if diff != 0 {
+		if err := createTotalMismatchItem(ctx, tx, run.ID, expected.ExpectedAmountMinor, actualAmount, diff, "Trader invoice CSV total differs from closed requisite turnover"); err != nil {
+			return Run{}, err
+		}
+	}
+
 	if err := queries.UpdateTraderShiftInboundReconciliationStatus(ctx, db.UpdateTraderShiftInboundReconciliationStatusParams{
 		Status:   status,
 		ShiftID:  record.ShiftID,
@@ -153,11 +160,21 @@ func (r *Repository) RecalculateTraderOutbound(ctx context.Context, record Recal
 		ExpectedAmountMinor: expected.ExpectedAmountMinor,
 		ActualAmountMinor:   actualAmount,
 		DiffAmountMinor:     diff,
-		OrderCount:          expected.OrderCount,
+		SuccessCount:        expected.SuccessCount,
+		FailedAmountMinor:   expected.FailedAmountMinor,
+		FailedCount:         expected.FailedCount,
+		TotalAmountMinor:    expected.TotalAmountMinor,
+		TotalCount:          expected.TotalCount,
 		Status:              status,
 	})
 	if err != nil {
 		return Run{}, err
+	}
+
+	if diff != 0 {
+		if err := createTotalMismatchItem(ctx, tx, run.ID, expected.ExpectedAmountMinor, actualAmount, diff, "Trader payout CSV total differs from manual payout transfers"); err != nil {
+			return Run{}, err
+		}
 	}
 
 	if err := queries.CreateTraderOutboundUnpaidPayoutItems(ctx, db.CreateTraderOutboundUnpaidPayoutItemsParams{
@@ -232,6 +249,82 @@ func (r *Repository) RecalculateTeamleadPeriodInbound(ctx context.Context, recor
 	}
 
 	itemIDs, err := queries.CreateTeamleadPeriodInboundReconciliationItems(ctx, db.CreateTeamleadPeriodInboundReconciliationItemsParams{
+		RunID:              run.ID,
+		TeamID:             record.TeamID,
+		AccountingPeriodID: record.AccountingPeriodID,
+	})
+	if err != nil {
+		return Run{}, err
+	}
+
+	status := StatusMismatch
+	if diff == 0 && summary.ExpectedSuccessCount == summary.ActualSuccessCount && len(itemIDs) == 0 {
+		status = StatusMatched
+	}
+
+	run, err = queries.UpdateReconciliationRunStatus(ctx, db.UpdateReconciliationRunStatusParams{
+		Status: status,
+		RunID:  run.ID,
+		TeamID: record.TeamID,
+	})
+	if err != nil {
+		return Run{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Run{}, err
+	}
+	committed = true
+
+	return fromDBRun(run), nil
+}
+
+func (r *Repository) RecalculateTeamleadPeriodOutbound(ctx context.Context, record RecalculateTeamleadPeriodOutboundRecord) (Run, error) {
+	if r.db == nil {
+		return Run{}, ErrRepositoryNotConfigured
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Run{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	queries := db.New(tx)
+	summary, err := queries.CalculateTeamleadPeriodOutboundSummary(ctx, db.CalculateTeamleadPeriodOutboundSummaryParams{
+		TeamID:             record.TeamID,
+		AccountingPeriodID: record.AccountingPeriodID,
+	})
+	if err != nil {
+		return Run{}, err
+	}
+
+	diff := summary.ActualAmountMinor - summary.ExpectedAmountMinor
+	run, err := queries.CreateTeamleadPeriodOutboundReconciliationRun(ctx, db.CreateTeamleadPeriodOutboundReconciliationRunParams{
+		TeamID:              record.TeamID,
+		AccountingPeriodID:  int8Value(&record.AccountingPeriodID),
+		ImportBatchID:       int8Value(record.ImportBatchID),
+		ExpectedAmountMinor: summary.ExpectedAmountMinor,
+		ActualAmountMinor:   summary.ActualAmountMinor,
+		DiffAmountMinor:     diff,
+		SuccessAmountMinor:  summary.ExpectedAmountMinor,
+		SuccessCount:        summary.ExpectedSuccessCount,
+		FailedAmountMinor:   summary.FailedAmountMinor,
+		FailedCount:         summary.FailedCount,
+		TotalAmountMinor:    summary.TotalAmountMinor,
+		TotalCount:          summary.TotalCount,
+		Status:              StatusMismatch,
+	})
+	if err != nil {
+		return Run{}, err
+	}
+
+	itemIDs, err := queries.CreateTeamleadPeriodOutboundReconciliationItems(ctx, db.CreateTeamleadPeriodOutboundReconciliationItemsParams{
 		RunID:              run.ID,
 		TeamID:             record.TeamID,
 		AccountingPeriodID: record.AccountingPeriodID,
@@ -369,6 +462,41 @@ func (r *Repository) LatestTeamleadPeriodInbound(ctx context.Context, teamID int
 	return fromDBRun(run), nil
 }
 
+func (r *Repository) LatestTeamleadPeriodOutbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error) {
+	if r.db == nil {
+		return Run{}, ErrRepositoryNotConfigured
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Run{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	run, err := db.New(tx).LatestTeamleadPeriodOutboundReconciliationRun(ctx, db.LatestTeamleadPeriodOutboundReconciliationRunParams{
+		TeamID:             teamID,
+		AccountingPeriodID: int8Value(&accountingPeriodID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, ErrRunNotFound
+	}
+	if err != nil {
+		return Run{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Run{}, err
+	}
+	committed = true
+
+	return fromDBRun(run), nil
+}
+
 func (r *Repository) LatestTeamleadInbound(ctx context.Context, teamID int64) (Run, error) {
 	if r.db == nil {
 		return Run{}, ErrRepositoryNotConfigured
@@ -386,6 +514,38 @@ func (r *Repository) LatestTeamleadInbound(ctx context.Context, teamID int64) (R
 	}()
 
 	run, err := db.New(tx).LatestTeamleadInboundReconciliationRun(ctx, teamID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, ErrRunNotFound
+	}
+	if err != nil {
+		return Run{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Run{}, err
+	}
+	committed = true
+
+	return fromDBRun(run), nil
+}
+
+func (r *Repository) LatestTeamleadOutbound(ctx context.Context, teamID int64) (Run, error) {
+	if r.db == nil {
+		return Run{}, ErrRepositoryNotConfigured
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Run{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	run, err := db.New(tx).LatestTeamleadOutboundReconciliationRun(ctx, teamID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, ErrRunNotFound
 	}
@@ -473,6 +633,75 @@ func (r *Repository) ListActiveTeamleadInboundPeriodScopes(ctx context.Context, 
 	committed = true
 
 	return scopes, nil
+}
+
+func (r *Repository) ListActiveTeamleadOutboundPeriodScopes(ctx context.Context, teamID int64) ([]TeamleadOutboundPeriodScope, error) {
+	if r.db == nil {
+		return nil, ErrRepositoryNotConfigured
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	rows, err := db.New(tx).ListActiveTeamleadOutboundPeriodScopes(ctx, teamID)
+	if err != nil {
+		return nil, err
+	}
+
+	scopes := make([]TeamleadOutboundPeriodScope, 0, len(rows))
+	for _, row := range rows {
+		if !row.AccountingPeriodID.Valid {
+			continue
+		}
+		scopes = append(scopes, TeamleadOutboundPeriodScope{
+			AccountingPeriodID: row.AccountingPeriodID.Int64,
+			ImportBatchID:      row.ImportBatchID,
+		})
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	committed = true
+
+	return scopes, nil
+}
+
+func createTotalMismatchItem(ctx context.Context, tx pgx.Tx, runID int64, csvAmountMinor int64, crmAmountMinor int64, diffAmountMinor int64, message string) error {
+	csvValue, err := json.Marshal(map[string]int64{
+		"amountMinor": csvAmountMinor,
+	})
+	if err != nil {
+		return err
+	}
+	crmValue, err := json.Marshal(map[string]int64{
+		"amountMinor":     crmAmountMinor,
+		"diffAmountMinor": diffAmountMinor,
+	})
+	if err != nil {
+		return err
+	}
+
+	_, err = tx.Exec(ctx, `
+		INSERT INTO reconciliation_items (
+			reconciliation_run_id,
+			issue_type,
+			teamlead_value_json,
+			trader_value_json,
+			message
+		)
+		VALUES ($1, 'total_mismatch', $2::jsonb, $3::jsonb, $4)
+	`, runID, csvValue, crmValue, message)
+
+	return err
 }
 
 func (r *Repository) AcceptTraderInbound(ctx context.Context, record AcceptTraderInboundRecord) (Run, error) {

@@ -171,7 +171,7 @@ export function ImportResultDialog({ result, onClose }: { result: ImportResult |
   );
 }
 
-export function MismatchAlert({ summary }: { summary: ReconciliationSummary }) {
+export function MismatchAlert({ summary, title = "Есть расхождение сверки" }: { summary: ReconciliationSummary; title?: string }) {
   if (summary.status !== "mismatch") return null;
 
   return (
@@ -180,7 +180,7 @@ export function MismatchAlert({ summary }: { summary: ReconciliationSummary }) {
         <div className="flex gap-3">
           <AlertTriangle className="mt-0.5 h-5 w-5 text-red-600" />
           <div>
-            <div className="font-semibold">Есть расхождение сверки</div>
+            <div className="font-semibold">{title}</div>
             <div className="text-sm text-red-800">
               Ожидалось {formatMoneyMinor(summary.expectedMinor)}, факт {formatMoneyMinor(summary.actualMinor)}.
             </div>

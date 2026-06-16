@@ -42,3 +42,41 @@ export function bpsToPercent(value: number) {
 export function percentToBps(value: number) {
   return Math.round(value * 100);
 }
+
+export function phoneDigits(value: string) {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("8")) return `7${digits.slice(1)}`;
+  if (digits.length === 10) return `7${digits}`;
+  return digits;
+}
+
+export function isValidRussianPhone(value: string) {
+  return /^7\d{10}$/.test(phoneDigits(value));
+}
+
+export function normalizeRussianPhone(value: string) {
+  const digits = phoneDigits(value);
+  return /^7\d{10}$/.test(digits) ? digits : value.trim();
+}
+
+export function formatRussianPhone(value: string) {
+  const digits = phoneDigits(value);
+  if (!/^7\d{10}$/.test(digits)) return value || "—";
+  return `+7 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7, 9)}-${digits.slice(9, 11)}`;
+}
+
+export function cardDigits(value: string) {
+  return value.replace(/\D/g, "");
+}
+
+export function normalizeCardNumber(value: string) {
+  const digits = cardDigits(value);
+  return digits || value.trim();
+}
+
+export function formatCardNumber(value: string | null | undefined) {
+  if (!value) return "—";
+  const digits = cardDigits(value);
+  if (!digits) return value;
+  return digits.replace(/(.{4})/g, "$1 ").trim();
+}

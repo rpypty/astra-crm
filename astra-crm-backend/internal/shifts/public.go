@@ -18,35 +18,47 @@ type PublicShift struct {
 }
 
 type PublicAssignedRequisite struct {
-	ID                   int64      `json:"id"`
-	TeamID               int64      `json:"teamId"`
-	Phone                string     `json:"phone"`
-	MethodType           string     `json:"methodType"`
-	Proxy                *string    `json:"proxy,omitempty"`
-	Status               string     `json:"status"`
-	AssignmentID         int64      `json:"assignmentId"`
-	ShiftRequisiteID     *int64     `json:"shiftRequisiteId,omitempty"`
-	CardNumber           *string    `json:"cardNumber,omitempty"`
-	HolderName           *string    `json:"holderName,omitempty"`
-	ShiftRequisiteStatus *string    `json:"shiftRequisiteStatus,omitempty"`
-	TakenAt              *time.Time `json:"takenAt,omitempty"`
-	InWork               bool       `json:"inWork"`
+	ID                    int64      `json:"id"`
+	TeamID                int64      `json:"teamId"`
+	Phone                 string     `json:"phone"`
+	MethodType            string     `json:"methodType"`
+	BankCode              string     `json:"bankCode"`
+	BankName              string     `json:"bankName"`
+	Proxy                 *string    `json:"proxy,omitempty"`
+	EmployeeComment       *string    `json:"employeeComment,omitempty"`
+	Status                string     `json:"status"`
+	AssignmentID          int64      `json:"assignmentId"`
+	AssignmentStatus      string     `json:"assignmentStatus"`
+	AssignedForDate       time.Time  `json:"assignedForDate"`
+	TargetTurnoverMinor   int64      `json:"targetTurnoverMinor"`
+	ShiftRequisiteID      *int64     `json:"shiftRequisiteId,omitempty"`
+	CardNumber            *string    `json:"cardNumber,omitempty"`
+	HolderName            *string    `json:"holderName,omitempty"`
+	ShiftRequisiteStatus  *string    `json:"shiftRequisiteStatus,omitempty"`
+	TakenAt               *time.Time `json:"takenAt,omitempty"`
+	InboundTurnoverMinor  int64      `json:"inboundTurnoverMinor"`
+	OutboundTurnoverMinor int64      `json:"outboundTurnoverMinor"`
+	ClosingBalanceMinor   int64      `json:"closingBalanceMinor"`
+	InWork                bool       `json:"inWork"`
 }
 
 type PublicShiftRequisite struct {
-	ID           int64      `json:"id"`
-	TeamID       int64      `json:"teamId"`
-	ShiftID      int64      `json:"shiftId"`
-	TraderID     int64      `json:"traderId"`
-	RequisiteID  int64      `json:"requisiteId"`
-	AssignmentID *int64     `json:"assignmentId,omitempty"`
-	CardNumber   string     `json:"cardNumber"`
-	HolderName   string     `json:"holderName"`
-	TakenAt      time.Time  `json:"takenAt"`
-	ReleasedAt   *time.Time `json:"releasedAt,omitempty"`
-	Status       string     `json:"status"`
-	CreatedAt    time.Time  `json:"createdAt"`
-	UpdatedAt    time.Time  `json:"updatedAt"`
+	ID                    int64      `json:"id"`
+	TeamID                int64      `json:"teamId"`
+	ShiftID               int64      `json:"shiftId"`
+	TraderID              int64      `json:"traderId"`
+	RequisiteID           int64      `json:"requisiteId"`
+	AssignmentID          *int64     `json:"assignmentId,omitempty"`
+	CardNumber            string     `json:"cardNumber"`
+	HolderName            string     `json:"holderName"`
+	TakenAt               time.Time  `json:"takenAt"`
+	ReleasedAt            *time.Time `json:"releasedAt,omitempty"`
+	Status                string     `json:"status"`
+	InboundTurnoverMinor  int64      `json:"inboundTurnoverMinor"`
+	OutboundTurnoverMinor int64      `json:"outboundTurnoverMinor"`
+	ClosingBalanceMinor   int64      `json:"closingBalanceMinor"`
+	CreatedAt             time.Time  `json:"createdAt"`
+	UpdatedAt             time.Time  `json:"updatedAt"`
 }
 
 type PublicTurnoverEntry struct {
@@ -63,14 +75,16 @@ type PublicTurnoverEntry struct {
 }
 
 type PublicCloseChecklist struct {
-	Shift                 PublicShift `json:"shift"`
-	InboundImported       bool        `json:"inboundImported"`
-	InboundOk             bool        `json:"inboundOk"`
-	OutboundImported      bool        `json:"outboundImported"`
-	OutboundOk            bool        `json:"outboundOk"`
-	AllPayoutsFullyPaid   bool        `json:"allPayoutsFullyPaid"`
-	UnpaidPayoutCount     int64       `json:"unpaidPayoutCount"`
-	CanClose              bool        `json:"canClose"`
+	Shift               PublicShift `json:"shift"`
+	InboundImported     bool        `json:"inboundImported"`
+	InboundOk           bool        `json:"inboundOk"`
+	OutboundImported    bool        `json:"outboundImported"`
+	OutboundOk          bool        `json:"outboundOk"`
+	AllRequisitesClosed bool        `json:"allRequisitesClosed"`
+	OpenRequisiteCount  int64       `json:"openRequisiteCount"`
+	AllPayoutsFullyPaid bool        `json:"allPayoutsFullyPaid"`
+	UnpaidPayoutCount   int64       `json:"unpaidPayoutCount"`
+	CanClose            bool        `json:"canClose"`
 }
 
 func PublicShiftFromDomain(shift Shift) PublicShift {
@@ -90,21 +104,39 @@ func PublicShiftFromDomain(shift Shift) PublicShift {
 	}
 }
 
+func PublicShiftsFromDomain(items []Shift) []PublicShift {
+	result := make([]PublicShift, 0, len(items))
+	for _, item := range items {
+		result = append(result, PublicShiftFromDomain(item))
+	}
+
+	return result
+}
+
 func PublicAssignedRequisiteFromDomain(item AssignedRequisite) PublicAssignedRequisite {
 	return PublicAssignedRequisite{
-		ID:                   item.ID,
-		TeamID:               item.TeamID,
-		Phone:                item.Phone,
-		MethodType:           item.MethodType,
-		Proxy:                item.Proxy,
-		Status:               item.Status,
-		AssignmentID:         item.AssignmentID,
-		ShiftRequisiteID:     item.ShiftRequisiteID,
-		CardNumber:           item.CardNumber,
-		HolderName:           item.HolderName,
-		ShiftRequisiteStatus: item.ShiftRequisiteStatus,
-		TakenAt:              item.TakenAt,
-		InWork:               item.ShiftRequisiteID != nil,
+		ID:                    item.ID,
+		TeamID:                item.TeamID,
+		Phone:                 item.Phone,
+		MethodType:            item.MethodType,
+		BankCode:              item.BankCode,
+		BankName:              item.BankName,
+		Proxy:                 item.Proxy,
+		EmployeeComment:       item.EmployeeComment,
+		Status:                item.Status,
+		AssignmentID:          item.AssignmentID,
+		AssignmentStatus:      item.AssignmentStatus,
+		AssignedForDate:       item.AssignedForDate,
+		TargetTurnoverMinor:   item.TargetTurnoverMinor,
+		ShiftRequisiteID:      item.ShiftRequisiteID,
+		CardNumber:            item.CardNumber,
+		HolderName:            item.HolderName,
+		ShiftRequisiteStatus:  item.ShiftRequisiteStatus,
+		TakenAt:               item.TakenAt,
+		InboundTurnoverMinor:  item.InboundTurnoverMinor,
+		OutboundTurnoverMinor: item.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   item.ClosingBalanceMinor,
+		InWork:                item.ShiftRequisiteID != nil && item.ShiftRequisiteStatus != nil && *item.ShiftRequisiteStatus == RequisiteStatusActive,
 	}
 }
 
@@ -119,19 +151,22 @@ func PublicAssignedRequisites(items []AssignedRequisite) []PublicAssignedRequisi
 
 func PublicShiftRequisiteFromDomain(item ShiftRequisite) PublicShiftRequisite {
 	return PublicShiftRequisite{
-		ID:           item.ID,
-		TeamID:       item.TeamID,
-		ShiftID:      item.ShiftID,
-		TraderID:     item.TraderID,
-		RequisiteID:  item.RequisiteID,
-		AssignmentID: item.AssignmentID,
-		CardNumber:   item.CardNumber,
-		HolderName:   item.HolderName,
-		TakenAt:      item.TakenAt,
-		ReleasedAt:   item.ReleasedAt,
-		Status:       item.Status,
-		CreatedAt:    item.CreatedAt,
-		UpdatedAt:    item.UpdatedAt,
+		ID:                    item.ID,
+		TeamID:                item.TeamID,
+		ShiftID:               item.ShiftID,
+		TraderID:              item.TraderID,
+		RequisiteID:           item.RequisiteID,
+		AssignmentID:          item.AssignmentID,
+		CardNumber:            item.CardNumber,
+		HolderName:            item.HolderName,
+		TakenAt:               item.TakenAt,
+		ReleasedAt:            item.ReleasedAt,
+		Status:                item.Status,
+		InboundTurnoverMinor:  item.InboundTurnoverMinor,
+		OutboundTurnoverMinor: item.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   item.ClosingBalanceMinor,
+		CreatedAt:             item.CreatedAt,
+		UpdatedAt:             item.UpdatedAt,
 	}
 }
 
@@ -175,6 +210,8 @@ func PublicCloseChecklistFromDomain(checklist CloseChecklist) PublicCloseCheckli
 		InboundOk:           checklist.InboundOk,
 		OutboundImported:    checklist.OutboundImported,
 		OutboundOk:          checklist.OutboundOk,
+		AllRequisitesClosed: checklist.AllRequisitesClosed,
+		OpenRequisiteCount:  checklist.OpenRequisiteCount,
 		AllPayoutsFullyPaid: checklist.AllPayoutsFullyPaid,
 		UnpaidPayoutCount:   checklist.UnpaidPayoutCount,
 		CanClose:            checklist.CanClose,

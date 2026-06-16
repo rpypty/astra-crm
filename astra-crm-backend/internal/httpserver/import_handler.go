@@ -108,7 +108,8 @@ func (h *ImportHandler) applyTraderImport(w http.ResponseWriter, r *http.Request
 		},
 		Reader: reader,
 		ParseOptions: imports.ParseOptions{
-			ColumnSet: imports.ColumnSetTrader,
+			ColumnSet:         imports.ColumnSetTrader,
+			DefaultWorkerName: fmt.Sprintf("trader:%d", actor.ID),
 		},
 	})
 	if err != nil {

@@ -82,12 +82,13 @@ SELECT
 FROM order_scope_items osi
 LEFT JOIN users u ON u.id = osi.trader_id
 WHERE osi.team_id = sqlc.arg(team_id)
-  AND osi.scope_type = 'teamlead_period'
+  AND osi.scope_type = 'trader_shift'
   AND osi.direction = sqlc.arg(direction)
   AND osi.is_active = TRUE
   AND (sqlc.narg(date_from)::date IS NULL OR osi.created_at_external::date >= sqlc.narg(date_from)::date)
   AND (sqlc.narg(date_to)::date IS NULL OR osi.created_at_external::date <= sqlc.narg(date_to)::date)
   AND (sqlc.narg(trader_id)::bigint IS NULL OR osi.trader_id = sqlc.narg(trader_id)::bigint)
+  AND (COALESCE(cardinality(sqlc.arg(trader_ids)::bigint[]), 0) = 0 OR osi.trader_id = ANY(sqlc.arg(trader_ids)::bigint[]))
   AND (sqlc.narg(worker_name)::text IS NULL OR osi.worker_name ILIKE '%' || sqlc.narg(worker_name)::text || '%')
   AND (
       sqlc.narg(requisite)::text IS NULL
@@ -142,12 +143,13 @@ SELECT
     count(*) FILTER (WHERE osi.normalized_status = 'unknown')::bigint AS unknown_count
 FROM order_scope_items osi
 WHERE osi.team_id = sqlc.arg(team_id)
-  AND osi.scope_type = 'teamlead_period'
+  AND osi.scope_type = 'trader_shift'
   AND osi.direction = sqlc.arg(direction)
   AND osi.is_active = TRUE
   AND (sqlc.narg(date_from)::date IS NULL OR osi.created_at_external::date >= sqlc.narg(date_from)::date)
   AND (sqlc.narg(date_to)::date IS NULL OR osi.created_at_external::date <= sqlc.narg(date_to)::date)
-  AND (sqlc.narg(trader_id)::bigint IS NULL OR osi.trader_id = sqlc.narg(trader_id)::bigint);
+  AND (sqlc.narg(trader_id)::bigint IS NULL OR osi.trader_id = sqlc.narg(trader_id)::bigint)
+  AND (COALESCE(cardinality(sqlc.arg(trader_ids)::bigint[]), 0) = 0 OR osi.trader_id = ANY(sqlc.arg(trader_ids)::bigint[]));
 
 -- name: TraderStatusBreakdown :many
 SELECT
@@ -174,12 +176,13 @@ SELECT
     count(*)::bigint AS count
 FROM order_scope_items osi
 WHERE osi.team_id = sqlc.arg(team_id)
-  AND osi.scope_type = 'teamlead_period'
+  AND osi.scope_type = 'trader_shift'
   AND osi.direction = sqlc.arg(direction)
   AND osi.is_active = TRUE
   AND (sqlc.narg(date_from)::date IS NULL OR osi.created_at_external::date >= sqlc.narg(date_from)::date)
   AND (sqlc.narg(date_to)::date IS NULL OR osi.created_at_external::date <= sqlc.narg(date_to)::date)
   AND (sqlc.narg(trader_id)::bigint IS NULL OR osi.trader_id = sqlc.narg(trader_id)::bigint)
+  AND (COALESCE(cardinality(sqlc.arg(trader_ids)::bigint[]), 0) = 0 OR osi.trader_id = ANY(sqlc.arg(trader_ids)::bigint[]))
 GROUP BY osi.raw_status, osi.normalized_status
 ORDER BY count DESC, amount_minor DESC, osi.raw_status;
 
@@ -197,7 +200,9 @@ LIMIT sqlc.arg(limit_count);
 SELECT id, team_id, uploaded_by, scope_type, direction, shift_id, accounting_period_id, trader_id, file_name, file_hash, rows_count, status, superseded_by_batch_id, error_message, created_at, applied_at
 FROM import_batches
 WHERE team_id = sqlc.arg(team_id)
-  AND scope_type = 'teamlead_period'
+  AND scope_type = 'trader_shift'
   AND direction = sqlc.arg(direction)
+  AND (sqlc.narg(trader_id)::bigint IS NULL OR trader_id = sqlc.narg(trader_id)::bigint)
+  AND (COALESCE(cardinality(sqlc.arg(trader_ids)::bigint[]), 0) = 0 OR trader_id = ANY(sqlc.arg(trader_ids)::bigint[]))
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(limit_count);

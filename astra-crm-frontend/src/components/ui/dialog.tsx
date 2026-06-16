@@ -11,15 +11,22 @@ export const DialogClose = DialogPrimitive.Close;
 export const DialogContent = forwardRef<
   ElementRef<typeof DialogPrimitive.Content>,
   ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+>(({ className, children, onClick, ...props }, ref) => (
   <DialogPrimitive.Portal>
-    <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-slate-950/35" />
+    <DialogPrimitive.Overlay
+      className="fixed inset-0 z-50 bg-slate-950/35"
+      onClick={(event) => event.stopPropagation()}
+    />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 w-[min(420px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-5 shadow-lg",
+        "fixed left-1/2 top-1/2 z-50 w-[calc(100vw-32px)] max-w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-card p-5 shadow-lg",
         className,
       )}
+      onClick={(event) => {
+        onClick?.(event);
+        event.stopPropagation();
+      }}
       {...props}
     >
       {children}

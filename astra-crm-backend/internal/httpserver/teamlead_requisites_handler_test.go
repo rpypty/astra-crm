@@ -22,6 +22,8 @@ func TestTeamleadRequisitesHandlerCreateReturnsBaseRequisiteOnly(t *testing.T) {
 				TeamID:     2,
 				Phone:      "+79991234567",
 				MethodType: "sbp",
+				BankCode:   "sber",
+				BankName:   "Сбер",
 				Proxy:      &proxy,
 				Status:     requisites.StatusActive,
 				CreatedAt:  time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
@@ -34,7 +36,7 @@ func TestTeamleadRequisitesHandlerCreateReturnsBaseRequisiteOnly(t *testing.T) {
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/teamlead/requisites", strings.NewReader(`{
 		"phone": "+79991234567",
-		"methodType": "sbp",
+		"bankCode": "sber",
 		"proxy": "192.168.1.1:8080"
 	}`))
 	request = request.WithContext(ContextWithCurrentUser(request.Context(), users.User{
@@ -54,6 +56,47 @@ func TestTeamleadRequisitesHandlerCreateReturnsBaseRequisiteOnly(t *testing.T) {
 	}
 	if service.createParams.ActorID != 1 || service.createParams.TeamID != 2 {
 		t.Fatalf("create actor/team = %d/%d, want 1/2", service.createParams.ActorID, service.createParams.TeamID)
+	}
+}
+
+func TestTeamleadRequisitesHandlerListAllowsUnassignedRequisites(t *testing.T) {
+	service := &fakeTeamleadRequisiteService{
+		listResult: []requisites.RequisiteDetails{
+			{
+				Requisite: requisites.Requisite{
+					ID:        10,
+					TeamID:    2,
+					Phone:     "+79991234567",
+					BankCode:  "sber",
+					BankName:  "Сбер",
+					Status:    requisites.StatusActive,
+					CreatedAt: time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+					UpdatedAt: time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+				},
+			},
+		},
+	}
+	handler := NewTeamleadRequisitesHandler(service)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/teamlead/requisites", nil)
+	request = request.WithContext(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     1,
+		TeamID: 2,
+		Role:   users.RoleTeamlead,
+		Status: users.StatusActive,
+	}))
+
+	handler.List(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), `"id":10`) {
+		t.Fatalf("response does not contain requisite: %s", response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "assignedTraderId") {
+		t.Fatalf("unassigned requisite response contains assignment fields: %s", response.Body.String())
 	}
 }
 
@@ -122,6 +165,7 @@ func withRequisiteID(ctx context.Context, id string) context.Context {
 type fakeTeamleadRequisiteService struct {
 	createParams requisites.CreateParams
 	createResult requisites.RequisiteDetails
+	listResult   []requisites.RequisiteDetails
 	history      []requisites.Assignment
 }
 
@@ -131,7 +175,7 @@ func (s *fakeTeamleadRequisiteService) Create(ctx context.Context, params requis
 }
 
 func (s *fakeTeamleadRequisiteService) List(ctx context.Context, teamID int64) ([]requisites.RequisiteDetails, error) {
-	return nil, nil
+	return s.listResult, nil
 }
 
 func (s *fakeTeamleadRequisiteService) Get(ctx context.Context, teamID int64, requisiteID int64) (requisites.RequisiteDetails, error) {
@@ -156,4 +200,28 @@ func (s *fakeTeamleadRequisiteService) Unassign(ctx context.Context, actorID int
 
 func (s *fakeTeamleadRequisiteService) AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64) ([]requisites.Assignment, error) {
 	return s.history, nil
+}
+
+func (s *fakeTeamleadRequisiteService) Plans(ctx context.Context, teamID int64) ([]requisites.AssignmentWorkRow, error) {
+	return nil, nil
+}
+
+func (s *fakeTeamleadRequisiteService) Activity(ctx context.Context, teamID int64) ([]requisites.AssignmentWorkRow, error) {
+	return nil, nil
+}
+
+func (s *fakeTeamleadRequisiteService) CreatePlan(ctx context.Context, params requisites.PlanParams) (requisites.Assignment, error) {
+	return requisites.Assignment{}, nil
+}
+
+func (s *fakeTeamleadRequisiteService) UpdatePlan(ctx context.Context, params requisites.PlanParams) (requisites.Assignment, error) {
+	return requisites.Assignment{}, nil
+}
+
+func (s *fakeTeamleadRequisiteService) CancelPlan(ctx context.Context, actorID int64, teamID int64, assignmentID int64) (requisites.Assignment, error) {
+	return requisites.Assignment{}, nil
+}
+
+func (s *fakeTeamleadRequisiteService) AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]requisites.AssignmentEvent, error) {
+	return nil, nil
 }

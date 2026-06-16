@@ -143,7 +143,7 @@ func TestOrderReadHandlerTeamleadDashboardReturnsWarningsAndImportHistory(t *tes
 	handler := NewOrderReadHandler(service)
 
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/teamlead/outbound/dashboard?status=unknown", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/teamlead/outbound/dashboard?status=unknown&traderIds=3,4&traderIds=3", nil)
 	request = request.WithContext(ContextWithCurrentUser(request.Context(), users.User{
 		ID:     1,
 		TeamID: 2,
@@ -160,6 +160,7 @@ func TestOrderReadHandlerTeamleadDashboardReturnsWarningsAndImportHistory(t *tes
 		t.Fatalf("scope = team:%d direction:%q, want 2/outbound", service.teamleadDashboardTeamID, service.teamleadDashboardDirection)
 	}
 	assertOrderFilterString(t, service.teamleadDashboardFilters.Status, "unknown", "status")
+	assertOrderFilterInt64List(t, service.teamleadDashboardFilters.TraderIDs, []int64{3, 4}, "traderIds")
 	if !strings.Contains(response.Body.String(), `"unknownStatuses":["manual_review"]`) {
 		t.Fatalf("response does not include unknown statuses: %s", response.Body.String())
 	}
@@ -249,6 +250,19 @@ func assertOrderFilterInt64(t *testing.T, value *int64, want int64, field string
 
 	if value == nil || *value != want {
 		t.Fatalf("%s = %v, want %d", field, value, want)
+	}
+}
+
+func assertOrderFilterInt64List(t *testing.T, value []int64, want []int64, field string) {
+	t.Helper()
+
+	if len(value) != len(want) {
+		t.Fatalf("%s = %v, want %v", field, value, want)
+	}
+	for index := range want {
+		if value[index] != want[index] {
+			t.Fatalf("%s = %v, want %v", field, value, want)
+		}
 	}
 }
 

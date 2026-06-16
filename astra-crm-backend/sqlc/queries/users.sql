@@ -15,7 +15,7 @@ FROM users u
 WHERE u.team_id = $1
   AND u.role = 'trader'
   AND u.deleted_at IS NULL
-ORDER BY u.id;
+ORDER BY u.created_at DESC, u.id DESC;
 
 -- name: GetTraderProfileByUserID :one
 SELECT id, user_id, salary_rate_bps, external_worker_name, created_at, updated_at
@@ -93,7 +93,7 @@ JOIN trader_profiles p ON p.user_id = u.id
 WHERE u.team_id = $1
   AND u.role = 'trader'
   AND u.deleted_at IS NULL
-ORDER BY u.id;
+ORDER BY u.created_at DESC, u.id DESC;
 
 -- name: UpdateTrader :one
 WITH updated_user AS (

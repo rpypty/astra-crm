@@ -56,6 +56,41 @@ func (r *Repository) CreateShift(ctx context.Context, teamID int64, traderID int
 	return fromDBShift(row), nil
 }
 
+func (r *Repository) ShiftHistory(ctx context.Context, teamID int64, traderID int64, limit int32) ([]Shift, error) {
+	rows, err := r.queries.ListTraderShiftHistory(ctx, db.ListTraderShiftHistoryParams{
+		TeamID:     teamID,
+		TraderID:   traderID,
+		LimitCount: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]Shift, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fromDBShift(row))
+	}
+
+	return items, nil
+}
+
+func (r *Repository) TeamShiftHistory(ctx context.Context, teamID int64, limit int32) ([]Shift, error) {
+	rows, err := r.queries.ListTeamShiftHistory(ctx, db.ListTeamShiftHistoryParams{
+		TeamID:     teamID,
+		LimitCount: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]Shift, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fromDBShift(row))
+	}
+
+	return items, nil
+}
+
 func (r *Repository) ActiveAssignment(ctx context.Context, teamID int64, traderID int64, requisiteID int64) (int64, error) {
 	row, err := r.queries.GetActiveAssignmentForTraderRequisite(ctx, db.GetActiveAssignmentForTraderRequisiteParams{
 		TeamID:      teamID,
@@ -89,6 +124,75 @@ func (r *Repository) AssignedRequisites(ctx context.Context, teamID int64, trade
 	return items, nil
 }
 
+func (r *Repository) FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
+	rows, err := r.queries.ListFutureAssignedRequisitesForTrader(ctx, db.ListFutureAssignedRequisitesForTraderParams{
+		TeamID:   teamID,
+		TraderID: traderID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]AssignedRequisite, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fromFutureAssignedRow(row))
+	}
+
+	return items, nil
+}
+
+func (r *Repository) HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
+	rows, err := r.queries.ListHistoricalAssignedRequisitesForTrader(ctx, db.ListHistoricalAssignedRequisitesForTraderParams{
+		TeamID:   teamID,
+		TraderID: traderID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]AssignedRequisite, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fromHistoricalAssignedRow(row))
+	}
+
+	return items, nil
+}
+
+func (r *Repository) AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]AssignedRequisite, error) {
+	rows, err := r.queries.ListAssignedRequisitesForShift(ctx, db.ListAssignedRequisitesForShiftParams{
+		TeamID:   teamID,
+		TraderID: traderID,
+		ShiftID:  shiftID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]AssignedRequisite, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fromAssignedShiftRow(row))
+	}
+
+	return items, nil
+}
+
+func (r *Repository) AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64) ([]AssignedRequisite, error) {
+	rows, err := r.queries.ListAssignedRequisitesForTeamShift(ctx, db.ListAssignedRequisitesForTeamShiftParams{
+		TeamID:  teamID,
+		ShiftID: shiftID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]AssignedRequisite, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fromAssignedTeamShiftRow(row))
+	}
+
+	return items, nil
+}
+
 func (r *Repository) CreateShiftRequisite(ctx context.Context, params CreateShiftRequisiteRecord) (ShiftRequisite, error) {
 	row, err := r.queries.CreateShiftRequisite(ctx, db.CreateShiftRequisiteParams{
 		TeamID:       params.TeamID,
@@ -102,8 +206,24 @@ func (r *Repository) CreateShiftRequisite(ctx context.Context, params CreateShif
 	if err != nil {
 		return ShiftRequisite{}, mapShiftWriteError(err)
 	}
+	if err := r.queries.FillRequisiteInitialDetails(ctx, db.FillRequisiteInitialDetailsParams{
+		TeamID:          params.TeamID,
+		RequisiteID:     params.RequisiteID,
+		HolderName:      pgtype.Text{String: params.HolderName, Valid: true},
+		CardNumber:      pgtype.Text{String: params.CardNumber, Valid: true},
+		DetailsFilledBy: pgtype.Int8{Int64: params.TraderID, Valid: true},
+	}); err != nil {
+		return ShiftRequisite{}, err
+	}
+	if _, err := r.queries.StartRequisiteAssignmentWork(ctx, db.StartRequisiteAssignmentWorkParams{
+		TeamID:           params.TeamID,
+		AssignmentID:     params.AssignmentID,
+		ShiftRequisiteID: pgtype.Int8{Int64: row.ID, Valid: true},
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return ShiftRequisite{}, err
+	}
 
-	return fromDBShiftRequisite(row), nil
+	return fromCreateShiftRequisiteRow(row), nil
 }
 
 func (r *Repository) ShiftRequisites(ctx context.Context, teamID int64, traderID int64) ([]ShiftRequisite, error) {
@@ -117,7 +237,7 @@ func (r *Repository) ShiftRequisites(ctx context.Context, teamID int64, traderID
 
 	items := make([]ShiftRequisite, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, fromDBShiftRequisite(row))
+		items = append(items, fromListShiftRequisiteRow(row))
 	}
 
 	return items, nil
@@ -138,7 +258,34 @@ func (r *Repository) UpdateShiftRequisiteDetails(ctx context.Context, params Upd
 		return ShiftRequisite{}, err
 	}
 
-	return fromDBShiftRequisite(row), nil
+	return fromUpdateShiftRequisiteRow(row), nil
+}
+
+func (r *Repository) CloseShiftRequisite(ctx context.Context, params CloseShiftRequisiteRecord) (ShiftRequisite, error) {
+	row, err := r.queries.CloseShiftRequisite(ctx, db.CloseShiftRequisiteParams{
+		TeamID:                params.TeamID,
+		TraderID:              params.TraderID,
+		ShiftRequisiteID:      params.ShiftRequisiteID,
+		InboundTurnoverMinor:  params.InboundTurnoverMinor,
+		OutboundTurnoverMinor: params.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   params.ClosingBalanceMinor,
+		Blocked:               params.Blocked,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ShiftRequisite{}, ErrShiftRequisiteNotFound
+	}
+	if err != nil {
+		return ShiftRequisite{}, err
+	}
+	if _, err := r.queries.CompleteRequisiteAssignmentWork(ctx, db.CompleteRequisiteAssignmentWorkParams{
+		TeamID:           params.TeamID,
+		ShiftRequisiteID: pgtype.Int8{Int64: row.ID, Valid: true},
+		Blocked:          params.Blocked,
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return ShiftRequisite{}, err
+	}
+
+	return fromCloseShiftRequisiteRow(row), nil
 }
 
 func (r *Repository) CreateTurnoverEntry(ctx context.Context, params CreateTurnoverEntryRecord) (TurnoverEntry, error) {
@@ -246,6 +393,16 @@ type CreateTurnoverEntryRecord struct {
 	Comment          *string
 }
 
+type CloseShiftRequisiteRecord struct {
+	TeamID                int64
+	TraderID              int64
+	ShiftRequisiteID      int64
+	InboundTurnoverMinor  int64
+	OutboundTurnoverMinor int64
+	ClosingBalanceMinor   int64
+	Blocked               bool
+}
+
 type CloseShiftRecord struct {
 	TeamID       int64
 	TraderID     int64
@@ -280,36 +437,168 @@ func fromDBShift(row db.TraderShift) Shift {
 
 func fromAssignedRow(row db.ListAssignedRequisitesForTraderRow) AssignedRequisite {
 	return AssignedRequisite{
-		ID:                   row.ID,
-		TeamID:               row.TeamID,
-		Phone:                row.Phone,
-		MethodType:           row.MethodType,
-		Proxy:                textPtr(row.Proxy),
-		Status:               row.Status,
-		AssignmentID:         row.AssignmentID,
-		ShiftRequisiteID:     int64Ptr(row.ShiftRequisiteID),
-		CardNumber:           textPtr(row.CardNumber),
-		HolderName:           textPtr(row.HolderName),
-		ShiftRequisiteStatus: textPtr(row.ShiftRequisiteStatus),
-		TakenAt:              timePtr(row.TakenAt),
+		ID:                    row.ID,
+		TeamID:                row.TeamID,
+		Phone:                 row.Phone,
+		MethodType:            row.MethodType,
+		BankCode:              row.BankCode,
+		BankName:              row.BankName,
+		Proxy:                 textPtr(row.Proxy),
+		EmployeeComment:       textPtr(row.EmployeeComment),
+		Status:                row.Status,
+		AssignmentID:          row.AssignmentID,
+		AssignmentStatus:      row.AssignmentStatus,
+		AssignedForDate:       row.AssignedForDate.Time,
+		TargetTurnoverMinor:   row.TargetTurnoverMinor,
+		ShiftRequisiteID:      positiveInt64Ptr(row.ShiftRequisiteID),
+		CardNumber:            stringPtr(row.CardNumber),
+		HolderName:            stringPtr(row.HolderName),
+		ShiftRequisiteStatus:  stringPtr(row.ShiftRequisiteStatus),
+		TakenAt:               timePtr(row.TakenAt),
+		InboundTurnoverMinor:  row.InboundTurnoverMinor,
+		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   row.ClosingBalanceMinor,
 	}
 }
 
-func fromDBShiftRequisite(row db.ShiftRequisite) ShiftRequisite {
+func fromFutureAssignedRow(row db.ListFutureAssignedRequisitesForTraderRow) AssignedRequisite {
+	return AssignedRequisite{
+		ID:                    row.ID,
+		TeamID:                row.TeamID,
+		Phone:                 row.Phone,
+		MethodType:            row.MethodType,
+		BankCode:              row.BankCode,
+		BankName:              row.BankName,
+		Proxy:                 textPtr(row.Proxy),
+		EmployeeComment:       textPtr(row.EmployeeComment),
+		Status:                row.Status,
+		AssignmentID:          row.AssignmentID,
+		AssignmentStatus:      row.AssignmentStatus,
+		AssignedForDate:       row.AssignedForDate.Time,
+		TargetTurnoverMinor:   row.TargetTurnoverMinor,
+		ShiftRequisiteID:      positiveInt64Ptr(row.ShiftRequisiteID),
+		CardNumber:            stringPtr(row.CardNumber),
+		HolderName:            stringPtr(row.HolderName),
+		ShiftRequisiteStatus:  stringPtr(row.ShiftRequisiteStatus),
+		TakenAt:               timePtr(row.TakenAt),
+		InboundTurnoverMinor:  row.InboundTurnoverMinor,
+		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   row.ClosingBalanceMinor,
+	}
+}
+
+func fromHistoricalAssignedRow(row db.ListHistoricalAssignedRequisitesForTraderRow) AssignedRequisite {
+	return AssignedRequisite{
+		ID:                    row.ID,
+		TeamID:                row.TeamID,
+		Phone:                 row.Phone,
+		MethodType:            row.MethodType,
+		BankCode:              row.BankCode,
+		BankName:              row.BankName,
+		Proxy:                 textPtr(row.Proxy),
+		EmployeeComment:       textPtr(row.EmployeeComment),
+		Status:                row.Status,
+		AssignmentID:          row.AssignmentID,
+		AssignmentStatus:      row.AssignmentStatus,
+		AssignedForDate:       row.AssignedForDate.Time,
+		TargetTurnoverMinor:   row.TargetTurnoverMinor,
+		ShiftRequisiteID:      positiveInt64Ptr(row.ShiftRequisiteID),
+		CardNumber:            stringPtr(row.CardNumber),
+		HolderName:            stringPtr(row.HolderName),
+		ShiftRequisiteStatus:  stringPtr(row.ShiftRequisiteStatus),
+		TakenAt:               timePtr(row.TakenAt),
+		InboundTurnoverMinor:  row.InboundTurnoverMinor,
+		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   row.ClosingBalanceMinor,
+	}
+}
+
+func fromAssignedShiftRow(row db.ListAssignedRequisitesForShiftRow) AssignedRequisite {
+	return AssignedRequisite{
+		ID:                    row.ID,
+		TeamID:                row.TeamID,
+		Phone:                 row.Phone,
+		MethodType:            row.MethodType,
+		BankCode:              row.BankCode,
+		BankName:              row.BankName,
+		Proxy:                 textPtr(row.Proxy),
+		EmployeeComment:       textPtr(row.EmployeeComment),
+		Status:                row.Status,
+		AssignmentID:          int64Value(row.AssignmentID),
+		AssignmentStatus:      textString(row.AssignmentStatus),
+		AssignedForDate:       row.AssignedForDate.Time,
+		TargetTurnoverMinor:   int64Value(row.TargetTurnoverMinor),
+		ShiftRequisiteID:      positiveInt64Ptr(row.ShiftRequisiteID),
+		CardNumber:            stringPtr(row.CardNumber),
+		HolderName:            stringPtr(row.HolderName),
+		ShiftRequisiteStatus:  stringPtr(row.ShiftRequisiteStatus),
+		TakenAt:               timePtr(row.TakenAt),
+		InboundTurnoverMinor:  row.InboundTurnoverMinor,
+		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   row.ClosingBalanceMinor,
+	}
+}
+
+func fromAssignedTeamShiftRow(row db.ListAssignedRequisitesForTeamShiftRow) AssignedRequisite {
+	return AssignedRequisite{
+		ID:                    row.ID,
+		TeamID:                row.TeamID,
+		Phone:                 row.Phone,
+		MethodType:            row.MethodType,
+		BankCode:              row.BankCode,
+		BankName:              row.BankName,
+		Proxy:                 textPtr(row.Proxy),
+		EmployeeComment:       textPtr(row.EmployeeComment),
+		Status:                row.Status,
+		AssignmentID:          int64Value(row.AssignmentID),
+		AssignmentStatus:      textString(row.AssignmentStatus),
+		AssignedForDate:       row.AssignedForDate.Time,
+		TargetTurnoverMinor:   int64Value(row.TargetTurnoverMinor),
+		ShiftRequisiteID:      positiveInt64Ptr(row.ShiftRequisiteID),
+		CardNumber:            stringPtr(row.CardNumber),
+		HolderName:            stringPtr(row.HolderName),
+		ShiftRequisiteStatus:  stringPtr(row.ShiftRequisiteStatus),
+		TakenAt:               timePtr(row.TakenAt),
+		InboundTurnoverMinor:  row.InboundTurnoverMinor,
+		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   row.ClosingBalanceMinor,
+	}
+}
+
+func fromCreateShiftRequisiteRow(row db.CreateShiftRequisiteRow) ShiftRequisite {
+	return fromShiftRequisiteFields(row.ID, row.TeamID, row.ShiftID, row.TraderID, row.RequisiteID, row.AssignmentID, row.CardNumber, row.HolderName, row.TakenAt, row.ReleasedAt, row.Status, row.InboundTurnoverMinor, row.OutboundTurnoverMinor, row.ClosingBalanceMinor, row.CreatedAt, row.UpdatedAt)
+}
+
+func fromListShiftRequisiteRow(row db.ListShiftRequisitesByTraderRow) ShiftRequisite {
+	return fromShiftRequisiteFields(row.ID, row.TeamID, row.ShiftID, row.TraderID, row.RequisiteID, row.AssignmentID, row.CardNumber, row.HolderName, row.TakenAt, row.ReleasedAt, row.Status, row.InboundTurnoverMinor, row.OutboundTurnoverMinor, row.ClosingBalanceMinor, row.CreatedAt, row.UpdatedAt)
+}
+
+func fromUpdateShiftRequisiteRow(row db.UpdateShiftRequisiteDetailsRow) ShiftRequisite {
+	return fromShiftRequisiteFields(row.ID, row.TeamID, row.ShiftID, row.TraderID, row.RequisiteID, row.AssignmentID, row.CardNumber, row.HolderName, row.TakenAt, row.ReleasedAt, row.Status, row.InboundTurnoverMinor, row.OutboundTurnoverMinor, row.ClosingBalanceMinor, row.CreatedAt, row.UpdatedAt)
+}
+
+func fromCloseShiftRequisiteRow(row db.CloseShiftRequisiteRow) ShiftRequisite {
+	return fromShiftRequisiteFields(row.ID, row.TeamID, row.ShiftID, row.TraderID, row.RequisiteID, row.AssignmentID, row.CardNumber, row.HolderName, row.TakenAt, row.ReleasedAt, row.Status, row.InboundTurnoverMinor, row.OutboundTurnoverMinor, row.ClosingBalanceMinor, row.CreatedAt, row.UpdatedAt)
+}
+
+func fromShiftRequisiteFields(id int64, teamID int64, shiftID int64, traderID int64, requisiteID int64, assignmentID pgtype.Int8, cardNumber string, holderName string, takenAt pgtype.Timestamptz, releasedAt pgtype.Timestamptz, status string, inboundTurnoverMinor int64, outboundTurnoverMinor int64, closingBalanceMinor int64, createdAt pgtype.Timestamptz, updatedAt pgtype.Timestamptz) ShiftRequisite {
 	return ShiftRequisite{
-		ID:           row.ID,
-		TeamID:       row.TeamID,
-		ShiftID:      row.ShiftID,
-		TraderID:     row.TraderID,
-		RequisiteID:  row.RequisiteID,
-		AssignmentID: int64Ptr(row.AssignmentID),
-		CardNumber:   row.CardNumber,
-		HolderName:   row.HolderName,
-		TakenAt:      row.TakenAt.Time,
-		ReleasedAt:   timePtr(row.ReleasedAt),
-		Status:       row.Status,
-		CreatedAt:    row.CreatedAt.Time,
-		UpdatedAt:    row.UpdatedAt.Time,
+		ID:                    id,
+		TeamID:                teamID,
+		ShiftID:               shiftID,
+		TraderID:              traderID,
+		RequisiteID:           requisiteID,
+		AssignmentID:          int64Ptr(assignmentID),
+		CardNumber:            cardNumber,
+		HolderName:            holderName,
+		TakenAt:               takenAt.Time,
+		ReleasedAt:            timePtr(releasedAt),
+		Status:                status,
+		InboundTurnoverMinor:  inboundTurnoverMinor,
+		OutboundTurnoverMinor: outboundTurnoverMinor,
+		ClosingBalanceMinor:   closingBalanceMinor,
+		CreatedAt:             createdAt.Time,
+		UpdatedAt:             updatedAt.Time,
 	}
 }
 
@@ -348,6 +637,7 @@ func fromChecklistRow(row db.GetCurrentShiftChecklistRow) CloseChecklist {
 		InboundOk:           row.InboundOk,
 		OutboundImported:    row.OutboundImported,
 		OutboundOk:          row.OutboundOk,
+		AllRequisitesClosed: true,
 		AllPayoutsFullyPaid: row.AllPayoutsFullyPaid,
 		UnpaidPayoutCount:   row.UnpaidPayoutCount,
 	}
@@ -355,6 +645,7 @@ func fromChecklistRow(row db.GetCurrentShiftChecklistRow) CloseChecklist {
 		checklist.InboundOk &&
 		checklist.OutboundImported &&
 		checklist.OutboundOk &&
+		checklist.AllRequisitesClosed &&
 		checklist.AllPayoutsFullyPaid
 
 	return checklist
@@ -381,6 +672,14 @@ func textPtr(value pgtype.Text) *string {
 	return &value.String
 }
 
+func textString(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+
+	return value.String
+}
+
 func textValue(value *string) pgtype.Text {
 	if value == nil {
 		return pgtype.Text{}
@@ -395,6 +694,30 @@ func int64Ptr(value pgtype.Int8) *int64 {
 	}
 
 	return &value.Int64
+}
+
+func int64Value(value pgtype.Int8) int64 {
+	if !value.Valid {
+		return 0
+	}
+
+	return value.Int64
+}
+
+func positiveInt64Ptr(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+
+	return &value
+}
+
+func stringPtr(value string) *string {
+	if value == "" {
+		return nil
+	}
+
+	return &value
 }
 
 func timePtr(value pgtype.Timestamptz) *time.Time {

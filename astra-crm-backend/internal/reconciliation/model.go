@@ -6,9 +6,10 @@ import (
 )
 
 const (
-	TypeTraderShiftInbound    = "trader_shift_inbound"
-	TypeTraderShiftOutbound   = "trader_shift_outbound"
-	TypeTeamleadPeriodInbound = "teamlead_period_inbound"
+	TypeTraderShiftInbound     = "trader_shift_inbound"
+	TypeTraderShiftOutbound    = "trader_shift_outbound"
+	TypeTeamleadPeriodInbound  = "teamlead_period_inbound"
+	TypeTeamleadPeriodOutbound = "teamlead_period_outbound"
 
 	StatusMatched             = "matched"
 	StatusMismatch            = "mismatch"
@@ -72,6 +73,12 @@ type RecalculateTeamleadPeriodInboundRecord struct {
 	ImportBatchID      *int64
 }
 
+type RecalculateTeamleadPeriodOutboundRecord struct {
+	TeamID             int64
+	AccountingPeriodID int64
+	ImportBatchID      *int64
+}
+
 type AcceptTraderInboundRecord struct {
 	RunID    int64
 	TeamID   int64
@@ -89,6 +96,11 @@ type AcceptTraderOutboundRecord struct {
 }
 
 type TeamleadInboundPeriodScope struct {
+	AccountingPeriodID int64
+	ImportBatchID      int64
+}
+
+type TeamleadOutboundPeriodScope struct {
 	AccountingPeriodID int64
 	ImportBatchID      int64
 }

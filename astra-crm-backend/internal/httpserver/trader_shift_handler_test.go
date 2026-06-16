@@ -171,6 +171,137 @@ func TestTraderShiftHandlerCreateTurnoverPassesActorScope(t *testing.T) {
 	}
 }
 
+func TestTraderShiftHandlerAssignedRequisitesByShiftPassesShiftScope(t *testing.T) {
+	service := &fakeTraderShiftService{
+		shiftAssignedRequisites: []shifts.AssignedRequisite{
+			{
+				ID:                   4,
+				TeamID:               2,
+				Phone:                "+79991234567",
+				MethodType:           "sbp",
+				BankCode:             "sber",
+				BankName:             "Сбер",
+				Status:               "active",
+				AssignmentID:         100,
+				AssignmentStatus:     "worked",
+				TargetTurnoverMinor:  0,
+				ShiftRequisiteID:     int64TestPtr(20),
+				ShiftRequisiteStatus: stringTestPtr(shifts.RequisiteStatusWorked),
+			},
+		},
+	}
+	handler := NewTraderShiftHandler(service)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/trader/shifts/10/requisites", nil)
+	request = request.WithContext(withShiftRouteParam(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     3,
+		TeamID: 2,
+		Role:   users.RoleTrader,
+		Status: users.StatusActive,
+	}), "shiftId", "10"))
+
+	handler.AssignedRequisitesByShift(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if service.shiftRequisitesByShiftID != 10 {
+		t.Fatalf("shift id = %d, want 10", service.shiftRequisitesByShiftID)
+	}
+	if !strings.Contains(response.Body.String(), `"phone":"+79991234567"`) {
+		t.Fatalf("response does not include requisite phone: %s", response.Body.String())
+	}
+}
+
+func TestTraderShiftHandlerTeamAssignedRequisitesByShiftPassesTeamScope(t *testing.T) {
+	service := &fakeTraderShiftService{
+		teamShiftAssignedRequisites: []shifts.AssignedRequisite{
+			{
+				ID:                   4,
+				TeamID:               2,
+				Phone:                "+79991234567",
+				MethodType:           "sbp",
+				BankCode:             "sber",
+				BankName:             "Сбер",
+				Status:               "active",
+				AssignmentID:         100,
+				AssignmentStatus:     "worked",
+				TargetTurnoverMinor:  0,
+				ShiftRequisiteID:     int64TestPtr(20),
+				ShiftRequisiteStatus: stringTestPtr(shifts.RequisiteStatusWorked),
+			},
+		},
+	}
+	handler := NewTraderShiftHandler(service)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/teamlead/shifts/10/requisites", nil)
+	request = request.WithContext(withShiftRouteParam(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     1,
+		TeamID: 2,
+		Role:   users.RoleTeamlead,
+		Status: users.StatusActive,
+	}), "shiftId", "10"))
+
+	handler.AssignedRequisitesByTeamShift(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if service.teamShiftRequisitesByShiftID != 10 {
+		t.Fatalf("shift id = %d, want 10", service.teamShiftRequisitesByShiftID)
+	}
+	if !strings.Contains(response.Body.String(), `"phone":"+79991234567"`) {
+		t.Fatalf("response does not include requisite phone: %s", response.Body.String())
+	}
+}
+
+func TestTraderShiftHandlerCloseShiftRequisitePassesClosingBalance(t *testing.T) {
+	service := &fakeTraderShiftService{}
+	handler := NewTraderShiftHandler(service)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/trader/shift-requisites/20/close", strings.NewReader(`{"inboundTurnoverMinor":150000,"outboundTurnoverMinor":25000,"closingBalanceMinor":7500,"blocked":false}`))
+	request = request.WithContext(withShiftRouteParam(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     3,
+		TeamID: 2,
+		Role:   users.RoleTrader,
+		Status: users.StatusActive,
+	}), "shiftRequisiteId", "20"))
+
+	handler.CloseShiftRequisite(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if service.closeRequisiteParams.ClosingBalanceMinor != 7500 {
+		t.Fatalf("closing balance = %d, want 7500", service.closeRequisiteParams.ClosingBalanceMinor)
+	}
+}
+
+func TestTraderShiftHandlerCloseShiftRequisiteValidatesClosingBalance(t *testing.T) {
+	handler := NewTraderShiftHandler(&fakeTraderShiftService{})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/trader/shift-requisites/20/close", strings.NewReader(`{"inboundTurnoverMinor":150000,"outboundTurnoverMinor":25000,"closingBalanceMinor":-1,"blocked":false}`))
+	request = request.WithContext(withShiftRouteParam(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     3,
+		TeamID: 2,
+		Role:   users.RoleTrader,
+		Status: users.StatusActive,
+	}), "shiftRequisiteId", "20"))
+
+	handler.CloseShiftRequisite(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(response.Body.String(), "closingBalanceMinor") {
+		t.Fatalf("response does not mention closingBalanceMinor: %s", response.Body.String())
+	}
+}
+
 func TestTraderShiftHandlerCloseCurrentMapsBlockedClose(t *testing.T) {
 	handler := NewTraderShiftHandler(&fakeTraderShiftService{
 		closeErr: shifts.ErrCloseBlocked,
@@ -202,19 +333,50 @@ func withShiftRouteParam(ctx context.Context, key string, value string) context.
 }
 
 type fakeTraderShiftService struct {
-	takeParams     shifts.TakeRequisiteParams
-	takeResult     shifts.TakeRequisiteResult
-	turnoverParams shifts.CreateTurnoverParams
-	turnover       shifts.TurnoverEntry
-	closeErr       error
+	takeParams                   shifts.TakeRequisiteParams
+	takeResult                   shifts.TakeRequisiteResult
+	turnoverParams               shifts.CreateTurnoverParams
+	turnover                     shifts.TurnoverEntry
+	closeRequisiteParams         shifts.CloseShiftRequisiteParams
+	shiftRequisitesByShiftID     int64
+	shiftAssignedRequisites      []shifts.AssignedRequisite
+	teamShiftRequisitesByShiftID int64
+	teamShiftAssignedRequisites  []shifts.AssignedRequisite
+	closeErr                     error
 }
 
 func (s *fakeTraderShiftService) Current(ctx context.Context, teamID int64, traderID int64) (*shifts.Shift, error) {
 	return nil, nil
 }
 
+func (s *fakeTraderShiftService) ShiftHistory(ctx context.Context, teamID int64, traderID int64, limit int32) ([]shifts.Shift, error) {
+	return nil, nil
+}
+
+func (s *fakeTraderShiftService) TeamShiftHistory(ctx context.Context, teamID int64, limit int32) ([]shifts.Shift, error) {
+	return nil, nil
+}
+
 func (s *fakeTraderShiftService) AssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]shifts.AssignedRequisite, error) {
 	return nil, nil
+}
+
+func (s *fakeTraderShiftService) FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]shifts.AssignedRequisite, error) {
+	return nil, nil
+}
+
+func (s *fakeTraderShiftService) HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]shifts.AssignedRequisite, error) {
+	return nil, nil
+}
+
+func (s *fakeTraderShiftService) AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]shifts.AssignedRequisite, error) {
+	s.shiftRequisitesByShiftID = shiftID
+	return s.shiftAssignedRequisites, nil
+}
+
+func (s *fakeTraderShiftService) AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64) ([]shifts.AssignedRequisite, error) {
+	s.teamShiftRequisitesByShiftID = shiftID
+	return s.teamShiftAssignedRequisites, nil
 }
 
 func (s *fakeTraderShiftService) ShiftRequisites(ctx context.Context, teamID int64, traderID int64) ([]shifts.ShiftRequisite, error) {
@@ -228,6 +390,26 @@ func (s *fakeTraderShiftService) TakeRequisite(ctx context.Context, params shift
 
 func (s *fakeTraderShiftService) UpdateShiftRequisite(ctx context.Context, params shifts.UpdateShiftRequisiteParams) (shifts.ShiftRequisite, error) {
 	return shifts.ShiftRequisite{}, nil
+}
+
+func (s *fakeTraderShiftService) CloseShiftRequisite(ctx context.Context, params shifts.CloseShiftRequisiteParams) (shifts.ShiftRequisite, error) {
+	s.closeRequisiteParams = params
+	return shifts.ShiftRequisite{
+		ID:                    params.ShiftRequisiteID,
+		TeamID:                params.TeamID,
+		ShiftID:               10,
+		TraderID:              params.TraderID,
+		RequisiteID:           4,
+		CardNumber:            "1234567890123456",
+		HolderName:            "Иванов Иван",
+		TakenAt:               time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+		Status:                shifts.RequisiteStatusWorked,
+		InboundTurnoverMinor:  params.InboundTurnoverMinor,
+		OutboundTurnoverMinor: params.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   params.ClosingBalanceMinor,
+		CreatedAt:             time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+		UpdatedAt:             time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC),
+	}, nil
 }
 
 func (s *fakeTraderShiftService) LatestTurnovers(ctx context.Context, teamID int64, traderID int64) ([]shifts.TurnoverEntry, error) {
@@ -252,4 +434,12 @@ func (s *fakeTraderShiftService) CloseCurrent(ctx context.Context, params shifts
 		return shifts.Shift{}, s.closeErr
 	}
 	return shifts.Shift{}, nil
+}
+
+func int64TestPtr(value int64) *int64 {
+	return &value
+}
+
+func stringTestPtr(value string) *string {
+	return &value
 }

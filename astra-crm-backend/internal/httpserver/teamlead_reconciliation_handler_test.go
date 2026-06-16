@@ -49,6 +49,42 @@ func TestTeamleadReconciliationHandlerLatestInboundReturnsRun(t *testing.T) {
 	}
 }
 
+func TestTeamleadReconciliationHandlerLatestOutboundReturnsRun(t *testing.T) {
+	service := &fakeTeamleadReconciliationService{
+		latestOutboundRun: reconciliation.Run{
+			ID:                 72,
+			TeamID:             2,
+			Type:               reconciliation.TypeTeamleadPeriodOutbound,
+			ScopeType:          "teamlead_period",
+			AccountingPeriodID: reconciliationTestInt64Ptr(55),
+			Status:             reconciliation.StatusMatched,
+			CreatedAt:          time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC),
+		},
+	}
+	handler := NewTeamleadReconciliationHandler(service)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/teamlead/outbound/reconciliation/latest", nil)
+	request = request.WithContext(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     1,
+		TeamID: 2,
+		Role:   users.RoleTeamlead,
+		Status: users.StatusActive,
+	}))
+
+	handler.LatestOutbound(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if service.latestOutboundTeamID != 2 {
+		t.Fatalf("latest outbound team id = %d, want 2", service.latestOutboundTeamID)
+	}
+	if !strings.Contains(response.Body.String(), `"type":"teamlead_period_outbound"`) {
+		t.Fatalf("response does not include teamlead period outbound type: %s", response.Body.String())
+	}
+}
+
 func TestTeamleadReconciliationHandlerPeriodInboundUsesPeriodID(t *testing.T) {
 	service := &fakeTeamleadReconciliationService{
 		periodRun: reconciliation.Run{
@@ -121,19 +157,28 @@ func TestTeamleadReconciliationHandlerPeriodItemsReturnsItems(t *testing.T) {
 }
 
 type fakeTeamleadReconciliationService struct {
-	latestTeamID int64
-	latestRun    reconciliation.Run
-	latestErr    error
+	latestTeamID         int64
+	latestRun            reconciliation.Run
+	latestErr            error
+	latestOutboundTeamID int64
+	latestOutboundRun    reconciliation.Run
+	latestOutboundErr    error
 
-	periodTeamID int64
-	periodID     int64
-	periodRun    reconciliation.Run
-	periodErr    error
+	periodTeamID         int64
+	periodID             int64
+	periodRun            reconciliation.Run
+	periodErr            error
+	periodOutboundTeamID int64
+	periodOutboundID     int64
+	periodOutboundRun    reconciliation.Run
+	periodOutboundErr    error
 
-	itemsTeamID   int64
-	itemsPeriodID int64
-	items         []reconciliation.Item
-	itemsErr      error
+	itemsTeamID           int64
+	itemsPeriodID         int64
+	items                 []reconciliation.Item
+	itemsErr              error
+	outboundItemsTeamID   int64
+	outboundItemsPeriodID int64
 }
 
 func (s *fakeTeamleadReconciliationService) LatestTeamleadInbound(ctx context.Context, teamID int64) (reconciliation.Run, error) {
@@ -142,6 +187,14 @@ func (s *fakeTeamleadReconciliationService) LatestTeamleadInbound(ctx context.Co
 		return reconciliation.Run{}, s.latestErr
 	}
 	return s.latestRun, nil
+}
+
+func (s *fakeTeamleadReconciliationService) LatestTeamleadOutbound(ctx context.Context, teamID int64) (reconciliation.Run, error) {
+	s.latestOutboundTeamID = teamID
+	if s.latestOutboundErr != nil {
+		return reconciliation.Run{}, s.latestOutboundErr
+	}
+	return s.latestOutboundRun, nil
 }
 
 func (s *fakeTeamleadReconciliationService) LatestTeamleadPeriodInbound(ctx context.Context, teamID int64, accountingPeriodID int64) (reconciliation.Run, error) {
@@ -153,9 +206,27 @@ func (s *fakeTeamleadReconciliationService) LatestTeamleadPeriodInbound(ctx cont
 	return s.periodRun, nil
 }
 
+func (s *fakeTeamleadReconciliationService) LatestTeamleadPeriodOutbound(ctx context.Context, teamID int64, accountingPeriodID int64) (reconciliation.Run, error) {
+	s.periodOutboundTeamID = teamID
+	s.periodOutboundID = accountingPeriodID
+	if s.periodOutboundErr != nil {
+		return reconciliation.Run{}, s.periodOutboundErr
+	}
+	return s.periodOutboundRun, nil
+}
+
 func (s *fakeTeamleadReconciliationService) ListTeamleadPeriodInboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]reconciliation.Item, error) {
 	s.itemsTeamID = teamID
 	s.itemsPeriodID = accountingPeriodID
+	if s.itemsErr != nil {
+		return nil, s.itemsErr
+	}
+	return s.items, nil
+}
+
+func (s *fakeTeamleadReconciliationService) ListTeamleadPeriodOutboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]reconciliation.Item, error) {
+	s.outboundItemsTeamID = teamID
+	s.outboundItemsPeriodID = accountingPeriodID
 	if s.itemsErr != nil {
 		return nil, s.itemsErr
 	}

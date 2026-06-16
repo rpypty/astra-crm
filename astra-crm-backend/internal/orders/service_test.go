@@ -40,6 +40,29 @@ func TestServiceNormalizesPaginationAndSort(t *testing.T) {
 	}
 }
 
+func TestServiceKeepsLegacyTraderIDInTraderIDsFilter(t *testing.T) {
+	store := &fakeStore{
+		teamleadList: ListResult{Total: 1},
+	}
+	service := NewService(store)
+	traderID := int64(7)
+
+	_, err := service.ListTeamleadOrders(context.Background(), 2, DirectionInbound, Filters{
+		TraderID:  &traderID,
+		TraderIDs: []int64{8},
+	})
+	if err != nil {
+		t.Fatalf("ListTeamleadOrders() error = %v", err)
+	}
+
+	if len(store.filters.TraderIDs) != 2 || store.filters.TraderIDs[0] != 8 || store.filters.TraderIDs[1] != 7 {
+		t.Fatalf("TraderIDs = %v, want [8 7]", store.filters.TraderIDs)
+	}
+	if store.filters.TraderID != nil {
+		t.Fatalf("TraderID = %v, want nil after normalization", *store.filters.TraderID)
+	}
+}
+
 func TestServiceRejectsInvalidDirection(t *testing.T) {
 	service := NewService(&fakeStore{})
 

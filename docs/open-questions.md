@@ -216,3 +216,18 @@ MVP assumption:
 
 - One team is expected initially, so lookup by `login` is enough.
 - Before true multi-team usage, either make `login` globally unique or add a team/workspace identifier to the login flow.
+
+## 13. Matching payout CSV rows to manual payout orders
+
+Current MVP implementation:
+
+- Period payout reconciliation compares teamlead payout CSV totals with trader manual payout orders paid by transfers.
+- Detailed mismatch matching pairs CSV payout rows and manual payout orders by destination requisite, amount, and duplicate order number within that pair.
+
+Question:
+
+```text
+Is there a stable external key that traders can enter for manual payout orders?
+```
+
+If yes, use it instead of fuzzy destination+amount matching.

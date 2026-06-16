@@ -12,13 +12,35 @@ INSERT INTO trader_shifts (team_id, trader_id)
 VALUES (sqlc.arg(team_id), sqlc.arg(trader_id))
 RETURNING id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at;
 
--- name: GetActiveAssignmentForTraderRequisite :one
-SELECT id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment
-FROM requisite_assignments
+-- name: ListTraderShiftHistory :many
+SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+FROM trader_shifts
 WHERE team_id = sqlc.arg(team_id)
   AND trader_id = sqlc.arg(trader_id)
-  AND requisite_id = sqlc.arg(requisite_id)
-  AND unassigned_at IS NULL;
+  AND status IN ('closed', 'closed_with_discrepancy')
+ORDER BY COALESCE(closed_at, ended_at, updated_at) DESC, id DESC
+LIMIT sqlc.arg(limit_count);
+
+-- name: ListTeamShiftHistory :many
+SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+FROM trader_shifts
+WHERE team_id = sqlc.arg(team_id)
+  AND status IN ('closed', 'closed_with_discrepancy')
+ORDER BY COALESCE(closed_at, ended_at, updated_at) DESC, id DESC
+LIMIT sqlc.arg(limit_count);
+
+-- name: GetActiveAssignmentForTraderRequisite :one
+SELECT ra.id, ra.team_id, ra.requisite_id, ra.trader_id, ra.assigned_by, ra.assigned_at, ra.unassigned_at, ra.comment
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+WHERE ra.team_id = sqlc.arg(team_id)
+  AND ra.trader_id = sqlc.arg(trader_id)
+  AND ra.requisite_id = sqlc.arg(requisite_id)
+  AND ra.unassigned_at IS NULL
+  AND ra.status IN ('planned', 'assigned')
+  AND ra.assigned_for_date <= CURRENT_DATE
+  AND r.status = 'active'
+  AND r.deleted_at IS NULL;
 
 -- name: ListAssignedRequisitesForTrader :many
 WITH current_shift AS (
@@ -35,32 +57,186 @@ SELECT
     r.team_id,
     r.phone,
     r.method_type,
+    r.bank_code,
+    b.name AS bank_name,
     r.proxy,
+    r.employee_comment,
     r.status,
     ra.id AS assignment_id,
+    ra.status AS assignment_status,
+    ra.assigned_for_date,
+    ra.target_turnover_minor,
+    COALESCE(sr.id, 0) AS shift_requisite_id,
+    COALESCE(sr.card_number, r.card_number, '') AS card_number,
+    COALESCE(sr.holder_name, r.holder_name, '') AS holder_name,
+    COALESCE(sr.status, '') AS shift_requisite_status,
+    sr.taken_at,
+    COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
+    COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
+    COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+JOIN banks b ON b.code = r.bank_code
+LEFT JOIN current_shift cs ON true
+LEFT JOIN LATERAL (
+    SELECT sr.*
+    FROM shift_requisites sr
+    WHERE sr.shift_id = cs.id
+      AND sr.requisite_id = r.id
+    ORDER BY sr.taken_at DESC, sr.id DESC
+    LIMIT 1
+) sr ON true
+WHERE ra.team_id = sqlc.arg(team_id)
+  AND ra.trader_id = sqlc.arg(trader_id)
+  AND ra.unassigned_at IS NULL
+  AND ra.status IN ('planned', 'assigned', 'in_work')
+  AND ra.assigned_for_date <= CURRENT_DATE
+  AND r.deleted_at IS NULL
+  AND r.status = 'active'
+ORDER BY ra.assigned_for_date DESC, r.created_at DESC, r.id DESC;
+
+-- name: ListFutureAssignedRequisitesForTrader :many
+SELECT
+    r.id,
+    r.team_id,
+    r.phone,
+    r.method_type,
+    r.bank_code,
+    b.name AS bank_name,
+    r.proxy,
+    r.employee_comment,
+    r.status,
+    ra.id AS assignment_id,
+    ra.status AS assignment_status,
+    ra.assigned_for_date,
+    ra.target_turnover_minor,
+    0::bigint AS shift_requisite_id,
+    COALESCE(r.card_number, '') AS card_number,
+    COALESCE(r.holder_name, '') AS holder_name,
+    ''::text AS shift_requisite_status,
+    NULL::timestamptz AS taken_at,
+    0::bigint AS inbound_turnover_minor,
+    0::bigint AS outbound_turnover_minor,
+    0::bigint AS closing_balance_minor
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+JOIN banks b ON b.code = r.bank_code
+WHERE ra.team_id = sqlc.arg(team_id)
+  AND ra.trader_id = sqlc.arg(trader_id)
+  AND ra.unassigned_at IS NULL
+  AND ra.status IN ('planned', 'assigned')
+  AND ra.assigned_for_date > CURRENT_DATE
+  AND r.deleted_at IS NULL
+  AND r.status = 'active'
+ORDER BY ra.assigned_for_date ASC, r.created_at DESC, r.id DESC;
+
+-- name: ListHistoricalAssignedRequisitesForTrader :many
+SELECT
+    r.id,
+    r.team_id,
+    r.phone,
+    r.method_type,
+    r.bank_code,
+    b.name AS bank_name,
+    r.proxy,
+    r.employee_comment,
+    r.status,
+    ra.id AS assignment_id,
+    ra.status AS assignment_status,
+    ra.assigned_for_date,
+    ra.target_turnover_minor,
+    COALESCE(sr.id, 0) AS shift_requisite_id,
+    COALESCE(sr.card_number, r.card_number, '') AS card_number,
+    COALESCE(sr.holder_name, r.holder_name, '') AS holder_name,
+    COALESCE(sr.status, ra.status) AS shift_requisite_status,
+    sr.taken_at,
+    COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
+    COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
+    COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+JOIN banks b ON b.code = r.bank_code
+LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
+WHERE ra.team_id = sqlc.arg(team_id)
+  AND ra.trader_id = sqlc.arg(trader_id)
+  AND ra.status IN ('worked', 'blocked', 'cancelled', 'expired')
+ORDER BY COALESCE(ra.completed_at, ra.cancelled_at, ra.unassigned_at, ra.updated_at) DESC, ra.id DESC;
+
+-- name: ListAssignedRequisitesForShift :many
+SELECT
+    r.id,
+    r.team_id,
+    r.phone,
+    r.method_type,
+    r.bank_code,
+    b.name AS bank_name,
+    r.proxy,
+    r.employee_comment,
+    r.status,
+    ra.id AS assignment_id,
+    ra.status AS assignment_status,
+    ra.assigned_for_date,
+    ra.target_turnover_minor,
     sr.id AS shift_requisite_id,
     sr.card_number,
     sr.holder_name,
     sr.status AS shift_requisite_status,
-    sr.taken_at
-FROM requisite_assignments ra
-JOIN requisites r ON r.id = ra.requisite_id
-LEFT JOIN current_shift cs ON true
-LEFT JOIN shift_requisites sr ON sr.shift_id = cs.id AND sr.requisite_id = r.id
-WHERE ra.team_id = sqlc.arg(team_id)
-  AND ra.trader_id = sqlc.arg(trader_id)
-  AND ra.unassigned_at IS NULL
-  AND r.deleted_at IS NULL
-  AND r.status = 'active'
-ORDER BY r.id;
+    sr.taken_at,
+    COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
+    COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
+    COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+JOIN requisites r ON r.id = sr.requisite_id
+JOIN banks b ON b.code = r.bank_code
+LEFT JOIN requisite_assignments ra ON ra.id = sr.assignment_id
+WHERE sr.team_id = sqlc.arg(team_id)
+  AND sr.trader_id = sqlc.arg(trader_id)
+  AND sr.shift_id = sqlc.arg(shift_id)
+  AND ts.team_id = sqlc.arg(team_id)
+  AND ts.trader_id = sqlc.arg(trader_id)
+ORDER BY sr.taken_at DESC, sr.id DESC;
+
+-- name: ListAssignedRequisitesForTeamShift :many
+SELECT
+    r.id,
+    r.team_id,
+    r.phone,
+    r.method_type,
+    r.bank_code,
+    b.name AS bank_name,
+    r.proxy,
+    r.employee_comment,
+    r.status,
+    ra.id AS assignment_id,
+    ra.status AS assignment_status,
+    ra.assigned_for_date,
+    ra.target_turnover_minor,
+    sr.id AS shift_requisite_id,
+    sr.card_number,
+    sr.holder_name,
+    sr.status AS shift_requisite_status,
+    sr.taken_at,
+    COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
+    COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
+    COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+JOIN requisites r ON r.id = sr.requisite_id
+JOIN banks b ON b.code = r.bank_code
+LEFT JOIN requisite_assignments ra ON ra.id = sr.assignment_id
+WHERE sr.team_id = sqlc.arg(team_id)
+  AND sr.shift_id = sqlc.arg(shift_id)
+  AND ts.team_id = sqlc.arg(team_id)
+ORDER BY sr.taken_at DESC, sr.id DESC;
 
 -- name: CreateShiftRequisite :one
 INSERT INTO shift_requisites (team_id, shift_id, trader_id, requisite_id, assignment_id, card_number, holder_name)
 VALUES (sqlc.arg(team_id), sqlc.arg(shift_id), sqlc.arg(trader_id), sqlc.arg(requisite_id), sqlc.arg(assignment_id), sqlc.arg(card_number), sqlc.arg(holder_name))
-RETURNING id, team_id, shift_id, trader_id, requisite_id, assignment_id, card_number, holder_name, taken_at, released_at, status, created_at, updated_at;
+RETURNING id, team_id, shift_id, trader_id, requisite_id, assignment_id, card_number, holder_name, taken_at, released_at, status, inbound_turnover_minor, outbound_turnover_minor, closing_balance_minor, created_at, updated_at;
 
 -- name: ListShiftRequisitesByTrader :many
-SELECT sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id, sr.assignment_id, sr.card_number, sr.holder_name, sr.taken_at, sr.released_at, sr.status, sr.created_at, sr.updated_at
+SELECT sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id, sr.assignment_id, sr.card_number, sr.holder_name, sr.taken_at, sr.released_at, sr.status, sr.inbound_turnover_minor, sr.outbound_turnover_minor, sr.closing_balance_minor, sr.created_at, sr.updated_at
 FROM shift_requisites sr
 JOIN trader_shifts ts ON ts.id = sr.shift_id
 WHERE sr.team_id = sqlc.arg(team_id)
@@ -81,7 +257,29 @@ WHERE sr.id = sqlc.arg(shift_requisite_id)
   AND sr.status = 'active'
   AND ts.id = sr.shift_id
   AND ts.status IN ('open', 'closing')
-RETURNING sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id, sr.assignment_id, sr.card_number, sr.holder_name, sr.taken_at, sr.released_at, sr.status, sr.created_at, sr.updated_at;
+RETURNING sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id, sr.assignment_id, sr.card_number, sr.holder_name, sr.taken_at, sr.released_at, sr.status, sr.inbound_turnover_minor, sr.outbound_turnover_minor, sr.closing_balance_minor, sr.created_at, sr.updated_at;
+
+-- name: CloseShiftRequisite :one
+WITH updated_sr AS (
+    UPDATE shift_requisites sr
+    SET
+        inbound_turnover_minor = sqlc.arg(inbound_turnover_minor),
+        outbound_turnover_minor = sqlc.arg(outbound_turnover_minor),
+        closing_balance_minor = sqlc.arg(closing_balance_minor),
+        released_at = COALESCE(sr.released_at, now()),
+        status = CASE WHEN sqlc.arg(blocked)::boolean THEN 'blocked' ELSE 'worked' END,
+        updated_at = now()
+    FROM trader_shifts ts
+    WHERE sr.id = sqlc.arg(shift_requisite_id)
+      AND sr.team_id = sqlc.arg(team_id)
+      AND sr.trader_id = sqlc.arg(trader_id)
+      AND sr.status IN ('active', 'correction')
+      AND ts.id = sr.shift_id
+      AND ts.status IN ('open', 'closing')
+    RETURNING sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id, sr.assignment_id, sr.card_number, sr.holder_name, sr.taken_at, sr.released_at, sr.status, sr.inbound_turnover_minor, sr.outbound_turnover_minor, sr.closing_balance_minor, sr.created_at, sr.updated_at
+)
+SELECT id, team_id, shift_id, trader_id, requisite_id, assignment_id, card_number, holder_name, taken_at, released_at, status, inbound_turnover_minor, outbound_turnover_minor, closing_balance_minor, created_at, updated_at
+FROM updated_sr;
 
 -- name: CreateTurnoverEntry :one
 WITH target_shift_requisite AS (

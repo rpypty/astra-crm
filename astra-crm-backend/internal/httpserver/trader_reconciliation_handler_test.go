@@ -239,6 +239,14 @@ func (s *fakeTraderReconciliationService) LatestTraderInbound(ctx context.Contex
 	return s.inboundRun, nil
 }
 
+func (s *fakeTraderReconciliationService) ListTraderInboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]reconciliation.Item, error) {
+	s.latestShiftID = shiftID
+	if s.latestErr != nil {
+		return nil, s.latestErr
+	}
+	return nil, nil
+}
+
 func (s *fakeTraderReconciliationService) AcceptTraderInbound(ctx context.Context, params reconciliation.AcceptTraderInboundParams) (reconciliation.Run, error) {
 	s.acceptParams = params
 	if s.acceptErr != nil {
@@ -253,6 +261,14 @@ func (s *fakeTraderReconciliationService) LatestTraderOutbound(ctx context.Conte
 		return reconciliation.Run{}, s.latestOutboundErr
 	}
 	return s.outboundRun, nil
+}
+
+func (s *fakeTraderReconciliationService) ListTraderOutboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]reconciliation.Item, error) {
+	s.latestOutboundShiftID = shiftID
+	if s.latestOutboundErr != nil {
+		return nil, s.latestOutboundErr
+	}
+	return nil, nil
 }
 
 func (s *fakeTraderReconciliationService) AcceptTraderOutbound(ctx context.Context, params reconciliation.AcceptTraderOutboundParams) (reconciliation.Run, error) {

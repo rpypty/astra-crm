@@ -4,23 +4,32 @@ import type {
   AccountingPeriod,
   AssignmentHistoryItem,
   AuditLogEntry,
+  Bank,
   CurrentUser,
   ImportIssue,
   ImportResult,
   Order,
   OrderDashboard,
   OrderDirection,
+  OrderFilters,
   Payout,
   PayoutTransfer,
+  ReconciliationItem,
   ReconciliationSummary,
   Requisite,
+  RequisiteAssignmentEvent,
+  RequisiteAssignmentWorkRow,
+  ShiftReport,
   ShiftRequisite,
   Trader,
+  TraderProfile,
   TurnoverEntry,
   UserStatus,
 } from "@/lib/domain";
+import type { PeriodFilter } from "@/lib/period-filter";
 
 type AuthResponse = ApiSchema<"AuthResponse">;
+type BanksListResponse = ApiSchema<"BanksListResponse">;
 type TradersListResponse = ApiSchema<"TradersListResponse">;
 type TraderResponse = ApiSchema<"TraderResponse">;
 type ResetPasswordResponse = ApiSchema<"ResetTraderPasswordResponse">;
@@ -28,7 +37,10 @@ type RequisitesListResponse = ApiSchema<"RequisitesListResponse">;
 type RequisiteResponse = ApiSchema<"RequisiteResponse">;
 type AssignmentResponse = ApiSchema<"AssignmentResponse">;
 type AssignmentHistoryResponse = ApiSchema<"AssignmentHistoryResponse">;
+type AssignmentRowsResponse = ApiSchema<"AssignmentRowsResponse">;
+type AssignmentEventsResponse = ApiSchema<"AssignmentEventsResponse">;
 type CurrentShiftResponse = ApiSchema<"CurrentShiftResponse">;
+type ShiftHistoryResponse = ApiSchema<"ShiftHistoryResponse">;
 type ChecklistResponse = ApiSchema<"ChecklistResponse">;
 type CloseShiftResponse = ApiSchema<"CloseShiftResponse">;
 type TakeRequisiteResponse = ApiSchema<"TakeRequisiteResponse">;
@@ -41,14 +53,18 @@ type PayoutResponse = ApiSchema<"PayoutResponse">;
 type TransferResponse = ApiSchema<"TransferResponse">;
 type ImportResponse = ApiSchema<"ImportResponse">;
 type ReconciliationResponse = ApiSchema<"ReconciliationResponse">;
+type ReconciliationItemsResponse = ApiSchema<"ReconciliationItemsResponse">;
 type DashboardResponse = ApiSchema<"DashboardResponse">;
 type OrdersListResponse = ApiSchema<"OrdersListResponse">;
 type AccountingPeriodsResponse = ApiSchema<"AccountingPeriodsResponse">;
 type AuditLogResponse = ApiSchema<"AuditLogResponse">;
+type TraderProfileResponse = ApiSchema<"TraderProfileResponse">;
 
 type BackendTrader = ApiSchema<"Trader">;
 type BackendRequisite = ApiSchema<"Requisite">;
 type BackendAssignment = ApiSchema<"RequisiteAssignment">;
+type BackendAssignmentWorkRow = ApiSchema<"RequisiteAssignmentWorkRow">;
+type BackendAssignmentEvent = ApiSchema<"RequisiteAssignmentEvent">;
 type BackendAssignedRequisite = ApiSchema<"AssignedRequisite">;
 type BackendTurnover = ApiSchema<"TurnoverEntry">;
 type BackendPayout = ApiSchema<"Payout">;
@@ -68,6 +84,13 @@ export const api = {
       return { user: toCurrentUser(response.user) };
     },
     logout: () => apiClient.post<void>("/auth/logout"),
+  },
+
+  banks: {
+    async list(): Promise<Bank[]> {
+      const response = await apiClient.get<BanksListResponse>("/banks");
+      return response.items;
+    },
   },
 
   traders: {
@@ -110,32 +133,34 @@ export const api = {
   },
 
   requisites: {
-    async list(filters?: { search?: string; methodType?: string; status?: string; traderId?: string }) {
+    async list(filters?: { search?: string; bankCode?: string; status?: string; traderId?: string }) {
       const response = await apiClient.get<RequisitesListResponse>("/teamlead/requisites");
       return response.items.map(toRequisite).filter((requisite) => filterRequisite(requisite, filters));
     },
     async save(input: {
       id?: number;
       phone: string;
-      methodType: "SBP" | "C2C";
+      bankCode: string;
       proxy: string;
+      employeeComment?: string;
       assignedTraderId?: number;
+      currentAssignedTraderId?: number;
       status: "active" | "archived";
-      wasAssigned?: boolean;
     }) {
       if (input.id) {
         await apiClient.patch<RequisiteResponse>(`/teamlead/requisites/${input.id}`, {
           phone: input.phone,
-          methodType: input.methodType,
+          bankCode: input.bankCode,
           proxy: input.proxy,
+          employeeComment: input.employeeComment,
           status: input.status,
         });
-        if (input.assignedTraderId) {
+        if (input.assignedTraderId && input.assignedTraderId !== input.currentAssignedTraderId) {
           await apiClient.post<AssignmentResponse>(`/teamlead/requisites/${input.id}/assign`, {
             traderId: input.assignedTraderId,
             comment: "Изменение назначения из CRM",
           });
-        } else if (input.wasAssigned) {
+        } else if (!input.assignedTraderId && input.currentAssignedTraderId) {
           await apiClient.post<void>(`/teamlead/requisites/${input.id}/unassign`);
         }
         return;
@@ -143,8 +168,9 @@ export const api = {
 
       await apiClient.post<RequisiteResponse>("/teamlead/requisites", {
         phone: input.phone,
-        methodType: input.methodType,
+        bankCode: input.bankCode,
         proxy: input.proxy,
+        employeeComment: input.employeeComment,
         assignedTraderId: input.assignedTraderId,
       });
     },
@@ -153,6 +179,48 @@ export const api = {
         `/teamlead/requisites/${requisiteId}/assignment-history`,
       );
       return response.items.map(toAssignmentHistory);
+    },
+    async activity(): Promise<RequisiteAssignmentWorkRow[]> {
+      const response = await apiClient.get<AssignmentRowsResponse>("/teamlead/requisites/activity");
+      return response.items.map(toAssignmentWorkRow);
+    },
+    async plans(): Promise<RequisiteAssignmentWorkRow[]> {
+      const response = await apiClient.get<AssignmentRowsResponse>("/teamlead/requisites/plans");
+      return response.items.map(toAssignmentWorkRow);
+    },
+    async createPlan(input: {
+      requisiteId: number;
+      traderId: number;
+      assignedForDate: string;
+      targetTurnoverMinor: number;
+      comment?: string;
+    }) {
+      await apiClient.post<AssignmentResponse>("/teamlead/requisites/plans", input);
+    },
+    async updatePlan(input: {
+      assignmentId: number;
+      requisiteId: number;
+      traderId: number;
+      assignedForDate: string;
+      targetTurnoverMinor: number;
+      comment?: string;
+    }) {
+      await apiClient.patch<AssignmentResponse>(`/teamlead/requisites/plans/${input.assignmentId}`, {
+        requisiteId: input.requisiteId,
+        traderId: input.traderId,
+        assignedForDate: input.assignedForDate,
+        targetTurnoverMinor: input.targetTurnoverMinor,
+        comment: input.comment,
+      });
+    },
+    async cancelPlan(assignmentId: number) {
+      await apiClient.delete<AssignmentResponse>(`/teamlead/requisites/plans/${assignmentId}`);
+    },
+    async planEvents(assignmentId: number): Promise<RequisiteAssignmentEvent[]> {
+      const response = await apiClient.get<AssignmentEventsResponse>(
+        `/teamlead/requisites/plans/${assignmentId}/events`,
+      );
+      return response.items.map(toAssignmentEvent);
     },
     archive: (requisiteId: number) => apiClient.delete<void>(`/teamlead/requisites/${requisiteId}`),
   },
@@ -169,6 +237,10 @@ export const api = {
         checklist: checklistResponse?.checklist,
       };
     },
+    async history(): Promise<ShiftReport[]> {
+      const response = await apiClient.get<ShiftHistoryResponse>("/trader/shift/history");
+      return response.items.map(toShiftReport);
+    },
     async requisites() {
       const [assignedResponse, turnoversResponse] = await Promise.all([
         apiClient.get<ApiSchema<"AssignedRequisitesResponse">>("/trader/requisites"),
@@ -176,6 +248,18 @@ export const api = {
       ]);
       const latestTurnovers = latestTurnoverByShiftRequisite(turnoversResponse.items);
       return assignedResponse.items.map((item) => toShiftRequisite(item, latestTurnovers));
+    },
+    async futureRequisites() {
+      const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>("/trader/requisites/future");
+      return response.items.map((item) => toShiftRequisite(item, new Map()));
+    },
+    async historicalRequisites() {
+      const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>("/trader/requisites/history");
+      return response.items.map((item) => toShiftRequisite(item, new Map()));
+    },
+    async reportRequisites(shiftId: number) {
+      const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>(`/trader/shifts/${shiftId}/requisites`);
+      return response.items.map((item) => toShiftRequisite(item, new Map()));
     },
     async takeRequisite(input: { shiftRequisiteId: number; cardNumber: string; holderName: string }) {
       await apiClient.post<TakeRequisiteResponse>(`/trader/requisites/${input.shiftRequisiteId}/take`, {
@@ -189,6 +273,22 @@ export const api = {
         holderName: input.holderName,
       });
     },
+    async closeRequisite(input: {
+      shiftRequisiteId: number;
+      inboundTurnoverMinor: number;
+      outboundTurnoverMinor: number;
+      closingBalanceMinor: number;
+      blocked: boolean;
+      comment?: string;
+    }) {
+      await apiClient.post<ShiftRequisiteResponse>(`/trader/shift-requisites/${input.shiftRequisiteId}/close`, {
+        inboundTurnoverMinor: input.inboundTurnoverMinor,
+        outboundTurnoverMinor: input.outboundTurnoverMinor,
+        closingBalanceMinor: input.closingBalanceMinor,
+        blocked: input.blocked,
+        comment: input.comment,
+      });
+    },
     async addTurnover(input: { shiftRequisiteId: number; amountMinor: number; comment?: string }) {
       await apiClient.post<TurnoverResponse>("/trader/shift/current/turnovers", input);
     },
@@ -198,9 +298,22 @@ export const api = {
       );
       return response.items.map(toTurnover);
     },
-    async close() {
-      const response = await apiClient.post<CloseShiftResponse>("/trader/shift/current/close", {});
+    async close(input?: { closeComment?: string }) {
+      const response = await apiClient.post<CloseShiftResponse>("/trader/shift/current/close", {
+        closeComment: input?.closeComment,
+      });
       return response.shift;
+    },
+  },
+
+  teamleadReports: {
+    async history(): Promise<ShiftReport[]> {
+      const response = await apiClient.get<ShiftHistoryResponse>("/teamlead/shift/history");
+      return response.items.map(toShiftReport);
+    },
+    async reportRequisites(shiftId: number) {
+      const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>(`/teamlead/shifts/${shiftId}/requisites`);
+      return response.items.map((item) => toShiftRequisite(item, new Map()));
     },
   },
 
@@ -228,6 +341,13 @@ export const api = {
         throw new Error("Для удаления перевода нужен payoutId");
       }
       await apiClient.delete<void>(`/trader/payouts/${input.payoutId}/transfers/${input.transferId}`);
+    },
+  },
+
+  traderProfile: {
+    async get(filters?: PeriodFilter): Promise<TraderProfile> {
+      const response = await apiClient.get<TraderProfileResponse>(`/trader/profile${queryString(filters ?? {})}`);
+      return response.profile;
     },
   },
 
@@ -263,13 +383,20 @@ export const api = {
   },
 
   orders: {
-    async dashboard(scope: "teamlead" | "trader", direction: OrderDirection) {
-      const response = await apiClient.get<DashboardResponse>(`/${scope}/${direction}/dashboard`);
+    async dashboard(scope: "teamlead" | "trader", direction: OrderDirection, filters?: OrderFilters) {
+      const response = await apiClient.get<DashboardResponse>(
+        `/${scope}/${direction}/dashboard${queryString(filters ?? {})}`,
+      );
       return response.dashboard;
     },
-    async list(scope: "teamlead" | "trader", direction: OrderDirection, filters?: { search?: string; status?: string }) {
+    async list(scope: "teamlead" | "trader", direction: OrderDirection, filters?: OrderFilters) {
       const response = await apiClient.get<OrdersListResponse>(
-        `/${scope}/${direction}/orders${queryString({ status: filters?.status })}`,
+        `/${scope}/${direction}/orders${queryString({
+          dateFrom: filters?.dateFrom,
+          dateTo: filters?.dateTo,
+          status: filters?.status,
+          traderIds: filters?.traderIds,
+        })}`,
       );
       return response.items.map(toOrder).filter((order) => filterOrder(order, filters));
     },
@@ -279,7 +406,18 @@ export const api = {
         return toReconciliation(response.run);
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) {
-          return undefined;
+          return null;
+        }
+        throw error;
+      }
+    },
+    async reconciliationItems(scope: "trader", direction: OrderDirection): Promise<ReconciliationItem[]> {
+      try {
+        const response = await apiClient.get<ReconciliationItemsResponse>(`/${scope}/${direction}/reconciliation/items`);
+        return response.items.map(toReconciliationItem);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) {
+          return [];
         }
         throw error;
       }
@@ -326,9 +464,19 @@ function toRequisite(requisite: BackendRequisite): Requisite {
     id: requisite.id,
     phone: requisite.phone,
     methodType: requisite.methodType as Requisite["methodType"],
+    bankCode: requisite.bankCode,
+    bankName: requisite.bankName,
     proxy: requisite.proxy ?? "",
+    employeeComment: requisite.employeeComment,
+    holderName: requisite.holderName,
+    cardNumber: requisite.cardNumber,
+    detailsFilledAt: requisite.detailsFilledAt,
+    detailsFilledBy: requisite.detailsFilledBy,
     assignedTraderId: requisite.assignedTraderId,
     assignedTraderLogin: requisite.assignedTraderLogin,
+    assignmentStatus: requisite.assignmentStatus,
+    assignedForDate: requisite.assignedForDate,
+    targetTurnoverMinor: requisite.targetTurnoverMinor,
     status: requisite.status as Requisite["status"],
     updatedAt: requisite.updatedAt,
   };
@@ -344,6 +492,48 @@ function toAssignmentHistory(assignment: BackendAssignment): AssignmentHistoryIt
   };
 }
 
+function toAssignmentWorkRow(item: BackendAssignmentWorkRow): RequisiteAssignmentWorkRow {
+  return {
+    assignmentId: item.assignmentId,
+    requisiteId: item.requisiteId,
+    phone: item.phone,
+    bankCode: item.bankCode,
+    bankName: item.bankName,
+    proxy: item.proxy ?? "",
+    traderId: item.traderId,
+    traderLogin: item.traderLogin,
+    status: item.status,
+    assignedForDate: item.assignedForDate,
+    targetTurnoverMinor: item.targetTurnoverMinor,
+    inboundTurnoverMinor: item.inboundTurnoverMinor,
+    outboundTurnoverMinor: item.outboundTurnoverMinor,
+    closingBalanceMinor: item.closingBalanceMinor,
+    cardNumber: item.cardNumber,
+    holderName: item.holderName,
+    takenAt: item.takenAt,
+    releasedAt: item.releasedAt,
+    comment: item.comment,
+    assignedAt: item.assignedAt,
+    startedAt: item.startedAt,
+    completedAt: item.completedAt,
+    updatedAt: item.updatedAt,
+    shiftRequisiteId: item.shiftRequisiteId,
+  };
+}
+
+function toAssignmentEvent(item: BackendAssignmentEvent): RequisiteAssignmentEvent {
+  return {
+    id: item.id,
+    assignmentId: item.assignmentId,
+    actorId: item.actorId,
+    action: item.action,
+    beforeJson: item.beforeJson,
+    afterJson: item.afterJson,
+    comment: item.comment,
+    createdAt: item.createdAt,
+  };
+}
+
 function toShiftRequisite(item: BackendAssignedRequisite, latestTurnovers: Map<number, number>): ShiftRequisite {
   const shiftRequisiteId = item.shiftRequisiteId ?? item.id;
   return {
@@ -351,11 +541,42 @@ function toShiftRequisite(item: BackendAssignedRequisite, latestTurnovers: Map<n
     requisiteId: item.id,
     phone: item.phone,
     methodType: item.methodType as ShiftRequisite["methodType"],
+    bankCode: item.bankCode,
+    bankName: item.bankName,
     proxy: item.proxy ?? "",
+    employeeComment: item.employeeComment,
     cardNumber: item.cardNumber,
     holderName: item.holderName,
-    latestTurnoverMinor: latestTurnovers.get(shiftRequisiteId) ?? 0,
-    status: item.inWork ? "in_work" : "assigned",
+    inboundTurnoverMinor: item.inboundTurnoverMinor ?? 0,
+    outboundTurnoverMinor: item.outboundTurnoverMinor ?? 0,
+    closingBalanceMinor: item.closingBalanceMinor ?? 0,
+    assignmentStatus: item.assignmentStatus,
+    assignedForDate: item.assignedForDate,
+    targetTurnoverMinor: item.targetTurnoverMinor,
+    latestTurnoverMinor: (item.inboundTurnoverMinor ?? 0) || latestTurnovers.get(shiftRequisiteId) || 0,
+    status: toShiftRequisiteStatus(item),
+  };
+}
+
+function toShiftRequisiteStatus(item: BackendAssignedRequisite): ShiftRequisite["status"] {
+  if (!item.shiftRequisiteId) return "assigned";
+  if (item.shiftRequisiteStatus === "active") return "in_work";
+  if (item.shiftRequisiteStatus === "blocked") return "blocked";
+  if (item.shiftRequisiteStatus === "correction") return "correction";
+  return "worked";
+}
+
+function toShiftReport(item: ApiSchema<"Shift">): ShiftReport {
+  return {
+    id: item.id,
+    traderId: item.traderId,
+    startedAt: item.startedAt,
+    endedAt: item.endedAt,
+    closedAt: item.closedAt,
+    status: item.status as ShiftReport["status"],
+    inboundReconciliationStatus: item.inboundReconciliationStatus,
+    outboundReconciliationStatus: item.outboundReconciliationStatus,
+    closeComment: item.closeComment,
   };
 }
 
@@ -386,6 +607,7 @@ function toTransfer(item: BackendTransfer): PayoutTransfer {
     id: item.id,
     payoutId: item.manualPayoutOrderId,
     sourceShiftRequisiteId: item.sourceShiftRequisiteId,
+    sourceRequisiteId: item.sourceRequisiteId,
     amountMinor: item.amountMinor,
     comment: item.comment,
     createdAt: item.createdAt,
@@ -444,6 +666,19 @@ function toReconciliation(run: BackendReconciliationRun): ReconciliationSummary 
   };
 }
 
+function toReconciliationItem(item: ApiSchema<"ReconciliationItem">): ReconciliationItem {
+  return {
+    id: item.id,
+    reconciliationRunId: item.reconciliationRunId,
+    issueType: item.issueType,
+    externalInnerId: item.externalInnerId,
+    teamleadValue: item.teamleadValue as Record<string, unknown> | undefined,
+    traderValue: item.traderValue as Record<string, unknown> | undefined,
+    message: item.message,
+    createdAt: item.createdAt,
+  };
+}
+
 function latestTurnoverByShiftRequisite(items: BackendTurnover[]) {
   const result = new Map<number, number>();
   for (const item of items) {
@@ -462,16 +697,20 @@ function filterTrader(trader: Trader, filters?: { search?: string; status?: stri
   return matchesSearch && matchesStatus;
 }
 
-function filterRequisite(requisite: Requisite, filters?: { search?: string; methodType?: string; status?: string; traderId?: string }) {
+function filterRequisite(requisite: Requisite, filters?: { search?: string; bankCode?: string; status?: string; traderId?: string }) {
   const search = filters?.search?.trim().toLowerCase();
-  const matchesSearch = !search || requisite.phone.toLowerCase().includes(search);
-  const matchesMethod = !filters?.methodType || filters.methodType === "all" || requisite.methodType === filters.methodType;
+  const matchesSearch =
+    !search ||
+    [requisite.phone, requisite.bankName, requisite.proxy, requisite.employeeComment ?? "", requisite.holderName ?? "", requisite.cardNumber ?? ""].some(
+      (value) => value.toLowerCase().includes(search),
+    );
+  const matchesBank = !filters?.bankCode || filters.bankCode === "all" || requisite.bankCode === filters.bankCode;
   const matchesStatus = !filters?.status || filters.status === "all" || requisite.status === filters.status;
   const matchesTrader =
     !filters?.traderId ||
     filters.traderId === "all" ||
     String(requisite.assignedTraderId ?? "unassigned") === filters.traderId;
-  return matchesSearch && matchesMethod && matchesStatus && matchesTrader;
+  return matchesSearch && matchesBank && matchesStatus && matchesTrader;
 }
 
 function filterOrder(order: Order, filters?: { search?: string; status?: string }) {

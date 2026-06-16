@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/ashpak/astra-crm-backend/sqlc/generated"
@@ -14,6 +15,9 @@ import (
 var (
 	ErrNotFound           = errors.New("requisite not found")
 	ErrAssignmentNotFound = errors.New("requisite assignment not found")
+	ErrPhoneBankDuplicate = errors.New("requisite phone and bank duplicate")
+	ErrProxyDuplicate     = errors.New("requisite proxy duplicate")
+	ErrBankNotFound       = errors.New("requisite bank not found")
 )
 
 const (
@@ -22,16 +26,33 @@ const (
 	StatusArchived = "archived"
 )
 
+const (
+	AssignmentStatusPlanned   = "planned"
+	AssignmentStatusAssigned  = "assigned"
+	AssignmentStatusInWork    = "in_work"
+	AssignmentStatusWorked    = "worked"
+	AssignmentStatusBlocked   = "blocked"
+	AssignmentStatusCancelled = "cancelled"
+	AssignmentStatusExpired   = "expired"
+)
+
 type Requisite struct {
-	ID         int64
-	TeamID     int64
-	Phone      string
-	MethodType string
-	Proxy      *string
-	Status     string
-	CreatedBy  int64
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID              int64
+	TeamID          int64
+	Phone           string
+	MethodType      string
+	BankCode        string
+	BankName        string
+	Proxy           *string
+	EmployeeComment *string
+	HolderName      *string
+	CardNumber      *string
+	DetailsFilledAt *time.Time
+	DetailsFilledBy *int64
+	Status          string
+	CreatedBy       int64
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type RequisiteDetails struct {
@@ -39,26 +60,86 @@ type RequisiteDetails struct {
 	ActiveAssignmentID  *int64
 	AssignedTraderID    *int64
 	AssignedTraderLogin *string
+	AssignmentStatus    *string
+	AssignedForDate     *time.Time
+	TargetTurnoverMinor int64
 }
 
 type Assignment struct {
+	ID                  int64
+	TeamID              int64
+	RequisiteID         int64
+	TraderID            int64
+	AssignedBy          int64
+	AssignedAt          time.Time
+	UnassignedAt        *time.Time
+	Comment             *string
+	Status              string
+	AssignedForDate     time.Time
+	TargetTurnoverMinor int64
+	StartedAt           *time.Time
+	CompletedAt         *time.Time
+	CancelledAt         *time.Time
+	ShiftRequisiteID    *int64
+	UpdatedAt           time.Time
+	WasReassign         bool
+}
+
+type AssignmentEvent struct {
 	ID           int64
 	TeamID       int64
-	RequisiteID  int64
-	TraderID     int64
-	AssignedBy   int64
-	AssignedAt   time.Time
-	UnassignedAt *time.Time
+	AssignmentID int64
+	ActorID      int64
+	Action       string
+	BeforeJSON   []byte
+	AfterJSON    []byte
 	Comment      *string
-	WasReassign  bool
+	CreatedAt    time.Time
+}
+
+type AssignmentWorkRow struct {
+	AssignmentID          int64
+	TeamID                int64
+	RequisiteID           int64
+	Phone                 string
+	BankCode              string
+	BankName              string
+	Proxy                 *string
+	TraderID              int64
+	TraderLogin           string
+	Status                string
+	AssignedForDate       time.Time
+	TargetTurnoverMinor   int64
+	InboundTurnoverMinor  int64
+	OutboundTurnoverMinor int64
+	ClosingBalanceMinor   int64
+	CardNumber            *string
+	HolderName            *string
+	TakenAt               *time.Time
+	ReleasedAt            *time.Time
+	Comment               *string
+	AssignedAt            time.Time
+	StartedAt             *time.Time
+	CompletedAt           *time.Time
+	UpdatedAt             time.Time
+	ShiftRequisiteID      *int64
+}
+
+type txBeginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
 type Repository struct {
 	queries *db.Queries
+	db      txBeginner
 }
 
-func NewRepository(queries *db.Queries) *Repository {
-	return &Repository{queries: queries}
+func NewRepository(queries *db.Queries, txDB ...txBeginner) *Repository {
+	var database txBeginner
+	if len(txDB) > 0 {
+		database = txDB[0]
+	}
+	return &Repository{queries: queries, db: database}
 }
 
 func (r *Repository) GetByIDForTeam(ctx context.Context, id int64, teamID int64) (Requisite, error) {
@@ -74,31 +155,39 @@ func (r *Repository) GetByIDForTeam(ctx context.Context, id int64, teamID int64)
 	}
 
 	return Requisite{
-		ID:         row.ID,
-		TeamID:     row.TeamID,
-		Phone:      row.Phone,
-		MethodType: row.MethodType,
-		Proxy:      textPtr(row.Proxy),
-		Status:     row.Status,
-		CreatedBy:  row.CreatedBy,
-		CreatedAt:  row.CreatedAt.Time,
-		UpdatedAt:  row.UpdatedAt.Time,
+		ID:              row.ID,
+		TeamID:          row.TeamID,
+		Phone:           row.Phone,
+		MethodType:      row.MethodType,
+		BankCode:        row.BankCode,
+		Proxy:           textPtr(row.Proxy),
+		EmployeeComment: textPtr(row.EmployeeComment),
+		HolderName:      textPtr(row.HolderName),
+		CardNumber:      textPtr(row.CardNumber),
+		DetailsFilledAt: timePtr(row.DetailsFilledAt),
+		DetailsFilledBy: int64Ptr(row.DetailsFilledBy),
+		Status:          row.Status,
+		CreatedBy:       row.CreatedBy,
+		CreatedAt:       row.CreatedAt.Time,
+		UpdatedAt:       row.UpdatedAt.Time,
 	}, nil
 }
 
 func (r *Repository) Create(ctx context.Context, params CreateRecord) (Requisite, error) {
 	row, err := r.queries.CreateRequisite(ctx, db.CreateRequisiteParams{
-		TeamID:     params.TeamID,
-		Phone:      params.Phone,
-		MethodType: params.MethodType,
-		Proxy:      textValue(params.Proxy),
-		CreatedBy:  params.CreatedBy,
+		TeamID:          params.TeamID,
+		Phone:           params.Phone,
+		MethodType:      params.MethodType,
+		BankCode:        params.BankCode,
+		Proxy:           textValue(params.Proxy),
+		EmployeeComment: textValue(params.EmployeeComment),
+		CreatedBy:       params.CreatedBy,
 	})
 	if err != nil {
-		return Requisite{}, err
+		return Requisite{}, mapRequisiteWriteError(err)
 	}
 
-	return fromDBRequisite(row), nil
+	return fromCreateRow(row), nil
 }
 
 func (r *Repository) GetDetails(ctx context.Context, teamID int64, requisiteID int64) (RequisiteDetails, error) {
@@ -132,36 +221,101 @@ func (r *Repository) ListDetails(ctx context.Context, teamID int64) ([]Requisite
 
 func (r *Repository) Update(ctx context.Context, params UpdateRecord) (Requisite, error) {
 	row, err := r.queries.UpdateRequisite(ctx, db.UpdateRequisiteParams{
-		TeamID:      params.TeamID,
-		RequisiteID: params.RequisiteID,
-		Phone:       params.Phone,
-		MethodType:  params.MethodType,
-		Proxy:       textValue(params.Proxy),
-		Status:      params.Status,
+		TeamID:          params.TeamID,
+		RequisiteID:     params.RequisiteID,
+		Phone:           params.Phone,
+		MethodType:      params.MethodType,
+		BankCode:        params.BankCode,
+		Proxy:           textValue(params.Proxy),
+		EmployeeComment: textValue(params.EmployeeComment),
+		Status:          params.Status,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Requisite{}, ErrNotFound
 	}
 	if err != nil {
-		return Requisite{}, err
+		return Requisite{}, mapRequisiteWriteError(err)
 	}
 
-	return fromDBRequisite(row), nil
+	return fromUpdateRow(row), nil
 }
 
 func (r *Repository) Assign(ctx context.Context, params AssignRecord) (Assignment, error) {
-	row, err := r.queries.AssignRequisite(ctx, db.AssignRequisiteParams{
+	if r.db == nil {
+		return Assignment{}, errors.New("requisites repository: transaction db is not configured")
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Assignment{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	queries := r.queries.WithTx(tx)
+	_, err = queries.LockAssignableRequisiteForAssignment(ctx, db.LockAssignableRequisiteForAssignmentParams{
 		TeamID:      params.TeamID,
 		RequisiteID: params.RequisiteID,
-		TraderID:    params.TraderID,
-		AssignedBy:  params.AssignedBy,
-		Comment:     textValue(params.Comment),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Assignment{}, ErrRequisiteInOpenShift
+	}
+	if err != nil {
+		return Assignment{}, err
+	}
+
+	closedAssignments, err := queries.CloseActiveRequisiteAssignment(ctx, db.CloseActiveRequisiteAssignmentParams{
+		TeamID:      params.TeamID,
+		RequisiteID: params.RequisiteID,
 	})
 	if err != nil {
 		return Assignment{}, err
 	}
 
-	return fromAssignRow(row), nil
+	row, err := queries.CreateRequisiteAssignment(ctx, db.CreateRequisiteAssignmentParams{
+		TeamID:              params.TeamID,
+		RequisiteID:         params.RequisiteID,
+		TraderID:            params.TraderID,
+		AssignedBy:          params.AssignedBy,
+		Comment:             textValue(params.Comment),
+		Status:              assignmentStatusOrDefault(params.Status),
+		AssignedForDate:     dateValue(assignmentDateOrToday(params.AssignedForDate)),
+		TargetTurnoverMinor: params.TargetTurnoverMinor,
+	})
+	if err != nil {
+		return Assignment{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Assignment{}, err
+	}
+	committed = true
+
+	assignment := fromDBAssignment(row)
+	assignment.WasReassign = len(closedAssignments) > 0
+	return assignment, nil
+}
+
+func (r *Repository) CreatePlan(ctx context.Context, params CreatePlanRecord) (Assignment, error) {
+	row, err := r.queries.CreateRequisiteAssignment(ctx, db.CreateRequisiteAssignmentParams{
+		TeamID:              params.TeamID,
+		RequisiteID:         params.RequisiteID,
+		TraderID:            params.TraderID,
+		AssignedBy:          params.AssignedBy,
+		Comment:             textValue(params.Comment),
+		Status:              AssignmentStatusPlanned,
+		AssignedForDate:     dateValue(params.AssignedForDate),
+		TargetTurnoverMinor: params.TargetTurnoverMinor,
+	})
+	if err != nil {
+		return Assignment{}, err
+	}
+
+	return fromDBAssignment(row), nil
 }
 
 func (r *Repository) Unassign(ctx context.Context, teamID int64, requisiteID int64) (Assignment, error) {
@@ -213,103 +367,383 @@ func (r *Repository) ListActiveAssignmentsByTrader(ctx context.Context, teamID i
 	return items, nil
 }
 
+func (r *Repository) ListPlans(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {
+	rows, err := r.queries.ListTeamleadRequisitePlans(ctx, teamID)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]AssignmentWorkRow, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fromPlanRow(row))
+	}
+
+	return items, nil
+}
+
+func (r *Repository) ListActivity(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {
+	rows, err := r.queries.ListTeamleadRequisiteActivity(ctx, teamID)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]AssignmentWorkRow, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fromActivityRow(row))
+	}
+
+	return items, nil
+}
+
+func (r *Repository) GetAssignment(ctx context.Context, teamID int64, assignmentID int64) (Assignment, error) {
+	row, err := r.queries.GetRequisiteAssignmentByIDForTeam(ctx, db.GetRequisiteAssignmentByIDForTeamParams{
+		TeamID:       teamID,
+		AssignmentID: assignmentID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Assignment{}, ErrAssignmentNotFound
+	}
+	if err != nil {
+		return Assignment{}, err
+	}
+
+	return fromDBAssignment(row), nil
+}
+
+func (r *Repository) UpdatePlan(ctx context.Context, params UpdatePlanRecord) (Assignment, error) {
+	row, err := r.queries.UpdateRequisiteAssignmentPlan(ctx, db.UpdateRequisiteAssignmentPlanParams{
+		TeamID:              params.TeamID,
+		AssignmentID:        params.AssignmentID,
+		TraderID:            params.TraderID,
+		RequisiteID:         params.RequisiteID,
+		AssignedForDate:     dateValue(params.AssignedForDate),
+		TargetTurnoverMinor: params.TargetTurnoverMinor,
+		Comment:             textValue(params.Comment),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Assignment{}, ErrAssignmentNotFound
+	}
+	if err != nil {
+		return Assignment{}, err
+	}
+
+	return fromDBAssignment(row), nil
+}
+
+func (r *Repository) CancelPlan(ctx context.Context, teamID int64, assignmentID int64) (Assignment, error) {
+	row, err := r.queries.CancelRequisiteAssignmentPlan(ctx, db.CancelRequisiteAssignmentPlanParams{
+		TeamID:       teamID,
+		AssignmentID: assignmentID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Assignment{}, ErrAssignmentNotFound
+	}
+	if err != nil {
+		return Assignment{}, err
+	}
+
+	return fromDBAssignment(row), nil
+}
+
+func (r *Repository) CreateAssignmentEvent(ctx context.Context, params AssignmentEventRecord) (AssignmentEvent, error) {
+	row, err := r.queries.CreateRequisiteAssignmentEvent(ctx, db.CreateRequisiteAssignmentEventParams{
+		TeamID:       params.TeamID,
+		AssignmentID: params.AssignmentID,
+		ActorID:      params.ActorID,
+		Action:       params.Action,
+		BeforeJson:   params.BeforeJSON,
+		AfterJson:    params.AfterJSON,
+		Comment:      textValue(params.Comment),
+	})
+	if err != nil {
+		return AssignmentEvent{}, err
+	}
+
+	return fromDBAssignmentEvent(row), nil
+}
+
+func (r *Repository) AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]AssignmentEvent, error) {
+	rows, err := r.queries.ListRequisiteAssignmentEvents(ctx, db.ListRequisiteAssignmentEventsParams{
+		TeamID:       teamID,
+		AssignmentID: assignmentID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]AssignmentEvent, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fromDBAssignmentEvent(row))
+	}
+
+	return items, nil
+}
+
 type CreateRecord struct {
-	TeamID     int64
-	Phone      string
-	MethodType string
-	Proxy      *string
-	CreatedBy  int64
+	TeamID          int64
+	Phone           string
+	MethodType      string
+	BankCode        string
+	Proxy           *string
+	EmployeeComment *string
+	CreatedBy       int64
 }
 
 type UpdateRecord struct {
-	TeamID      int64
-	RequisiteID int64
-	Phone       string
-	MethodType  string
-	Proxy       *string
-	Status      string
+	TeamID          int64
+	RequisiteID     int64
+	Phone           string
+	MethodType      string
+	BankCode        string
+	Proxy           *string
+	EmployeeComment *string
+	Status          string
 }
 
 type AssignRecord struct {
-	TeamID      int64
-	RequisiteID int64
-	TraderID    int64
-	AssignedBy  int64
-	Comment     *string
+	TeamID              int64
+	RequisiteID         int64
+	TraderID            int64
+	AssignedBy          int64
+	Comment             *string
+	Status              string
+	AssignedForDate     time.Time
+	TargetTurnoverMinor int64
 }
 
-func fromDBRequisite(row db.Requisite) Requisite {
+type CreatePlanRecord struct {
+	TeamID              int64
+	RequisiteID         int64
+	TraderID            int64
+	AssignedBy          int64
+	AssignedForDate     time.Time
+	TargetTurnoverMinor int64
+	Comment             *string
+}
+
+type UpdatePlanRecord struct {
+	TeamID              int64
+	AssignmentID        int64
+	RequisiteID         int64
+	TraderID            int64
+	AssignedForDate     time.Time
+	TargetTurnoverMinor int64
+	Comment             *string
+}
+
+type AssignmentEventRecord struct {
+	TeamID       int64
+	AssignmentID int64
+	ActorID      int64
+	Action       string
+	BeforeJSON   []byte
+	AfterJSON    []byte
+	Comment      *string
+}
+
+func fromCreateRow(row db.CreateRequisiteRow) Requisite {
 	return Requisite{
-		ID:         row.ID,
-		TeamID:     row.TeamID,
-		Phone:      row.Phone,
-		MethodType: row.MethodType,
-		Proxy:      textPtr(row.Proxy),
-		Status:     row.Status,
-		CreatedBy:  row.CreatedBy,
-		CreatedAt:  row.CreatedAt.Time,
-		UpdatedAt:  row.UpdatedAt.Time,
+		ID:              row.ID,
+		TeamID:          row.TeamID,
+		Phone:           row.Phone,
+		MethodType:      row.MethodType,
+		BankCode:        row.BankCode,
+		Proxy:           textPtr(row.Proxy),
+		EmployeeComment: textPtr(row.EmployeeComment),
+		HolderName:      textPtr(row.HolderName),
+		CardNumber:      textPtr(row.CardNumber),
+		DetailsFilledAt: timePtr(row.DetailsFilledAt),
+		DetailsFilledBy: int64Ptr(row.DetailsFilledBy),
+		Status:          row.Status,
+		CreatedBy:       row.CreatedBy,
+		CreatedAt:       row.CreatedAt.Time,
+		UpdatedAt:       row.UpdatedAt.Time,
+	}
+}
+
+func fromUpdateRow(row db.UpdateRequisiteRow) Requisite {
+	return Requisite{
+		ID:              row.ID,
+		TeamID:          row.TeamID,
+		Phone:           row.Phone,
+		MethodType:      row.MethodType,
+		BankCode:        row.BankCode,
+		Proxy:           textPtr(row.Proxy),
+		EmployeeComment: textPtr(row.EmployeeComment),
+		HolderName:      textPtr(row.HolderName),
+		CardNumber:      textPtr(row.CardNumber),
+		DetailsFilledAt: timePtr(row.DetailsFilledAt),
+		DetailsFilledBy: int64Ptr(row.DetailsFilledBy),
+		Status:          row.Status,
+		CreatedBy:       row.CreatedBy,
+		CreatedAt:       row.CreatedAt.Time,
+		UpdatedAt:       row.UpdatedAt.Time,
 	}
 }
 
 func fromDetailsRow(row db.GetRequisiteDetailsByIDForTeamRow) RequisiteDetails {
 	return RequisiteDetails{
 		Requisite: Requisite{
-			ID:         row.ID,
-			TeamID:     row.TeamID,
-			Phone:      row.Phone,
-			MethodType: row.MethodType,
-			Proxy:      textPtr(row.Proxy),
-			Status:     row.Status,
-			CreatedBy:  row.CreatedBy,
-			CreatedAt:  row.CreatedAt.Time,
-			UpdatedAt:  row.UpdatedAt.Time,
+			ID:              row.ID,
+			TeamID:          row.TeamID,
+			Phone:           row.Phone,
+			MethodType:      row.MethodType,
+			BankCode:        row.BankCode,
+			BankName:        row.BankName,
+			Proxy:           textPtr(row.Proxy),
+			EmployeeComment: textPtr(row.EmployeeComment),
+			HolderName:      textPtr(row.HolderName),
+			CardNumber:      textPtr(row.CardNumber),
+			DetailsFilledAt: timePtr(row.DetailsFilledAt),
+			DetailsFilledBy: int64Ptr(row.DetailsFilledBy),
+			Status:          row.Status,
+			CreatedBy:       row.CreatedBy,
+			CreatedAt:       row.CreatedAt.Time,
+			UpdatedAt:       row.UpdatedAt.Time,
 		},
-		ActiveAssignmentID:  int64Ptr(row.ActiveAssignmentID),
-		AssignedTraderID:    int64Ptr(row.AssignedTraderID),
-		AssignedTraderLogin: textPtr(row.AssignedTraderLogin),
+		ActiveAssignmentID:  int64ZeroPtr(row.ActiveAssignmentID),
+		AssignedTraderID:    int64ZeroPtr(row.AssignedTraderID),
+		AssignedTraderLogin: stringPtr(row.AssignedTraderLogin),
+		AssignmentStatus:    stringPtr(row.AssignmentStatus),
+		AssignedForDate:     datePtr(row.AssignedForDate),
+		TargetTurnoverMinor: row.TargetTurnoverMinor,
 	}
 }
 
 func fromListDetailsRow(row db.ListRequisiteDetailsByTeamRow) RequisiteDetails {
 	return RequisiteDetails{
 		Requisite: Requisite{
-			ID:         row.ID,
-			TeamID:     row.TeamID,
-			Phone:      row.Phone,
-			MethodType: row.MethodType,
-			Proxy:      textPtr(row.Proxy),
-			Status:     row.Status,
-			CreatedBy:  row.CreatedBy,
-			CreatedAt:  row.CreatedAt.Time,
-			UpdatedAt:  row.UpdatedAt.Time,
+			ID:              row.ID,
+			TeamID:          row.TeamID,
+			Phone:           row.Phone,
+			MethodType:      row.MethodType,
+			BankCode:        row.BankCode,
+			BankName:        row.BankName,
+			Proxy:           textPtr(row.Proxy),
+			EmployeeComment: textPtr(row.EmployeeComment),
+			HolderName:      textPtr(row.HolderName),
+			CardNumber:      textPtr(row.CardNumber),
+			DetailsFilledAt: timePtr(row.DetailsFilledAt),
+			DetailsFilledBy: int64Ptr(row.DetailsFilledBy),
+			Status:          row.Status,
+			CreatedBy:       row.CreatedBy,
+			CreatedAt:       row.CreatedAt.Time,
+			UpdatedAt:       row.UpdatedAt.Time,
 		},
-		ActiveAssignmentID:  int64Ptr(row.ActiveAssignmentID),
-		AssignedTraderID:    int64Ptr(row.AssignedTraderID),
-		AssignedTraderLogin: textPtr(row.AssignedTraderLogin),
+		ActiveAssignmentID:  int64ZeroPtr(row.ActiveAssignmentID),
+		AssignedTraderID:    int64ZeroPtr(row.AssignedTraderID),
+		AssignedTraderLogin: stringPtr(row.AssignedTraderLogin),
+		AssignmentStatus:    stringPtr(row.AssignmentStatus),
+		AssignedForDate:     datePtr(row.AssignedForDate),
+		TargetTurnoverMinor: row.TargetTurnoverMinor,
 	}
 }
 
-func fromAssignRow(row db.AssignRequisiteRow) Assignment {
-	assignment := fromAssignmentFields(row.ID, row.TeamID, row.RequisiteID, row.TraderID, row.AssignedBy, row.AssignedAt, row.UnassignedAt, row.Comment)
-	assignment.WasReassign = row.WasReassign
-	return assignment
-}
-
 func fromDBAssignment(row db.RequisiteAssignment) Assignment {
-	return fromAssignmentFields(row.ID, row.TeamID, row.RequisiteID, row.TraderID, row.AssignedBy, row.AssignedAt, row.UnassignedAt, row.Comment)
+	return Assignment{
+		ID:                  row.ID,
+		TeamID:              row.TeamID,
+		RequisiteID:         row.RequisiteID,
+		TraderID:            row.TraderID,
+		AssignedBy:          row.AssignedBy,
+		AssignedAt:          row.AssignedAt.Time,
+		UnassignedAt:        timePtr(row.UnassignedAt),
+		Comment:             textPtr(row.Comment),
+		Status:              row.Status,
+		AssignedForDate:     row.AssignedForDate.Time,
+		TargetTurnoverMinor: row.TargetTurnoverMinor,
+		StartedAt:           timePtr(row.StartedAt),
+		CompletedAt:         timePtr(row.CompletedAt),
+		CancelledAt:         timePtr(row.CancelledAt),
+		ShiftRequisiteID:    int64Ptr(row.ShiftRequisiteID),
+		UpdatedAt:           row.UpdatedAt.Time,
+	}
 }
 
-func fromAssignmentFields(id int64, teamID int64, requisiteID int64, traderID int64, assignedBy int64, assignedAt pgtype.Timestamptz, unassignedAt pgtype.Timestamptz, comment pgtype.Text) Assignment {
-	return Assignment{
-		ID:           id,
-		TeamID:       teamID,
-		RequisiteID:  requisiteID,
-		TraderID:     traderID,
-		AssignedBy:   assignedBy,
-		AssignedAt:   assignedAt.Time,
-		UnassignedAt: timePtr(unassignedAt),
-		Comment:      textPtr(comment),
+func fromPlanRow(row db.ListTeamleadRequisitePlansRow) AssignmentWorkRow {
+	return AssignmentWorkRow{
+		AssignmentID:          row.AssignmentID,
+		TeamID:                row.TeamID,
+		RequisiteID:           row.RequisiteID,
+		Phone:                 row.Phone,
+		BankCode:              row.BankCode,
+		BankName:              row.BankName,
+		Proxy:                 textPtr(row.Proxy),
+		TraderID:              row.TraderID,
+		TraderLogin:           row.TraderLogin,
+		Status:                row.Status,
+		AssignedForDate:       row.AssignedForDate.Time,
+		TargetTurnoverMinor:   row.TargetTurnoverMinor,
+		InboundTurnoverMinor:  row.InboundTurnoverMinor,
+		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   row.ClosingBalanceMinor,
+		Comment:               textPtr(row.Comment),
+		AssignedAt:            row.AssignedAt.Time,
+		StartedAt:             timePtr(row.StartedAt),
+		CompletedAt:           timePtr(row.CompletedAt),
+		UpdatedAt:             row.UpdatedAt.Time,
+		ShiftRequisiteID:      int64Ptr(row.ShiftRequisiteID),
+	}
+}
+
+func fromActivityRow(row db.ListTeamleadRequisiteActivityRow) AssignmentWorkRow {
+	return AssignmentWorkRow{
+		AssignmentID:          row.AssignmentID,
+		TeamID:                row.TeamID,
+		RequisiteID:           row.RequisiteID,
+		Phone:                 row.Phone,
+		BankCode:              row.BankCode,
+		BankName:              row.BankName,
+		Proxy:                 textPtr(row.Proxy),
+		TraderID:              row.TraderID,
+		TraderLogin:           row.TraderLogin,
+		Status:                row.Status,
+		AssignedForDate:       row.AssignedForDate.Time,
+		TargetTurnoverMinor:   row.TargetTurnoverMinor,
+		InboundTurnoverMinor:  row.InboundTurnoverMinor,
+		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   row.ClosingBalanceMinor,
+		CardNumber:            textPtr(row.CardNumber),
+		HolderName:            textPtr(row.HolderName),
+		TakenAt:               timePtr(row.TakenAt),
+		ReleasedAt:            timePtr(row.ReleasedAt),
+		Comment:               textPtr(row.Comment),
+		AssignedAt:            row.AssignedAt.Time,
+		StartedAt:             timePtr(row.StartedAt),
+		CompletedAt:           timePtr(row.CompletedAt),
+		ShiftRequisiteID:      int64Ptr(row.ShiftRequisiteID),
+	}
+}
+
+func fromDBAssignmentEvent(row db.RequisiteAssignmentEvent) AssignmentEvent {
+	return AssignmentEvent{
+		ID:           row.ID,
+		TeamID:       row.TeamID,
+		AssignmentID: row.AssignmentID,
+		ActorID:      row.ActorID,
+		Action:       row.Action,
+		BeforeJSON:   row.BeforeJson,
+		AfterJSON:    row.AfterJson,
+		Comment:      textPtr(row.Comment),
+		CreatedAt:    row.CreatedAt.Time,
+	}
+}
+
+func mapRequisiteWriteError(err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return err
+	}
+
+	switch {
+	case pgErr.Code == "23505" && pgErr.ConstraintName == "uq_requisites_active_team_phone_bank":
+		return ErrPhoneBankDuplicate
+	case pgErr.Code == "23505" && pgErr.ConstraintName == "uq_requisites_active_proxy_global":
+		return ErrProxyDuplicate
+	case pgErr.Code == "23503" && pgErr.ConstraintName == "fk_requisites_bank_code":
+		return ErrBankNotFound
+	default:
+		return err
 	}
 }
 
@@ -329,6 +763,14 @@ func textPtr(value pgtype.Text) *string {
 	return &value.String
 }
 
+func stringPtr(value string) *string {
+	if value == "" {
+		return nil
+	}
+
+	return &value
+}
+
 func int64Ptr(value pgtype.Int8) *int64 {
 	if !value.Valid {
 		return nil
@@ -337,10 +779,46 @@ func int64Ptr(value pgtype.Int8) *int64 {
 	return &value.Int64
 }
 
+func int64ZeroPtr(value int64) *int64 {
+	if value == 0 {
+		return nil
+	}
+
+	return &value
+}
+
 func timePtr(value pgtype.Timestamptz) *time.Time {
 	if !value.Valid {
 		return nil
 	}
 
 	return &value.Time
+}
+
+func datePtr(value pgtype.Date) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+
+	return &value.Time
+}
+
+func dateValue(value time.Time) pgtype.Date {
+	return pgtype.Date{Time: value, Valid: true}
+}
+
+func assignmentDateOrToday(value time.Time) time.Time {
+	if value.IsZero() {
+		return time.Now()
+	}
+
+	return value
+}
+
+func assignmentStatusOrDefault(status string) string {
+	if status == "" {
+		return AssignmentStatusAssigned
+	}
+
+	return status
 }

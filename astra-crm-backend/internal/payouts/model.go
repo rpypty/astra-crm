@@ -38,4 +38,3 @@ type Transfer struct {
 	CreatedAt              time.Time
 	Comment                *string
 }
-

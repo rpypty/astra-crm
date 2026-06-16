@@ -124,6 +124,11 @@ func PublicDashboardFromDomain(dashboard Dashboard) PublicDashboard {
 		recentImports = append(recentImports, PublicImportFromDomain(item))
 	}
 
+	unknownStatuses := dashboard.UnknownStatuses
+	if unknownStatuses == nil {
+		unknownStatuses = []string{}
+	}
+
 	return PublicDashboard{
 		Summary: PublicSummary{
 			TotalAmountMinor:   dashboard.Summary.TotalAmountMinor,
@@ -136,7 +141,7 @@ func PublicDashboardFromDomain(dashboard Dashboard) PublicDashboard {
 			UnknownCount:       dashboard.Summary.UnknownCount,
 		},
 		StatusBreakdown: breakdown,
-		UnknownStatuses: dashboard.UnknownStatuses,
+		UnknownStatuses: unknownStatuses,
 		RecentImports:   recentImports,
 	}
 }

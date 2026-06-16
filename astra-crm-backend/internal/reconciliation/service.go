@@ -21,10 +21,14 @@ type Store interface {
 	LatestTraderOutbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (Run, error)
 	AcceptTraderOutbound(ctx context.Context, record AcceptTraderOutboundRecord) (Run, error)
 	RecalculateTeamleadPeriodInbound(ctx context.Context, record RecalculateTeamleadPeriodInboundRecord) (Run, error)
+	RecalculateTeamleadPeriodOutbound(ctx context.Context, record RecalculateTeamleadPeriodOutboundRecord) (Run, error)
 	LatestTeamleadPeriodInbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error)
+	LatestTeamleadPeriodOutbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error)
 	LatestTeamleadInbound(ctx context.Context, teamID int64) (Run, error)
+	LatestTeamleadOutbound(ctx context.Context, teamID int64) (Run, error)
 	ListItems(ctx context.Context, runID int64) ([]Item, error)
 	ListActiveTeamleadInboundPeriodScopes(ctx context.Context, teamID int64) ([]TeamleadInboundPeriodScope, error)
+	ListActiveTeamleadOutboundPeriodScopes(ctx context.Context, teamID int64) ([]TeamleadOutboundPeriodScope, error)
 }
 
 type AuditService interface {
@@ -58,6 +62,12 @@ type RecalculateTraderOutboundParams struct {
 }
 
 type RecalculateTeamleadPeriodInboundParams struct {
+	TeamID             int64
+	AccountingPeriodID int64
+	ImportBatchID      *int64
+}
+
+type RecalculateTeamleadPeriodOutboundParams struct {
 	TeamID             int64
 	AccountingPeriodID int64
 	ImportBatchID      *int64
@@ -117,6 +127,18 @@ func (s *Service) RecalculateTeamleadPeriodInbound(ctx context.Context, params R
 	})
 }
 
+func (s *Service) RecalculateTeamleadPeriodOutbound(ctx context.Context, params RecalculateTeamleadPeriodOutboundParams) (Run, error) {
+	if params.TeamID <= 0 || params.AccountingPeriodID <= 0 {
+		return Run{}, ErrInvalidInput
+	}
+
+	return s.store.RecalculateTeamleadPeriodOutbound(ctx, RecalculateTeamleadPeriodOutboundRecord{
+		TeamID:             params.TeamID,
+		AccountingPeriodID: params.AccountingPeriodID,
+		ImportBatchID:      params.ImportBatchID,
+	})
+}
+
 func (s *Service) LatestTraderInbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (Run, error) {
 	if teamID <= 0 || traderID <= 0 || shiftID <= 0 {
 		return Run{}, ErrInvalidInput
@@ -141,6 +163,14 @@ func (s *Service) LatestTeamleadPeriodInbound(ctx context.Context, teamID int64,
 	return s.store.LatestTeamleadPeriodInbound(ctx, teamID, accountingPeriodID)
 }
 
+func (s *Service) LatestTeamleadPeriodOutbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error) {
+	if teamID <= 0 || accountingPeriodID <= 0 {
+		return Run{}, ErrInvalidInput
+	}
+
+	return s.store.LatestTeamleadPeriodOutbound(ctx, teamID, accountingPeriodID)
+}
+
 func (s *Service) LatestTeamleadInbound(ctx context.Context, teamID int64) (Run, error) {
 	if teamID <= 0 {
 		return Run{}, ErrInvalidInput
@@ -149,8 +179,43 @@ func (s *Service) LatestTeamleadInbound(ctx context.Context, teamID int64) (Run,
 	return s.store.LatestTeamleadInbound(ctx, teamID)
 }
 
+func (s *Service) LatestTeamleadOutbound(ctx context.Context, teamID int64) (Run, error) {
+	if teamID <= 0 {
+		return Run{}, ErrInvalidInput
+	}
+
+	return s.store.LatestTeamleadOutbound(ctx, teamID)
+}
+
 func (s *Service) ListTeamleadPeriodInboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]Item, error) {
 	run, err := s.LatestTeamleadPeriodInbound(ctx, teamID, accountingPeriodID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.store.ListItems(ctx, run.ID)
+}
+
+func (s *Service) ListTeamleadPeriodOutboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]Item, error) {
+	run, err := s.LatestTeamleadPeriodOutbound(ctx, teamID, accountingPeriodID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.store.ListItems(ctx, run.ID)
+}
+
+func (s *Service) ListTraderInboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]Item, error) {
+	run, err := s.LatestTraderInbound(ctx, teamID, traderID, shiftID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.store.ListItems(ctx, run.ID)
+}
+
+func (s *Service) ListTraderOutboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]Item, error) {
+	run, err := s.LatestTraderOutbound(ctx, teamID, traderID, shiftID)
 	if err != nil {
 		return nil, err
 	}
@@ -258,23 +323,39 @@ func (s *Service) afterTraderShiftImportApplied(ctx context.Context, result impo
 			ShiftID:       *result.Batch.ShiftID,
 			ImportBatchID: &result.Batch.ID,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+
+		return s.recalculateActiveTeamleadOutboundPeriods(ctx, result.Batch.TeamID)
 	default:
 		return nil
 	}
 }
 
 func (s *Service) afterTeamleadPeriodImportApplied(ctx context.Context, result imports.ApplyResult) error {
-	if result.Batch.Direction != imports.DirectionInbound || result.Batch.AccountingPeriodID == nil {
+	if result.Batch.AccountingPeriodID == nil {
 		return nil
 	}
 
-	_, err := s.RecalculateTeamleadPeriodInbound(ctx, RecalculateTeamleadPeriodInboundParams{
-		TeamID:             result.Batch.TeamID,
-		AccountingPeriodID: *result.Batch.AccountingPeriodID,
-		ImportBatchID:      &result.Batch.ID,
-	})
-	return err
+	switch result.Batch.Direction {
+	case imports.DirectionInbound:
+		_, err := s.RecalculateTeamleadPeriodInbound(ctx, RecalculateTeamleadPeriodInboundParams{
+			TeamID:             result.Batch.TeamID,
+			AccountingPeriodID: *result.Batch.AccountingPeriodID,
+			ImportBatchID:      &result.Batch.ID,
+		})
+		return err
+	case imports.DirectionOutbound:
+		_, err := s.RecalculateTeamleadPeriodOutbound(ctx, RecalculateTeamleadPeriodOutboundParams{
+			TeamID:             result.Batch.TeamID,
+			AccountingPeriodID: *result.Batch.AccountingPeriodID,
+			ImportBatchID:      &result.Batch.ID,
+		})
+		return err
+	default:
+		return nil
+	}
 }
 
 func (s *Service) recalculateActiveTeamleadInboundPeriods(ctx context.Context, teamID int64) error {
@@ -286,6 +367,26 @@ func (s *Service) recalculateActiveTeamleadInboundPeriods(ctx context.Context, t
 	for _, scope := range scopes {
 		importBatchID := scope.ImportBatchID
 		if _, err := s.RecalculateTeamleadPeriodInbound(ctx, RecalculateTeamleadPeriodInboundParams{
+			TeamID:             teamID,
+			AccountingPeriodID: scope.AccountingPeriodID,
+			ImportBatchID:      &importBatchID,
+		}); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Service) recalculateActiveTeamleadOutboundPeriods(ctx context.Context, teamID int64) error {
+	scopes, err := s.store.ListActiveTeamleadOutboundPeriodScopes(ctx, teamID)
+	if err != nil {
+		return err
+	}
+
+	for _, scope := range scopes {
+		importBatchID := scope.ImportBatchID
+		if _, err := s.RecalculateTeamleadPeriodOutbound(ctx, RecalculateTeamleadPeriodOutboundParams{
 			TeamID:             teamID,
 			AccountingPeriodID: scope.AccountingPeriodID,
 			ImportBatchID:      &importBatchID,

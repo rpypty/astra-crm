@@ -11,62 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const assignRequisite = `-- name: AssignRequisite :one
-WITH closed_assignment AS (
-    UPDATE requisite_assignments
-    SET unassigned_at = now()
-    WHERE requisite_assignments.team_id = $1
-      AND requisite_assignments.requisite_id = $2
-      AND requisite_assignments.unassigned_at IS NULL
-    RETURNING id
-),
-created_assignment AS (
-    INSERT INTO requisite_assignments (team_id, requisite_id, trader_id, assigned_by, comment)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment
-)
-SELECT
-    created_assignment.id,
-    created_assignment.team_id,
-    created_assignment.requisite_id,
-    created_assignment.trader_id,
-    created_assignment.assigned_by,
-    created_assignment.assigned_at,
-    created_assignment.unassigned_at,
-    created_assignment.comment,
-    EXISTS(SELECT 1 FROM closed_assignment) AS was_reassign
-FROM created_assignment
+const cancelRequisiteAssignmentPlan = `-- name: CancelRequisiteAssignmentPlan :one
+UPDATE requisite_assignments
+SET status = 'cancelled',
+    cancelled_at = now(),
+    unassigned_at = COALESCE(unassigned_at, now()),
+    updated_at = now()
+WHERE team_id = $1
+  AND id = $2
+  AND status IN ('planned', 'assigned')
+RETURNING id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment, status, assigned_for_date, target_turnover_minor, started_at, completed_at, cancelled_at, shift_requisite_id, updated_at
 `
 
-type AssignRequisiteParams struct {
-	TeamID      int64
-	RequisiteID int64
-	TraderID    int64
-	AssignedBy  int64
-	Comment     pgtype.Text
-}
-
-type AssignRequisiteRow struct {
-	ID           int64
+type CancelRequisiteAssignmentPlanParams struct {
 	TeamID       int64
-	RequisiteID  int64
-	TraderID     int64
-	AssignedBy   int64
-	AssignedAt   pgtype.Timestamptz
-	UnassignedAt pgtype.Timestamptz
-	Comment      pgtype.Text
-	WasReassign  bool
+	AssignmentID int64
 }
 
-func (q *Queries) AssignRequisite(ctx context.Context, arg AssignRequisiteParams) (AssignRequisiteRow, error) {
-	row := q.db.QueryRow(ctx, assignRequisite,
-		arg.TeamID,
-		arg.RequisiteID,
-		arg.TraderID,
-		arg.AssignedBy,
-		arg.Comment,
-	)
-	var i AssignRequisiteRow
+func (q *Queries) CancelRequisiteAssignmentPlan(ctx context.Context, arg CancelRequisiteAssignmentPlanParams) (RequisiteAssignment, error) {
+	row := q.db.QueryRow(ctx, cancelRequisiteAssignmentPlan, arg.TeamID, arg.AssignmentID)
+	var i RequisiteAssignment
 	err := row.Scan(
 		&i.ID,
 		&i.TeamID,
@@ -76,40 +40,171 @@ func (q *Queries) AssignRequisite(ctx context.Context, arg AssignRequisiteParams
 		&i.AssignedAt,
 		&i.UnassignedAt,
 		&i.Comment,
-		&i.WasReassign,
+		&i.Status,
+		&i.AssignedForDate,
+		&i.TargetTurnoverMinor,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.ShiftRequisiteID,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const closeActiveRequisiteAssignment = `-- name: CloseActiveRequisiteAssignment :many
+UPDATE requisite_assignments
+SET unassigned_at = now(),
+    status = CASE WHEN status IN ('worked', 'blocked', 'cancelled', 'expired') THEN status ELSE 'cancelled' END,
+    cancelled_at = CASE WHEN status IN ('worked', 'blocked', 'cancelled', 'expired') THEN cancelled_at ELSE now() END,
+    updated_at = now()
+WHERE team_id = $1
+  AND requisite_id = $2
+  AND unassigned_at IS NULL
+RETURNING id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment, status, assigned_for_date, target_turnover_minor, started_at, completed_at, cancelled_at, shift_requisite_id, updated_at
+`
+
+type CloseActiveRequisiteAssignmentParams struct {
+	TeamID      int64
+	RequisiteID int64
+}
+
+func (q *Queries) CloseActiveRequisiteAssignment(ctx context.Context, arg CloseActiveRequisiteAssignmentParams) ([]RequisiteAssignment, error) {
+	rows, err := q.db.Query(ctx, closeActiveRequisiteAssignment, arg.TeamID, arg.RequisiteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RequisiteAssignment
+	for rows.Next() {
+		var i RequisiteAssignment
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.RequisiteID,
+			&i.TraderID,
+			&i.AssignedBy,
+			&i.AssignedAt,
+			&i.UnassignedAt,
+			&i.Comment,
+			&i.Status,
+			&i.AssignedForDate,
+			&i.TargetTurnoverMinor,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.CancelledAt,
+			&i.ShiftRequisiteID,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const completeRequisiteAssignmentWork = `-- name: CompleteRequisiteAssignmentWork :one
+UPDATE requisite_assignments
+SET status = CASE WHEN $1::boolean THEN 'blocked' ELSE 'worked' END,
+    completed_at = COALESCE(completed_at, now()),
+    updated_at = now()
+WHERE team_id = $2
+  AND shift_requisite_id = $3
+  AND status = 'in_work'
+RETURNING id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment, status, assigned_for_date, target_turnover_minor, started_at, completed_at, cancelled_at, shift_requisite_id, updated_at
+`
+
+type CompleteRequisiteAssignmentWorkParams struct {
+	Blocked          bool
+	TeamID           int64
+	ShiftRequisiteID pgtype.Int8
+}
+
+func (q *Queries) CompleteRequisiteAssignmentWork(ctx context.Context, arg CompleteRequisiteAssignmentWorkParams) (RequisiteAssignment, error) {
+	row := q.db.QueryRow(ctx, completeRequisiteAssignmentWork, arg.Blocked, arg.TeamID, arg.ShiftRequisiteID)
+	var i RequisiteAssignment
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.RequisiteID,
+		&i.TraderID,
+		&i.AssignedBy,
+		&i.AssignedAt,
+		&i.UnassignedAt,
+		&i.Comment,
+		&i.Status,
+		&i.AssignedForDate,
+		&i.TargetTurnoverMinor,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.ShiftRequisiteID,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const createRequisite = `-- name: CreateRequisite :one
-INSERT INTO requisites (team_id, phone, method_type, proxy, created_by)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, team_id, phone, method_type, proxy, status, created_by, created_at, updated_at, deleted_at
+INSERT INTO requisites (team_id, phone, method_type, bank_code, proxy, employee_comment, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, team_id, phone, method_type, bank_code, proxy, employee_comment, holder_name, card_number, details_filled_at, details_filled_by, status, created_by, created_at, updated_at, deleted_at
 `
 
 type CreateRequisiteParams struct {
-	TeamID     int64
-	Phone      string
-	MethodType string
-	Proxy      pgtype.Text
-	CreatedBy  int64
+	TeamID          int64
+	Phone           string
+	MethodType      string
+	BankCode        string
+	Proxy           pgtype.Text
+	EmployeeComment pgtype.Text
+	CreatedBy       int64
 }
 
-func (q *Queries) CreateRequisite(ctx context.Context, arg CreateRequisiteParams) (Requisite, error) {
+type CreateRequisiteRow struct {
+	ID              int64
+	TeamID          int64
+	Phone           string
+	MethodType      string
+	BankCode        string
+	Proxy           pgtype.Text
+	EmployeeComment pgtype.Text
+	HolderName      pgtype.Text
+	CardNumber      pgtype.Text
+	DetailsFilledAt pgtype.Timestamptz
+	DetailsFilledBy pgtype.Int8
+	Status          string
+	CreatedBy       int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) CreateRequisite(ctx context.Context, arg CreateRequisiteParams) (CreateRequisiteRow, error) {
 	row := q.db.QueryRow(ctx, createRequisite,
 		arg.TeamID,
 		arg.Phone,
 		arg.MethodType,
+		arg.BankCode,
 		arg.Proxy,
+		arg.EmployeeComment,
 		arg.CreatedBy,
 	)
-	var i Requisite
+	var i CreateRequisiteRow
 	err := row.Scan(
 		&i.ID,
 		&i.TeamID,
 		&i.Phone,
 		&i.MethodType,
+		&i.BankCode,
 		&i.Proxy,
+		&i.EmployeeComment,
+		&i.HolderName,
+		&i.CardNumber,
+		&i.DetailsFilledAt,
+		&i.DetailsFilledBy,
 		&i.Status,
 		&i.CreatedBy,
 		&i.CreatedAt,
@@ -119,8 +214,169 @@ func (q *Queries) CreateRequisite(ctx context.Context, arg CreateRequisiteParams
 	return i, err
 }
 
+const createRequisiteAssignment = `-- name: CreateRequisiteAssignment :one
+INSERT INTO requisite_assignments (team_id, requisite_id, trader_id, assigned_by, comment, status, assigned_for_date, target_turnover_minor)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment, status, assigned_for_date, target_turnover_minor, started_at, completed_at, cancelled_at, shift_requisite_id, updated_at
+`
+
+type CreateRequisiteAssignmentParams struct {
+	TeamID              int64
+	RequisiteID         int64
+	TraderID            int64
+	AssignedBy          int64
+	Comment             pgtype.Text
+	Status              string
+	AssignedForDate     pgtype.Date
+	TargetTurnoverMinor int64
+}
+
+func (q *Queries) CreateRequisiteAssignment(ctx context.Context, arg CreateRequisiteAssignmentParams) (RequisiteAssignment, error) {
+	row := q.db.QueryRow(ctx, createRequisiteAssignment,
+		arg.TeamID,
+		arg.RequisiteID,
+		arg.TraderID,
+		arg.AssignedBy,
+		arg.Comment,
+		arg.Status,
+		arg.AssignedForDate,
+		arg.TargetTurnoverMinor,
+	)
+	var i RequisiteAssignment
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.RequisiteID,
+		&i.TraderID,
+		&i.AssignedBy,
+		&i.AssignedAt,
+		&i.UnassignedAt,
+		&i.Comment,
+		&i.Status,
+		&i.AssignedForDate,
+		&i.TargetTurnoverMinor,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.ShiftRequisiteID,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createRequisiteAssignmentEvent = `-- name: CreateRequisiteAssignmentEvent :one
+INSERT INTO requisite_assignment_events (team_id, assignment_id, actor_id, action, before_json, after_json, comment)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, team_id, assignment_id, actor_id, action, before_json, after_json, comment, created_at
+`
+
+type CreateRequisiteAssignmentEventParams struct {
+	TeamID       int64
+	AssignmentID int64
+	ActorID      int64
+	Action       string
+	BeforeJson   []byte
+	AfterJson    []byte
+	Comment      pgtype.Text
+}
+
+func (q *Queries) CreateRequisiteAssignmentEvent(ctx context.Context, arg CreateRequisiteAssignmentEventParams) (RequisiteAssignmentEvent, error) {
+	row := q.db.QueryRow(ctx, createRequisiteAssignmentEvent,
+		arg.TeamID,
+		arg.AssignmentID,
+		arg.ActorID,
+		arg.Action,
+		arg.BeforeJson,
+		arg.AfterJson,
+		arg.Comment,
+	)
+	var i RequisiteAssignmentEvent
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.AssignmentID,
+		&i.ActorID,
+		&i.Action,
+		&i.BeforeJson,
+		&i.AfterJson,
+		&i.Comment,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const fillRequisiteInitialDetails = `-- name: FillRequisiteInitialDetails :exec
+UPDATE requisites
+SET
+    holder_name = $1,
+    card_number = $2,
+    details_filled_at = now(),
+    details_filled_by = $3,
+    updated_at = now()
+WHERE team_id = $4
+  AND id = $5
+  AND deleted_at IS NULL
+  AND holder_name IS NULL
+  AND card_number IS NULL
+`
+
+type FillRequisiteInitialDetailsParams struct {
+	HolderName      pgtype.Text
+	CardNumber      pgtype.Text
+	DetailsFilledBy pgtype.Int8
+	TeamID          int64
+	RequisiteID     int64
+}
+
+func (q *Queries) FillRequisiteInitialDetails(ctx context.Context, arg FillRequisiteInitialDetailsParams) error {
+	_, err := q.db.Exec(ctx, fillRequisiteInitialDetails,
+		arg.HolderName,
+		arg.CardNumber,
+		arg.DetailsFilledBy,
+		arg.TeamID,
+		arg.RequisiteID,
+	)
+	return err
+}
+
+const getRequisiteAssignmentByIDForTeam = `-- name: GetRequisiteAssignmentByIDForTeam :one
+SELECT id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment, status, assigned_for_date, target_turnover_minor, started_at, completed_at, cancelled_at, shift_requisite_id, updated_at
+FROM requisite_assignments
+WHERE team_id = $1
+  AND id = $2
+`
+
+type GetRequisiteAssignmentByIDForTeamParams struct {
+	TeamID       int64
+	AssignmentID int64
+}
+
+func (q *Queries) GetRequisiteAssignmentByIDForTeam(ctx context.Context, arg GetRequisiteAssignmentByIDForTeamParams) (RequisiteAssignment, error) {
+	row := q.db.QueryRow(ctx, getRequisiteAssignmentByIDForTeam, arg.TeamID, arg.AssignmentID)
+	var i RequisiteAssignment
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.RequisiteID,
+		&i.TraderID,
+		&i.AssignedBy,
+		&i.AssignedAt,
+		&i.UnassignedAt,
+		&i.Comment,
+		&i.Status,
+		&i.AssignedForDate,
+		&i.TargetTurnoverMinor,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.ShiftRequisiteID,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getRequisiteByIDForTeam = `-- name: GetRequisiteByIDForTeam :one
-SELECT id, team_id, phone, method_type, proxy, status, created_by, created_at, updated_at, deleted_at
+SELECT id, team_id, phone, method_type, bank_code, proxy, employee_comment, holder_name, card_number, details_filled_at, details_filled_by, status, created_by, created_at, updated_at, deleted_at
 FROM requisites
 WHERE id = $1
   AND team_id = $2
@@ -132,15 +388,40 @@ type GetRequisiteByIDForTeamParams struct {
 	TeamID int64
 }
 
-func (q *Queries) GetRequisiteByIDForTeam(ctx context.Context, arg GetRequisiteByIDForTeamParams) (Requisite, error) {
+type GetRequisiteByIDForTeamRow struct {
+	ID              int64
+	TeamID          int64
+	Phone           string
+	MethodType      string
+	BankCode        string
+	Proxy           pgtype.Text
+	EmployeeComment pgtype.Text
+	HolderName      pgtype.Text
+	CardNumber      pgtype.Text
+	DetailsFilledAt pgtype.Timestamptz
+	DetailsFilledBy pgtype.Int8
+	Status          string
+	CreatedBy       int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) GetRequisiteByIDForTeam(ctx context.Context, arg GetRequisiteByIDForTeamParams) (GetRequisiteByIDForTeamRow, error) {
 	row := q.db.QueryRow(ctx, getRequisiteByIDForTeam, arg.ID, arg.TeamID)
-	var i Requisite
+	var i GetRequisiteByIDForTeamRow
 	err := row.Scan(
 		&i.ID,
 		&i.TeamID,
 		&i.Phone,
 		&i.MethodType,
+		&i.BankCode,
 		&i.Proxy,
+		&i.EmployeeComment,
+		&i.HolderName,
+		&i.CardNumber,
+		&i.DetailsFilledAt,
+		&i.DetailsFilledBy,
 		&i.Status,
 		&i.CreatedBy,
 		&i.CreatedAt,
@@ -156,18 +437,36 @@ SELECT
     r.team_id,
     r.phone,
     r.method_type,
+    r.bank_code,
+    b.name AS bank_name,
     r.proxy,
+    r.employee_comment,
+    r.holder_name,
+    r.card_number,
+    r.details_filled_at,
+    r.details_filled_by,
     r.status,
     r.created_by,
     r.created_at,
     r.updated_at,
     r.deleted_at,
-    ra.id AS active_assignment_id,
-    ra.trader_id AS assigned_trader_id,
-    u.login AS assigned_trader_login
+    COALESCE(ra.id, 0) AS active_assignment_id,
+    COALESCE(ra.trader_id, 0) AS assigned_trader_id,
+    COALESCE(ra.trader_login, '') AS assigned_trader_login,
+    COALESCE(ra.status, '') AS assignment_status,
+    ra.assigned_for_date,
+    COALESCE(ra.target_turnover_minor, 0) AS target_turnover_minor
 FROM requisites r
-LEFT JOIN requisite_assignments ra ON ra.requisite_id = r.id AND ra.unassigned_at IS NULL
-LEFT JOIN users u ON u.id = ra.trader_id
+JOIN banks b ON b.code = r.bank_code
+LEFT JOIN LATERAL (
+    SELECT ra.id, ra.trader_id, u.login AS trader_login, ra.status, ra.assigned_for_date, ra.target_turnover_minor
+    FROM requisite_assignments ra
+    JOIN users u ON u.id = ra.trader_id
+    WHERE ra.team_id = r.team_id
+      AND ra.requisite_id = r.id
+    ORDER BY COALESCE(ra.completed_at, ra.cancelled_at, ra.unassigned_at, ra.assigned_at) DESC, ra.id DESC
+    LIMIT 1
+) ra ON true
 WHERE r.team_id = $1
   AND r.id = $2
   AND r.deleted_at IS NULL
@@ -183,15 +482,25 @@ type GetRequisiteDetailsByIDForTeamRow struct {
 	TeamID              int64
 	Phone               string
 	MethodType          string
+	BankCode            string
+	BankName            string
 	Proxy               pgtype.Text
+	EmployeeComment     pgtype.Text
+	HolderName          pgtype.Text
+	CardNumber          pgtype.Text
+	DetailsFilledAt     pgtype.Timestamptz
+	DetailsFilledBy     pgtype.Int8
 	Status              string
 	CreatedBy           int64
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
 	DeletedAt           pgtype.Timestamptz
-	ActiveAssignmentID  pgtype.Int8
-	AssignedTraderID    pgtype.Int8
-	AssignedTraderLogin pgtype.Text
+	ActiveAssignmentID  int64
+	AssignedTraderID    int64
+	AssignedTraderLogin string
+	AssignmentStatus    string
+	AssignedForDate     pgtype.Date
+	TargetTurnoverMinor int64
 }
 
 func (q *Queries) GetRequisiteDetailsByIDForTeam(ctx context.Context, arg GetRequisiteDetailsByIDForTeamParams) (GetRequisiteDetailsByIDForTeamRow, error) {
@@ -202,7 +511,14 @@ func (q *Queries) GetRequisiteDetailsByIDForTeam(ctx context.Context, arg GetReq
 		&i.TeamID,
 		&i.Phone,
 		&i.MethodType,
+		&i.BankCode,
+		&i.BankName,
 		&i.Proxy,
+		&i.EmployeeComment,
+		&i.HolderName,
+		&i.CardNumber,
+		&i.DetailsFilledAt,
+		&i.DetailsFilledBy,
 		&i.Status,
 		&i.CreatedBy,
 		&i.CreatedAt,
@@ -211,12 +527,15 @@ func (q *Queries) GetRequisiteDetailsByIDForTeam(ctx context.Context, arg GetReq
 		&i.ActiveAssignmentID,
 		&i.AssignedTraderID,
 		&i.AssignedTraderLogin,
+		&i.AssignmentStatus,
+		&i.AssignedForDate,
+		&i.TargetTurnoverMinor,
 	)
 	return i, err
 }
 
 const listActiveRequisiteAssignmentsByTrader = `-- name: ListActiveRequisiteAssignmentsByTrader :many
-SELECT id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment
+SELECT id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment, status, assigned_for_date, target_turnover_minor, started_at, completed_at, cancelled_at, shift_requisite_id, updated_at
 FROM requisite_assignments
 WHERE team_id = $1
   AND trader_id = $2
@@ -247,6 +566,57 @@ func (q *Queries) ListActiveRequisiteAssignmentsByTrader(ctx context.Context, ar
 			&i.AssignedAt,
 			&i.UnassignedAt,
 			&i.Comment,
+			&i.Status,
+			&i.AssignedForDate,
+			&i.TargetTurnoverMinor,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.CancelledAt,
+			&i.ShiftRequisiteID,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRequisiteAssignmentEvents = `-- name: ListRequisiteAssignmentEvents :many
+SELECT id, team_id, assignment_id, actor_id, action, before_json, after_json, comment, created_at
+FROM requisite_assignment_events
+WHERE team_id = $1
+  AND assignment_id = $2
+ORDER BY created_at DESC, id DESC
+`
+
+type ListRequisiteAssignmentEventsParams struct {
+	TeamID       int64
+	AssignmentID int64
+}
+
+func (q *Queries) ListRequisiteAssignmentEvents(ctx context.Context, arg ListRequisiteAssignmentEventsParams) ([]RequisiteAssignmentEvent, error) {
+	rows, err := q.db.Query(ctx, listRequisiteAssignmentEvents, arg.TeamID, arg.AssignmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RequisiteAssignmentEvent
+	for rows.Next() {
+		var i RequisiteAssignmentEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.AssignmentID,
+			&i.ActorID,
+			&i.Action,
+			&i.BeforeJson,
+			&i.AfterJson,
+			&i.Comment,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -259,7 +629,7 @@ func (q *Queries) ListActiveRequisiteAssignmentsByTrader(ctx context.Context, ar
 }
 
 const listRequisiteAssignmentHistory = `-- name: ListRequisiteAssignmentHistory :many
-SELECT id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment
+SELECT id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment, status, assigned_for_date, target_turnover_minor, started_at, completed_at, cancelled_at, shift_requisite_id, updated_at
 FROM requisite_assignments
 WHERE team_id = $1
   AND requisite_id = $2
@@ -289,6 +659,14 @@ func (q *Queries) ListRequisiteAssignmentHistory(ctx context.Context, arg ListRe
 			&i.AssignedAt,
 			&i.UnassignedAt,
 			&i.Comment,
+			&i.Status,
+			&i.AssignedForDate,
+			&i.TargetTurnoverMinor,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.CancelledAt,
+			&i.ShiftRequisiteID,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -306,21 +684,39 @@ SELECT
     r.team_id,
     r.phone,
     r.method_type,
+    r.bank_code,
+    b.name AS bank_name,
     r.proxy,
+    r.employee_comment,
+    r.holder_name,
+    r.card_number,
+    r.details_filled_at,
+    r.details_filled_by,
     r.status,
     r.created_by,
     r.created_at,
     r.updated_at,
     r.deleted_at,
-    ra.id AS active_assignment_id,
-    ra.trader_id AS assigned_trader_id,
-    u.login AS assigned_trader_login
+    COALESCE(ra.id, 0) AS active_assignment_id,
+    COALESCE(ra.trader_id, 0) AS assigned_trader_id,
+    COALESCE(ra.trader_login, '') AS assigned_trader_login,
+    COALESCE(ra.status, '') AS assignment_status,
+    ra.assigned_for_date,
+    COALESCE(ra.target_turnover_minor, 0) AS target_turnover_minor
 FROM requisites r
-LEFT JOIN requisite_assignments ra ON ra.requisite_id = r.id AND ra.unassigned_at IS NULL
-LEFT JOIN users u ON u.id = ra.trader_id
+JOIN banks b ON b.code = r.bank_code
+LEFT JOIN LATERAL (
+    SELECT ra.id, ra.trader_id, u.login AS trader_login, ra.status, ra.assigned_for_date, ra.target_turnover_minor
+    FROM requisite_assignments ra
+    JOIN users u ON u.id = ra.trader_id
+    WHERE ra.team_id = r.team_id
+      AND ra.requisite_id = r.id
+    ORDER BY COALESCE(ra.completed_at, ra.cancelled_at, ra.unassigned_at, ra.assigned_at) DESC, ra.id DESC
+    LIMIT 1
+) ra ON true
 WHERE r.team_id = $1
   AND r.deleted_at IS NULL
-ORDER BY r.id
+ORDER BY r.created_at DESC, r.id DESC
 `
 
 type ListRequisiteDetailsByTeamRow struct {
@@ -328,15 +724,25 @@ type ListRequisiteDetailsByTeamRow struct {
 	TeamID              int64
 	Phone               string
 	MethodType          string
+	BankCode            string
+	BankName            string
 	Proxy               pgtype.Text
+	EmployeeComment     pgtype.Text
+	HolderName          pgtype.Text
+	CardNumber          pgtype.Text
+	DetailsFilledAt     pgtype.Timestamptz
+	DetailsFilledBy     pgtype.Int8
 	Status              string
 	CreatedBy           int64
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
 	DeletedAt           pgtype.Timestamptz
-	ActiveAssignmentID  pgtype.Int8
-	AssignedTraderID    pgtype.Int8
-	AssignedTraderLogin pgtype.Text
+	ActiveAssignmentID  int64
+	AssignedTraderID    int64
+	AssignedTraderLogin string
+	AssignmentStatus    string
+	AssignedForDate     pgtype.Date
+	TargetTurnoverMinor int64
 }
 
 func (q *Queries) ListRequisiteDetailsByTeam(ctx context.Context, teamID int64) ([]ListRequisiteDetailsByTeamRow, error) {
@@ -353,7 +759,14 @@ func (q *Queries) ListRequisiteDetailsByTeam(ctx context.Context, teamID int64) 
 			&i.TeamID,
 			&i.Phone,
 			&i.MethodType,
+			&i.BankCode,
+			&i.BankName,
 			&i.Proxy,
+			&i.EmployeeComment,
+			&i.HolderName,
+			&i.CardNumber,
+			&i.DetailsFilledAt,
+			&i.DetailsFilledBy,
 			&i.Status,
 			&i.CreatedBy,
 			&i.CreatedAt,
@@ -362,6 +775,9 @@ func (q *Queries) ListRequisiteDetailsByTeam(ctx context.Context, teamID int64) 
 			&i.ActiveAssignmentID,
 			&i.AssignedTraderID,
 			&i.AssignedTraderLogin,
+			&i.AssignmentStatus,
+			&i.AssignedForDate,
+			&i.TargetTurnoverMinor,
 		); err != nil {
 			return nil, err
 		}
@@ -373,13 +789,296 @@ func (q *Queries) ListRequisiteDetailsByTeam(ctx context.Context, teamID int64) 
 	return items, nil
 }
 
+const listTeamleadRequisiteActivity = `-- name: ListTeamleadRequisiteActivity :many
+SELECT
+    ra.id AS assignment_id,
+    ra.team_id,
+    ra.requisite_id,
+    r.phone,
+    r.bank_code,
+    b.name AS bank_name,
+    r.proxy,
+    ra.trader_id,
+    u.login AS trader_login,
+    ra.status,
+    ra.assigned_for_date,
+    ra.target_turnover_minor,
+    COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
+    COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
+    COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor,
+    sr.card_number,
+    sr.holder_name,
+    sr.taken_at,
+    sr.released_at,
+    ra.comment,
+    ra.assigned_at,
+    ra.started_at,
+    ra.completed_at,
+    ra.shift_requisite_id
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+JOIN banks b ON b.code = r.bank_code
+JOIN users u ON u.id = ra.trader_id
+LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
+WHERE ra.team_id = $1
+ORDER BY COALESCE(ra.completed_at, ra.started_at, ra.assigned_at) DESC, ra.id DESC
+`
+
+type ListTeamleadRequisiteActivityRow struct {
+	AssignmentID          int64
+	TeamID                int64
+	RequisiteID           int64
+	Phone                 string
+	BankCode              string
+	BankName              string
+	Proxy                 pgtype.Text
+	TraderID              int64
+	TraderLogin           string
+	Status                string
+	AssignedForDate       pgtype.Date
+	TargetTurnoverMinor   int64
+	InboundTurnoverMinor  int64
+	OutboundTurnoverMinor int64
+	ClosingBalanceMinor   int64
+	CardNumber            pgtype.Text
+	HolderName            pgtype.Text
+	TakenAt               pgtype.Timestamptz
+	ReleasedAt            pgtype.Timestamptz
+	Comment               pgtype.Text
+	AssignedAt            pgtype.Timestamptz
+	StartedAt             pgtype.Timestamptz
+	CompletedAt           pgtype.Timestamptz
+	ShiftRequisiteID      pgtype.Int8
+}
+
+func (q *Queries) ListTeamleadRequisiteActivity(ctx context.Context, teamID int64) ([]ListTeamleadRequisiteActivityRow, error) {
+	rows, err := q.db.Query(ctx, listTeamleadRequisiteActivity, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTeamleadRequisiteActivityRow
+	for rows.Next() {
+		var i ListTeamleadRequisiteActivityRow
+		if err := rows.Scan(
+			&i.AssignmentID,
+			&i.TeamID,
+			&i.RequisiteID,
+			&i.Phone,
+			&i.BankCode,
+			&i.BankName,
+			&i.Proxy,
+			&i.TraderID,
+			&i.TraderLogin,
+			&i.Status,
+			&i.AssignedForDate,
+			&i.TargetTurnoverMinor,
+			&i.InboundTurnoverMinor,
+			&i.OutboundTurnoverMinor,
+			&i.ClosingBalanceMinor,
+			&i.CardNumber,
+			&i.HolderName,
+			&i.TakenAt,
+			&i.ReleasedAt,
+			&i.Comment,
+			&i.AssignedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.ShiftRequisiteID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTeamleadRequisitePlans = `-- name: ListTeamleadRequisitePlans :many
+SELECT
+    ra.id AS assignment_id,
+    ra.team_id,
+    ra.requisite_id,
+    r.phone,
+    r.bank_code,
+    b.name AS bank_name,
+    r.proxy,
+    ra.trader_id,
+    u.login AS trader_login,
+    ra.status,
+    ra.assigned_for_date,
+    ra.target_turnover_minor,
+    COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
+    COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
+    COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor,
+    ra.comment,
+    ra.assigned_by,
+    ra.assigned_at,
+    ra.started_at,
+    ra.completed_at,
+    ra.updated_at,
+    ra.shift_requisite_id
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+JOIN banks b ON b.code = r.bank_code
+JOIN users u ON u.id = ra.trader_id
+LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
+WHERE ra.team_id = $1
+ORDER BY ra.assigned_for_date DESC, ra.updated_at DESC, ra.id DESC
+`
+
+type ListTeamleadRequisitePlansRow struct {
+	AssignmentID          int64
+	TeamID                int64
+	RequisiteID           int64
+	Phone                 string
+	BankCode              string
+	BankName              string
+	Proxy                 pgtype.Text
+	TraderID              int64
+	TraderLogin           string
+	Status                string
+	AssignedForDate       pgtype.Date
+	TargetTurnoverMinor   int64
+	InboundTurnoverMinor  int64
+	OutboundTurnoverMinor int64
+	ClosingBalanceMinor   int64
+	Comment               pgtype.Text
+	AssignedBy            int64
+	AssignedAt            pgtype.Timestamptz
+	StartedAt             pgtype.Timestamptz
+	CompletedAt           pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	ShiftRequisiteID      pgtype.Int8
+}
+
+func (q *Queries) ListTeamleadRequisitePlans(ctx context.Context, teamID int64) ([]ListTeamleadRequisitePlansRow, error) {
+	rows, err := q.db.Query(ctx, listTeamleadRequisitePlans, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTeamleadRequisitePlansRow
+	for rows.Next() {
+		var i ListTeamleadRequisitePlansRow
+		if err := rows.Scan(
+			&i.AssignmentID,
+			&i.TeamID,
+			&i.RequisiteID,
+			&i.Phone,
+			&i.BankCode,
+			&i.BankName,
+			&i.Proxy,
+			&i.TraderID,
+			&i.TraderLogin,
+			&i.Status,
+			&i.AssignedForDate,
+			&i.TargetTurnoverMinor,
+			&i.InboundTurnoverMinor,
+			&i.OutboundTurnoverMinor,
+			&i.ClosingBalanceMinor,
+			&i.Comment,
+			&i.AssignedBy,
+			&i.AssignedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.UpdatedAt,
+			&i.ShiftRequisiteID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockAssignableRequisiteForAssignment = `-- name: LockAssignableRequisiteForAssignment :one
+SELECT r.id
+FROM requisites r
+WHERE r.team_id = $1
+  AND r.id = $2
+  AND r.deleted_at IS NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM shift_requisites sr
+      JOIN trader_shifts ts ON ts.id = sr.shift_id
+      WHERE sr.team_id = r.team_id
+        AND sr.requisite_id = r.id
+        AND sr.status = 'active'
+        AND ts.status IN ('open', 'closing')
+  )
+FOR UPDATE
+`
+
+type LockAssignableRequisiteForAssignmentParams struct {
+	TeamID      int64
+	RequisiteID int64
+}
+
+func (q *Queries) LockAssignableRequisiteForAssignment(ctx context.Context, arg LockAssignableRequisiteForAssignmentParams) (int64, error) {
+	row := q.db.QueryRow(ctx, lockAssignableRequisiteForAssignment, arg.TeamID, arg.RequisiteID)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const startRequisiteAssignmentWork = `-- name: StartRequisiteAssignmentWork :one
+UPDATE requisite_assignments
+SET status = 'in_work',
+    started_at = COALESCE(started_at, now()),
+    shift_requisite_id = $1,
+    updated_at = now()
+WHERE team_id = $2
+  AND id = $3
+  AND status IN ('planned', 'assigned')
+RETURNING id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment, status, assigned_for_date, target_turnover_minor, started_at, completed_at, cancelled_at, shift_requisite_id, updated_at
+`
+
+type StartRequisiteAssignmentWorkParams struct {
+	ShiftRequisiteID pgtype.Int8
+	TeamID           int64
+	AssignmentID     int64
+}
+
+func (q *Queries) StartRequisiteAssignmentWork(ctx context.Context, arg StartRequisiteAssignmentWorkParams) (RequisiteAssignment, error) {
+	row := q.db.QueryRow(ctx, startRequisiteAssignmentWork, arg.ShiftRequisiteID, arg.TeamID, arg.AssignmentID)
+	var i RequisiteAssignment
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.RequisiteID,
+		&i.TraderID,
+		&i.AssignedBy,
+		&i.AssignedAt,
+		&i.UnassignedAt,
+		&i.Comment,
+		&i.Status,
+		&i.AssignedForDate,
+		&i.TargetTurnoverMinor,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.ShiftRequisiteID,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const unassignRequisite = `-- name: UnassignRequisite :one
 UPDATE requisite_assignments
-SET unassigned_at = now()
+SET unassigned_at = now(),
+    status = CASE WHEN status IN ('worked', 'blocked', 'cancelled', 'expired') THEN status ELSE 'cancelled' END,
+    cancelled_at = CASE WHEN status IN ('worked', 'blocked', 'cancelled', 'expired') THEN cancelled_at ELSE now() END,
+    updated_at = now()
 WHERE requisite_assignments.team_id = $1
   AND requisite_assignments.requisite_id = $2
   AND requisite_assignments.unassigned_at IS NULL
-RETURNING id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment
+RETURNING id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment, status, assigned_for_date, target_turnover_minor, started_at, completed_at, cancelled_at, shift_requisite_id, updated_at
 `
 
 type UnassignRequisiteParams struct {
@@ -399,6 +1098,14 @@ func (q *Queries) UnassignRequisite(ctx context.Context, arg UnassignRequisitePa
 		&i.AssignedAt,
 		&i.UnassignedAt,
 		&i.Comment,
+		&i.Status,
+		&i.AssignedForDate,
+		&i.TargetTurnoverMinor,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.ShiftRequisiteID,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -408,49 +1115,137 @@ UPDATE requisites
 SET
     phone = $1,
     method_type = $2,
-    proxy = $3,
-    status = $4,
+    bank_code = $3,
+    proxy = $4,
+    employee_comment = $5,
+    status = $6,
     updated_at = now(),
     deleted_at = CASE
-        WHEN $4 = 'archived' THEN COALESCE(requisites.deleted_at, now())
+        WHEN $6 = 'archived' THEN COALESCE(requisites.deleted_at, now())
         ELSE NULL
     END
-WHERE requisites.team_id = $5
-  AND requisites.id = $6
+WHERE requisites.team_id = $7
+  AND requisites.id = $8
   AND requisites.deleted_at IS NULL
-RETURNING id, team_id, phone, method_type, proxy, status, created_by, created_at, updated_at, deleted_at
+RETURNING id, team_id, phone, method_type, bank_code, proxy, employee_comment, holder_name, card_number, details_filled_at, details_filled_by, status, created_by, created_at, updated_at, deleted_at
 `
 
 type UpdateRequisiteParams struct {
-	Phone       string
-	MethodType  string
-	Proxy       pgtype.Text
-	Status      string
-	TeamID      int64
-	RequisiteID int64
+	Phone           string
+	MethodType      string
+	BankCode        string
+	Proxy           pgtype.Text
+	EmployeeComment pgtype.Text
+	Status          string
+	TeamID          int64
+	RequisiteID     int64
 }
 
-func (q *Queries) UpdateRequisite(ctx context.Context, arg UpdateRequisiteParams) (Requisite, error) {
+type UpdateRequisiteRow struct {
+	ID              int64
+	TeamID          int64
+	Phone           string
+	MethodType      string
+	BankCode        string
+	Proxy           pgtype.Text
+	EmployeeComment pgtype.Text
+	HolderName      pgtype.Text
+	CardNumber      pgtype.Text
+	DetailsFilledAt pgtype.Timestamptz
+	DetailsFilledBy pgtype.Int8
+	Status          string
+	CreatedBy       int64
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	DeletedAt       pgtype.Timestamptz
+}
+
+func (q *Queries) UpdateRequisite(ctx context.Context, arg UpdateRequisiteParams) (UpdateRequisiteRow, error) {
 	row := q.db.QueryRow(ctx, updateRequisite,
 		arg.Phone,
 		arg.MethodType,
+		arg.BankCode,
 		arg.Proxy,
+		arg.EmployeeComment,
 		arg.Status,
 		arg.TeamID,
 		arg.RequisiteID,
 	)
-	var i Requisite
+	var i UpdateRequisiteRow
 	err := row.Scan(
 		&i.ID,
 		&i.TeamID,
 		&i.Phone,
 		&i.MethodType,
+		&i.BankCode,
 		&i.Proxy,
+		&i.EmployeeComment,
+		&i.HolderName,
+		&i.CardNumber,
+		&i.DetailsFilledAt,
+		&i.DetailsFilledBy,
 		&i.Status,
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const updateRequisiteAssignmentPlan = `-- name: UpdateRequisiteAssignmentPlan :one
+UPDATE requisite_assignments
+SET trader_id = $1,
+    requisite_id = $2,
+    assigned_for_date = $3,
+    target_turnover_minor = $4,
+    comment = $5,
+    status = CASE WHEN status = 'planned' THEN 'planned' ELSE status END,
+    updated_at = now()
+WHERE team_id = $6
+  AND id = $7
+  AND status IN ('planned', 'assigned')
+RETURNING id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment, status, assigned_for_date, target_turnover_minor, started_at, completed_at, cancelled_at, shift_requisite_id, updated_at
+`
+
+type UpdateRequisiteAssignmentPlanParams struct {
+	TraderID            int64
+	RequisiteID         int64
+	AssignedForDate     pgtype.Date
+	TargetTurnoverMinor int64
+	Comment             pgtype.Text
+	TeamID              int64
+	AssignmentID        int64
+}
+
+func (q *Queries) UpdateRequisiteAssignmentPlan(ctx context.Context, arg UpdateRequisiteAssignmentPlanParams) (RequisiteAssignment, error) {
+	row := q.db.QueryRow(ctx, updateRequisiteAssignmentPlan,
+		arg.TraderID,
+		arg.RequisiteID,
+		arg.AssignedForDate,
+		arg.TargetTurnoverMinor,
+		arg.Comment,
+		arg.TeamID,
+		arg.AssignmentID,
+	)
+	var i RequisiteAssignment
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.RequisiteID,
+		&i.TraderID,
+		&i.AssignedBy,
+		&i.AssignedAt,
+		&i.UnassignedAt,
+		&i.Comment,
+		&i.Status,
+		&i.AssignedForDate,
+		&i.TargetTurnoverMinor,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CancelledAt,
+		&i.ShiftRequisiteID,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

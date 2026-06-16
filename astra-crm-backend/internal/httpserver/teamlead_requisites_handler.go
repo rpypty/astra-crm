@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ashpak/astra-crm-backend/internal/requisites"
 	"github.com/ashpak/astra-crm-backend/internal/users"
@@ -21,6 +22,12 @@ type TeamleadRequisiteService interface {
 	Assign(ctx context.Context, params requisites.AssignParams) (requisites.Assignment, error)
 	Unassign(ctx context.Context, actorID int64, teamID int64, requisiteID int64) error
 	AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64) ([]requisites.Assignment, error)
+	Plans(ctx context.Context, teamID int64) ([]requisites.AssignmentWorkRow, error)
+	Activity(ctx context.Context, teamID int64) ([]requisites.AssignmentWorkRow, error)
+	CreatePlan(ctx context.Context, params requisites.PlanParams) (requisites.Assignment, error)
+	UpdatePlan(ctx context.Context, params requisites.PlanParams) (requisites.Assignment, error)
+	CancelPlan(ctx context.Context, actorID int64, teamID int64, assignmentID int64) (requisites.Assignment, error)
+	AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]requisites.AssignmentEvent, error)
 }
 
 type TeamleadRequisitesHandler struct {
@@ -47,23 +54,43 @@ type assignmentHistoryResponse struct {
 	Items []requisites.PublicRequisiteAssignment `json:"items"`
 }
 
+type assignmentRowsResponse struct {
+	Items []requisites.PublicAssignmentWorkRow `json:"items"`
+}
+
+type assignmentEventsResponse struct {
+	Items []requisites.PublicAssignmentEvent `json:"items"`
+}
+
 type createRequisiteRequest struct {
 	Phone            string  `json:"phone"`
 	MethodType       string  `json:"methodType"`
+	BankCode         string  `json:"bankCode"`
 	Proxy            *string `json:"proxy"`
+	EmployeeComment  *string `json:"employeeComment"`
 	AssignedTraderID *int64  `json:"assignedTraderId"`
 }
 
 type patchRequisiteRequest struct {
-	Phone      *string `json:"phone"`
-	MethodType *string `json:"methodType"`
-	Proxy      *string `json:"proxy"`
-	Status     *string `json:"status"`
+	Phone           *string `json:"phone"`
+	MethodType      *string `json:"methodType"`
+	BankCode        *string `json:"bankCode"`
+	Proxy           *string `json:"proxy"`
+	EmployeeComment *string `json:"employeeComment"`
+	Status          *string `json:"status"`
 }
 
 type assignRequisiteRequest struct {
 	TraderID int64   `json:"traderId"`
 	Comment  *string `json:"comment"`
+}
+
+type planRequisiteRequest struct {
+	RequisiteID         int64   `json:"requisiteId"`
+	TraderID            int64   `json:"traderId"`
+	AssignedForDate     string  `json:"assignedForDate"`
+	TargetTurnoverMinor int64   `json:"targetTurnoverMinor"`
+	Comment             *string `json:"comment"`
 }
 
 func (h *TeamleadRequisitesHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -85,6 +112,190 @@ func (h *TeamleadRequisitesHandler) List(w http.ResponseWriter, r *http.Request)
 
 	WriteJSON(w, http.StatusOK, requisitesListResponse{
 		Items: requisites.PublicRequisites(items),
+	})
+}
+
+func (h *TeamleadRequisitesHandler) Activity(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	items, err := h.service.Activity(r.Context(), actor.TeamID)
+	if err != nil {
+		RespondError(w, mapRequisiteError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, assignmentRowsResponse{
+		Items: requisites.PublicAssignmentWorkRows(items),
+	})
+}
+
+func (h *TeamleadRequisitesHandler) Plans(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	items, err := h.service.Plans(r.Context(), actor.TeamID)
+	if err != nil {
+		RespondError(w, mapRequisiteError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, assignmentRowsResponse{
+		Items: requisites.PublicAssignmentWorkRows(items),
+	})
+}
+
+func (h *TeamleadRequisitesHandler) CreatePlan(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	var request planRequisiteRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	planDate, fields := validatePlanRequisiteRequest(request)
+	if len(fields) > 0 {
+		RespondError(w, ValidationError(fields))
+		return
+	}
+
+	assignment, err := h.service.CreatePlan(r.Context(), requisites.PlanParams{
+		ActorID:             actor.ID,
+		TeamID:              actor.TeamID,
+		RequisiteID:         request.RequisiteID,
+		TraderID:            request.TraderID,
+		AssignedForDate:     planDate,
+		TargetTurnoverMinor: request.TargetTurnoverMinor,
+		Comment:             request.Comment,
+	})
+	if err != nil {
+		RespondError(w, mapRequisiteError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusCreated, assignmentResponse{
+		Assignment: requisites.PublicAssignment(assignment),
+	})
+}
+
+func (h *TeamleadRequisitesHandler) UpdatePlan(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	assignmentID, ok := assignmentIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var request planRequisiteRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	planDate, fields := validatePlanRequisiteRequest(request)
+	if len(fields) > 0 {
+		RespondError(w, ValidationError(fields))
+		return
+	}
+
+	assignment, err := h.service.UpdatePlan(r.Context(), requisites.PlanParams{
+		ActorID:             actor.ID,
+		TeamID:              actor.TeamID,
+		AssignmentID:        assignmentID,
+		RequisiteID:         request.RequisiteID,
+		TraderID:            request.TraderID,
+		AssignedForDate:     planDate,
+		TargetTurnoverMinor: request.TargetTurnoverMinor,
+		Comment:             request.Comment,
+	})
+	if err != nil {
+		RespondError(w, mapRequisiteError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, assignmentResponse{
+		Assignment: requisites.PublicAssignment(assignment),
+	})
+}
+
+func (h *TeamleadRequisitesHandler) CancelPlan(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	assignmentID, ok := assignmentIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	assignment, err := h.service.CancelPlan(r.Context(), actor.ID, actor.TeamID, assignmentID)
+	if err != nil {
+		RespondError(w, mapRequisiteError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, assignmentResponse{
+		Assignment: requisites.PublicAssignment(assignment),
+	})
+}
+
+func (h *TeamleadRequisitesHandler) PlanEvents(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	assignmentID, ok := assignmentIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	items, err := h.service.AssignmentEvents(r.Context(), actor.TeamID, assignmentID)
+	if err != nil {
+		RespondError(w, mapRequisiteError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, assignmentEventsResponse{
+		Items: requisites.PublicAssignmentEvents(items),
 	})
 }
 
@@ -113,7 +324,9 @@ func (h *TeamleadRequisitesHandler) Create(w http.ResponseWriter, r *http.Reques
 		TeamID:           actor.TeamID,
 		Phone:            request.Phone,
 		MethodType:       request.MethodType,
+		BankCode:         request.BankCode,
 		Proxy:            request.Proxy,
+		EmployeeComment:  request.EmployeeComment,
 		AssignedTraderID: request.AssignedTraderID,
 	})
 	if err != nil {
@@ -179,13 +392,15 @@ func (h *TeamleadRequisitesHandler) Patch(w http.ResponseWriter, r *http.Request
 	}
 
 	requisite, err := h.service.Patch(r.Context(), requisites.PatchParams{
-		ActorID:     actor.ID,
-		TeamID:      actor.TeamID,
-		RequisiteID: requisiteID,
-		Phone:       request.Phone,
-		MethodType:  request.MethodType,
-		Proxy:       request.Proxy,
-		Status:      request.Status,
+		ActorID:         actor.ID,
+		TeamID:          actor.TeamID,
+		RequisiteID:     requisiteID,
+		Phone:           request.Phone,
+		MethodType:      request.MethodType,
+		BankCode:        request.BankCode,
+		Proxy:           request.Proxy,
+		EmployeeComment: request.EmployeeComment,
+		Status:          request.Status,
 	})
 	if err != nil {
 		RespondError(w, mapRequisiteError(err))
@@ -327,13 +542,26 @@ func requisiteIDFromRequest(w http.ResponseWriter, r *http.Request) (int64, bool
 	return id, true
 }
 
+func assignmentIDFromRequest(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	raw := chi.URLParam(r, "assignmentId")
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		RespondError(w, ValidationError(map[string]string{
+			"assignmentId": "Некорректный ID назначения",
+		}))
+		return 0, false
+	}
+
+	return id, true
+}
+
 func validateCreateRequisiteRequest(request createRequisiteRequest) map[string]string {
 	fields := map[string]string{}
 	if strings.TrimSpace(request.Phone) == "" {
 		fields["phone"] = "Телефон обязателен"
 	}
-	if strings.TrimSpace(request.MethodType) == "" {
-		fields["methodType"] = "Метод обязателен"
+	if strings.TrimSpace(request.BankCode) == "" {
+		fields["bankCode"] = "Банк обязателен"
 	}
 	if request.AssignedTraderID != nil && *request.AssignedTraderID <= 0 {
 		fields["assignedTraderId"] = "Некорректный ID трейдера"
@@ -344,7 +572,7 @@ func validateCreateRequisiteRequest(request createRequisiteRequest) map[string]s
 
 func validatePatchRequisiteRequest(request patchRequisiteRequest) map[string]string {
 	fields := map[string]string{}
-	if request.Phone == nil && request.MethodType == nil && request.Proxy == nil && request.Status == nil {
+	if request.Phone == nil && request.MethodType == nil && request.BankCode == nil && request.Proxy == nil && request.EmployeeComment == nil && request.Status == nil {
 		fields["body"] = "Нужно передать хотя бы одно поле для изменения"
 	}
 	if request.Phone != nil && strings.TrimSpace(*request.Phone) == "" {
@@ -352,6 +580,9 @@ func validatePatchRequisiteRequest(request patchRequisiteRequest) map[string]str
 	}
 	if request.MethodType != nil && strings.TrimSpace(*request.MethodType) == "" {
 		fields["methodType"] = "Метод обязателен"
+	}
+	if request.BankCode != nil && strings.TrimSpace(*request.BankCode) == "" {
+		fields["bankCode"] = "Банк обязателен"
 	}
 	if request.Status != nil && !validRequisitePatchStatus(*request.Status) {
 		fields["status"] = "Некорректный статус реквизита"
@@ -367,6 +598,26 @@ func validateAssignRequisiteRequest(request assignRequisiteRequest) map[string]s
 	}
 
 	return fields
+}
+
+func validatePlanRequisiteRequest(request planRequisiteRequest) (time.Time, map[string]string) {
+	fields := map[string]string{}
+	if request.RequisiteID <= 0 {
+		fields["requisiteId"] = "Некорректный ID реквизита"
+	}
+	if request.TraderID <= 0 {
+		fields["traderId"] = "Некорректный ID трейдера"
+	}
+	if request.TargetTurnoverMinor <= 0 {
+		fields["targetTurnoverMinor"] = "Целевой оборот должен быть больше 0"
+	}
+
+	planDate, err := time.Parse("2006-01-02", strings.TrimSpace(request.AssignedForDate))
+	if err != nil {
+		fields["assignedForDate"] = "Дата должна быть в формате YYYY-MM-DD"
+	}
+
+	return planDate, fields
 }
 
 func validRequisitePatchStatus(status string) bool {
@@ -388,6 +639,14 @@ func mapRequisiteError(err error) error {
 		return NotFoundError()
 	case errors.Is(err, requisites.ErrInactiveTrader):
 		return DomainError("TRADER_NOT_ACTIVE", "Назначить реквизит можно только активному трейдеру")
+	case errors.Is(err, requisites.ErrRequisiteInOpenShift):
+		return DomainError("REQUISITE_IN_OPEN_SHIFT", "Реквизит уже находится в работе в открытой смене")
+	case errors.Is(err, requisites.ErrPhoneBankDuplicate):
+		return DomainError("REQUISITE_PHONE_BANK_DUPLICATE", "Такой номер с этим банком уже существует")
+	case errors.Is(err, requisites.ErrProxyDuplicate):
+		return DomainError("REQUISITE_PROXY_DUPLICATE", "Такой proxy уже используется")
+	case errors.Is(err, requisites.ErrBankNotFound):
+		return DomainError("REQUISITE_BANK_NOT_FOUND", "Банк не найден")
 	case errors.Is(err, requisites.ErrInvalidInput):
 		return ValidationError(map[string]string{
 			"body": "Некоторые поля заполнены неверно",

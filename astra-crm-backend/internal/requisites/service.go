@@ -2,18 +2,23 @@ package requisites
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
 	"github.com/ashpak/astra-crm-backend/internal/users"
 )
 
 var (
-	ErrInvalidInput   = errors.New("invalid requisite input")
-	ErrInactiveTrader = errors.New("trader is not active")
+	ErrInvalidInput         = errors.New("invalid requisite input")
+	ErrInactiveTrader       = errors.New("trader is not active")
+	ErrRequisiteInOpenShift = errors.New("requisite is already in open shift")
 )
+
+const defaultMethodType = "SBP"
 
 type Store interface {
 	Create(ctx context.Context, params CreateRecord) (Requisite, error)
@@ -21,8 +26,16 @@ type Store interface {
 	ListDetails(ctx context.Context, teamID int64) ([]RequisiteDetails, error)
 	Update(ctx context.Context, params UpdateRecord) (Requisite, error)
 	Assign(ctx context.Context, params AssignRecord) (Assignment, error)
+	CreatePlan(ctx context.Context, params CreatePlanRecord) (Assignment, error)
 	Unassign(ctx context.Context, teamID int64, requisiteID int64) (Assignment, error)
 	AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64) ([]Assignment, error)
+	ListPlans(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error)
+	ListActivity(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error)
+	GetAssignment(ctx context.Context, teamID int64, assignmentID int64) (Assignment, error)
+	UpdatePlan(ctx context.Context, params UpdatePlanRecord) (Assignment, error)
+	CancelPlan(ctx context.Context, teamID int64, assignmentID int64) (Assignment, error)
+	CreateAssignmentEvent(ctx context.Context, params AssignmentEventRecord) (AssignmentEvent, error)
+	AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]AssignmentEvent, error)
 }
 
 type TraderReader interface {
@@ -52,19 +65,23 @@ type CreateParams struct {
 	TeamID           int64
 	Phone            string
 	MethodType       string
+	BankCode         string
 	Proxy            *string
+	EmployeeComment  *string
 	AssignedTraderID *int64
 	AssignComment    *string
 }
 
 type PatchParams struct {
-	ActorID     int64
-	TeamID      int64
-	RequisiteID int64
-	Phone       *string
-	MethodType  *string
-	Proxy       *string
-	Status      *string
+	ActorID         int64
+	TeamID          int64
+	RequisiteID     int64
+	Phone           *string
+	MethodType      *string
+	BankCode        *string
+	Proxy           *string
+	EmployeeComment *string
+	Status          *string
 }
 
 type AssignParams struct {
@@ -75,11 +92,24 @@ type AssignParams struct {
 	Comment     *string
 }
 
+type PlanParams struct {
+	ActorID             int64
+	TeamID              int64
+	AssignmentID        int64
+	RequisiteID         int64
+	TraderID            int64
+	AssignedForDate     time.Time
+	TargetTurnoverMinor int64
+	Comment             *string
+}
+
 func (s *Service) Create(ctx context.Context, params CreateParams) (RequisiteDetails, error) {
-	phone := strings.TrimSpace(params.Phone)
-	methodType := strings.TrimSpace(params.MethodType)
+	phone, ok := normalizePhone(params.Phone)
+	methodType := cleanMethodType(params.MethodType)
+	bankCode := normalizeBankCode(params.BankCode)
 	proxy := cleanOptionalString(params.Proxy)
-	if params.ActorID <= 0 || params.TeamID <= 0 || phone == "" || methodType == "" {
+	employeeComment := cleanOptionalString(params.EmployeeComment)
+	if params.ActorID <= 0 || params.TeamID <= 0 || !ok || bankCode == "" {
 		return RequisiteDetails{}, ErrInvalidInput
 	}
 	if params.AssignedTraderID != nil {
@@ -93,11 +123,13 @@ func (s *Service) Create(ctx context.Context, params CreateParams) (RequisiteDet
 	}
 
 	created, err := s.store.Create(ctx, CreateRecord{
-		TeamID:     params.TeamID,
-		Phone:      phone,
-		MethodType: methodType,
-		Proxy:      proxy,
-		CreatedBy:  params.ActorID,
+		TeamID:          params.TeamID,
+		Phone:           phone,
+		MethodType:      methodType,
+		BankCode:        bankCode,
+		Proxy:           proxy,
+		EmployeeComment: employeeComment,
+		CreatedBy:       params.ActorID,
 	})
 	if err != nil {
 		return RequisiteDetails{}, err
@@ -160,21 +192,31 @@ func (s *Service) Patch(ctx context.Context, params PatchParams) (RequisiteDetai
 
 	next := current.Requisite
 	if params.Phone != nil {
-		phone := strings.TrimSpace(*params.Phone)
-		if phone == "" {
+		phone, ok := normalizePhone(*params.Phone)
+		if !ok {
 			return RequisiteDetails{}, ErrInvalidInput
 		}
 		next.Phone = phone
 	}
 	if params.MethodType != nil {
-		methodType := strings.TrimSpace(*params.MethodType)
+		methodType := cleanMethodType(*params.MethodType)
 		if methodType == "" {
 			return RequisiteDetails{}, ErrInvalidInput
 		}
 		next.MethodType = methodType
 	}
+	if params.BankCode != nil {
+		bankCode := normalizeBankCode(*params.BankCode)
+		if bankCode == "" {
+			return RequisiteDetails{}, ErrInvalidInput
+		}
+		next.BankCode = bankCode
+	}
 	if params.Proxy != nil {
 		next.Proxy = cleanOptionalString(params.Proxy)
+	}
+	if params.EmployeeComment != nil {
+		next.EmployeeComment = cleanOptionalString(params.EmployeeComment)
 	}
 	if params.Status != nil {
 		status := strings.TrimSpace(*params.Status)
@@ -185,12 +227,14 @@ func (s *Service) Patch(ctx context.Context, params PatchParams) (RequisiteDetai
 	}
 
 	updated, err := s.store.Update(ctx, UpdateRecord{
-		TeamID:      params.TeamID,
-		RequisiteID: params.RequisiteID,
-		Phone:       next.Phone,
-		MethodType:  next.MethodType,
-		Proxy:       next.Proxy,
-		Status:      next.Status,
+		TeamID:          params.TeamID,
+		RequisiteID:     params.RequisiteID,
+		Phone:           next.Phone,
+		MethodType:      next.MethodType,
+		BankCode:        next.BankCode,
+		Proxy:           next.Proxy,
+		EmployeeComment: next.EmployeeComment,
+		Status:          next.Status,
 	})
 	if err != nil {
 		return RequisiteDetails{}, err
@@ -302,12 +346,175 @@ func (s *Service) AssignmentHistory(ctx context.Context, teamID int64, requisite
 	return s.store.AssignmentHistory(ctx, teamID, requisiteID)
 }
 
+func (s *Service) Plans(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {
+	return s.store.ListPlans(ctx, teamID)
+}
+
+func (s *Service) Activity(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {
+	return s.store.ListActivity(ctx, teamID)
+}
+
+func (s *Service) CreatePlan(ctx context.Context, params PlanParams) (Assignment, error) {
+	if err := s.validatePlanParams(ctx, params, false); err != nil {
+		return Assignment{}, err
+	}
+
+	comment := cleanOptionalString(params.Comment)
+	assignment, err := s.store.CreatePlan(ctx, CreatePlanRecord{
+		TeamID:              params.TeamID,
+		RequisiteID:         params.RequisiteID,
+		TraderID:            params.TraderID,
+		AssignedBy:          params.ActorID,
+		AssignedForDate:     normalizeDate(params.AssignedForDate),
+		TargetTurnoverMinor: params.TargetTurnoverMinor,
+		Comment:             comment,
+	})
+	if err != nil {
+		return Assignment{}, err
+	}
+
+	if err := s.writeAssignmentEvent(ctx, params.TeamID, params.ActorID, assignment.ID, "created", nil, PublicAssignment(assignment), comment); err != nil {
+		return Assignment{}, err
+	}
+
+	return assignment, nil
+}
+
+func (s *Service) UpdatePlan(ctx context.Context, params PlanParams) (Assignment, error) {
+	if params.AssignmentID <= 0 {
+		return Assignment{}, ErrInvalidInput
+	}
+	if err := s.validatePlanParams(ctx, params, true); err != nil {
+		return Assignment{}, err
+	}
+
+	before, err := s.store.GetAssignment(ctx, params.TeamID, params.AssignmentID)
+	if err != nil {
+		return Assignment{}, err
+	}
+
+	comment := cleanOptionalString(params.Comment)
+	updated, err := s.store.UpdatePlan(ctx, UpdatePlanRecord{
+		TeamID:              params.TeamID,
+		AssignmentID:        params.AssignmentID,
+		RequisiteID:         params.RequisiteID,
+		TraderID:            params.TraderID,
+		AssignedForDate:     normalizeDate(params.AssignedForDate),
+		TargetTurnoverMinor: params.TargetTurnoverMinor,
+		Comment:             comment,
+	})
+	if err != nil {
+		return Assignment{}, err
+	}
+
+	if err := s.writeAssignmentEvent(ctx, params.TeamID, params.ActorID, updated.ID, "updated", PublicAssignment(before), PublicAssignment(updated), comment); err != nil {
+		return Assignment{}, err
+	}
+
+	return updated, nil
+}
+
+func (s *Service) CancelPlan(ctx context.Context, actorID int64, teamID int64, assignmentID int64) (Assignment, error) {
+	if actorID <= 0 || teamID <= 0 || assignmentID <= 0 {
+		return Assignment{}, ErrInvalidInput
+	}
+
+	before, err := s.store.GetAssignment(ctx, teamID, assignmentID)
+	if err != nil {
+		return Assignment{}, err
+	}
+	cancelled, err := s.store.CancelPlan(ctx, teamID, assignmentID)
+	if err != nil {
+		return Assignment{}, err
+	}
+
+	if err := s.writeAssignmentEvent(ctx, teamID, actorID, assignmentID, "cancelled", PublicAssignment(before), PublicAssignment(cancelled), nil); err != nil {
+		return Assignment{}, err
+	}
+
+	return cancelled, nil
+}
+
+func (s *Service) AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]AssignmentEvent, error) {
+	if teamID <= 0 || assignmentID <= 0 {
+		return nil, ErrInvalidInput
+	}
+
+	return s.store.AssignmentEvents(ctx, teamID, assignmentID)
+}
+
 func (s *Service) writeAudit(ctx context.Context, event audit.Event) error {
 	if s.audit == nil {
 		return nil
 	}
 
 	return s.audit.Write(ctx, event)
+}
+
+func (s *Service) validatePlanParams(ctx context.Context, params PlanParams, allowToday bool) error {
+	if params.ActorID <= 0 || params.TeamID <= 0 || params.RequisiteID <= 0 || params.TraderID <= 0 || params.TargetTurnoverMinor <= 0 || params.AssignedForDate.IsZero() {
+		return ErrInvalidInput
+	}
+
+	planDate := normalizeDate(params.AssignedForDate)
+	today := normalizeDate(time.Now())
+	if planDate.Before(today) || (!allowToday && planDate.Before(today)) {
+		return ErrInvalidInput
+	}
+
+	requisite, err := s.store.GetDetails(ctx, params.TeamID, params.RequisiteID)
+	if err != nil {
+		return err
+	}
+	if requisite.Status != StatusActive {
+		return ErrInvalidInput
+	}
+
+	trader, err := s.traders.GetTraderByID(ctx, params.TeamID, params.TraderID)
+	if err != nil {
+		return err
+	}
+	if trader.Status != users.StatusActive {
+		return ErrInactiveTrader
+	}
+
+	return nil
+}
+
+func (s *Service) writeAssignmentEvent(ctx context.Context, teamID int64, actorID int64, assignmentID int64, action string, before any, after any, comment *string) error {
+	beforeJSON, err := marshalOptionalJSON(before)
+	if err != nil {
+		return err
+	}
+	afterJSON, err := marshalOptionalJSON(after)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.store.CreateAssignmentEvent(ctx, AssignmentEventRecord{
+		TeamID:       teamID,
+		AssignmentID: assignmentID,
+		ActorID:      actorID,
+		Action:       action,
+		BeforeJSON:   beforeJSON,
+		AfterJSON:    afterJSON,
+		Comment:      comment,
+	})
+
+	return err
+}
+
+func marshalOptionalJSON(value any) ([]byte, error) {
+	if value == nil {
+		return nil, nil
+	}
+
+	return json.Marshal(value)
+}
+
+func normalizeDate(value time.Time) time.Time {
+	year, month, day := value.Date()
+	return time.Date(year, month, day, 0, 0, 0, 0, value.Location())
 }
 
 func cleanOptionalString(value *string) *string {
@@ -323,6 +530,19 @@ func cleanOptionalString(value *string) *string {
 	return &trimmed
 }
 
+func cleanMethodType(value string) string {
+	methodType := strings.TrimSpace(value)
+	if methodType == "" {
+		return defaultMethodType
+	}
+
+	return methodType
+}
+
+func normalizeBankCode(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
 func validStatus(status string) bool {
 	switch status {
 	case StatusActive, StatusDisabled, StatusArchived:
@@ -330,4 +550,23 @@ func validStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizePhone(value string) (string, bool) {
+	digits := make([]rune, 0, 11)
+	for _, char := range value {
+		if char >= '0' && char <= '9' {
+			digits = append(digits, char)
+		}
+	}
+	if len(digits) == 10 {
+		digits = append([]rune{'7'}, digits...)
+	}
+	if len(digits) == 11 && digits[0] == '8' {
+		digits[0] = '7'
+	}
+	if len(digits) != 11 || digits[0] != '7' {
+		return "", false
+	}
+	return string(digits), true
 }

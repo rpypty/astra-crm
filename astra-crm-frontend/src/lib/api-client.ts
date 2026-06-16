@@ -87,10 +87,17 @@ export class ApiClient {
   }
 }
 
-export function queryString(params: Record<string, string | number | undefined | null>) {
+export function queryString(params: Record<string, string | number | Array<string | number> | undefined | null>) {
   const searchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null || value === "" || value === "all") {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        continue;
+      }
+      searchParams.set(key, value.join(","));
       continue;
     }
     searchParams.set(key, String(value));

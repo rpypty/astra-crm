@@ -55,6 +55,7 @@ func (r *Repository) ListTeamleadOrders(ctx context.Context, scope Scope, filter
 		DateFrom:   dateValue(filters.DateFrom),
 		DateTo:     dateValue(filters.DateTo),
 		TraderID:   int8Value(filters.TraderID),
+		TraderIds:  filters.TraderIDs,
 		WorkerName: textValue(filters.WorkerName),
 		Requisite:  textValue(filters.Requisite),
 		MethodType: textValue(filters.MethodType),
@@ -135,6 +136,7 @@ func (r *Repository) TeamleadDashboard(ctx context.Context, scope Scope, filters
 		DateFrom:  dateValue(filters.DateFrom),
 		DateTo:    dateValue(filters.DateTo),
 		TraderID:  int8Value(filters.TraderID),
+		TraderIds: filters.TraderIDs,
 	})
 	if err != nil {
 		return Dashboard{}, err
@@ -146,6 +148,7 @@ func (r *Repository) TeamleadDashboard(ctx context.Context, scope Scope, filters
 		DateFrom:  dateValue(filters.DateFrom),
 		DateTo:    dateValue(filters.DateTo),
 		TraderID:  int8Value(filters.TraderID),
+		TraderIds: filters.TraderIDs,
 	})
 	if err != nil {
 		return Dashboard{}, err
@@ -154,6 +157,8 @@ func (r *Repository) TeamleadDashboard(ctx context.Context, scope Scope, filters
 	importRows, err := r.queries.TeamleadRecentImports(ctx, db.TeamleadRecentImportsParams{
 		TeamID:     scope.TeamID,
 		Direction:  scope.Direction,
+		TraderID:   int8Value(filters.TraderID),
+		TraderIds:  filters.TraderIDs,
 		LimitCount: 10,
 	})
 	if err != nil {

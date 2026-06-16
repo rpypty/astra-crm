@@ -35,19 +35,51 @@ export type components = {
     TraderResponse: {
   trader: components["schemas"]["Trader"];
 };
+    TraderProfile: {
+  id: number;
+  login: string;
+  salaryRateBps: number;
+  externalWorkerName: string;
+  currentShiftSuccessInboundMinor: number;
+  currentShiftSalaryMinor: number;
+  periodId?: number;
+  periodTitle?: string;
+  periodSuccessInboundMinor: number;
+  periodSalaryMinor: number;
+};
+    TraderProfileResponse: {
+  profile: components["schemas"]["TraderProfile"];
+};
     ResetTraderPasswordResponse: {
   trader: components["schemas"]["Trader"];
   temporaryPassword: string;
+};
+    Bank: {
+  code: string;
+  name: string;
+};
+    BanksListResponse: {
+  items: components["schemas"]["Bank"][];
 };
     Requisite: {
   id: number;
   teamId: number;
   phone: string;
   methodType: string;
+  bankCode: string;
+  bankName: string;
   proxy?: string;
+  employeeComment?: string;
+  holderName?: string;
+  cardNumber?: string;
+  detailsFilledAt?: string;
+  detailsFilledBy?: number;
   status: "active" | "disabled" | "archived";
   assignedTraderId?: number;
   assignedTraderLogin?: string;
+  assignmentStatus?: "planned" | "assigned" | "in_work" | "worked" | "blocked" | "cancelled" | "expired";
+  assignedForDate?: string;
+  targetTurnoverMinor: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -60,7 +92,63 @@ export type components = {
   assignedAt: string;
   unassignedAt?: string;
   comment?: string;
+  status: "planned" | "assigned" | "in_work" | "worked" | "blocked" | "cancelled" | "expired";
+  assignedForDate: string;
+  targetTurnoverMinor: number;
+  startedAt?: string;
+  completedAt?: string;
+  cancelledAt?: string;
+  shiftRequisiteId?: number;
   wasReassign: boolean;
+};
+    RequisiteAssignmentWorkRow: {
+  assignmentId: number;
+  teamId: number;
+  requisiteId: number;
+  phone: string;
+  bankCode: string;
+  bankName: string;
+  proxy?: string;
+  traderId: number;
+  traderLogin: string;
+  status: "planned" | "assigned" | "in_work" | "worked" | "blocked" | "cancelled" | "expired";
+  assignedForDate: string;
+  targetTurnoverMinor: number;
+  inboundTurnoverMinor: number;
+  outboundTurnoverMinor: number;
+  closingBalanceMinor: number;
+  cardNumber?: string;
+  holderName?: string;
+  takenAt?: string;
+  releasedAt?: string;
+  comment?: string;
+  assignedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt: string;
+  shiftRequisiteId?: number;
+};
+    RequisiteAssignmentEvent: {
+  id: number;
+  teamId: number;
+  assignmentId: number;
+  actorId: number;
+  action: string;
+  beforeJson?: {
+  [key: string]: unknown;
+};
+  afterJson?: {
+  [key: string]: unknown;
+};
+  comment?: string;
+  createdAt: string;
+};
+    PlanRequisiteRequest: {
+  requisiteId: number;
+  traderId: number;
+  assignedForDate: string;
+  targetTurnoverMinor: number;
+  comment?: string;
 };
     RequisitesListResponse: {
   items: components["schemas"]["Requisite"][];
@@ -73,6 +161,12 @@ export type components = {
 };
     AssignmentHistoryResponse: {
   items: components["schemas"]["RequisiteAssignment"][];
+};
+    AssignmentRowsResponse: {
+  items: components["schemas"]["RequisiteAssignmentWorkRow"][];
+};
+    AssignmentEventsResponse: {
+  items: components["schemas"]["RequisiteAssignmentEvent"][];
 };
     Shift: {
   id: number;
@@ -91,6 +185,9 @@ export type components = {
     CurrentShiftResponse: {
   shift?: components["schemas"]["Shift"];
 };
+    ShiftHistoryResponse: {
+  items: components["schemas"]["Shift"][];
+};
     CloseShiftResponse: {
   shift: components["schemas"]["Shift"];
 };
@@ -99,14 +196,23 @@ export type components = {
   teamId: number;
   phone: string;
   methodType: string;
+  bankCode: string;
+  bankName: string;
   proxy?: string;
-  status: "active" | "disabled" | "archived";
+  employeeComment?: string;
+  status: "active" | "disabled" | "archived" | "blocked";
   assignmentId: number;
+  assignmentStatus: "planned" | "assigned" | "in_work" | "worked" | "blocked" | "cancelled" | "expired";
+  assignedForDate: string;
+  targetTurnoverMinor: number;
   shiftRequisiteId?: number;
   cardNumber?: string;
   holderName?: string;
-  shiftRequisiteStatus?: "active" | "released";
+  shiftRequisiteStatus?: "active" | "worked" | "correction" | "released" | "blocked";
   takenAt?: string;
+  inboundTurnoverMinor: number;
+  outboundTurnoverMinor: number;
+  closingBalanceMinor: number;
   inWork: boolean;
 };
     AssignedRequisitesResponse: {
@@ -123,7 +229,10 @@ export type components = {
   holderName: string;
   takenAt: string;
   releasedAt?: string;
-  status: "active" | "released";
+  status: "active" | "worked" | "correction" | "released" | "blocked";
+  inboundTurnoverMinor: number;
+  outboundTurnoverMinor: number;
+  closingBalanceMinor: number;
   createdAt: string;
   updatedAt: string;
 };
@@ -156,12 +265,21 @@ export type components = {
     TurnoverResponse: {
   turnover: components["schemas"]["TurnoverEntry"];
 };
+    CloseShiftRequisiteRequest: {
+  inboundTurnoverMinor: number;
+  outboundTurnoverMinor: number;
+  closingBalanceMinor: number;
+  blocked: boolean;
+  comment?: string;
+};
     CloseChecklist: {
   shift: components["schemas"]["Shift"];
   inboundImported: boolean;
   inboundOk: boolean;
   outboundImported: boolean;
   outboundOk: boolean;
+  allRequisitesClosed: boolean;
+  openRequisiteCount: number;
   allPayoutsFullyPaid: boolean;
   unpaidPayoutCount: number;
   canClose: boolean;
@@ -345,6 +463,8 @@ export type components = {
     AccountingPeriod: {
   id: number;
   title: string;
+  dateFrom: string;
+  dateTo: string;
   dateRange: string;
   inboundStatus: "matched" | "mismatch" | "accepted_with_comment";
   outboundStatus: "matched" | "mismatch" | "accepted_with_comment";

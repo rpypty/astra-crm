@@ -20,9 +20,17 @@ const statusMap: Record<string, { label: string; variant: "neutral" | "success" 
   active: { label: "Активен", variant: "success" },
   disabled: { label: "Отключен", variant: "neutral" },
   archived: { label: "Архив", variant: "neutral" },
+  blocked: { label: "В блоке", variant: "failed" },
+  planned: { label: "Запланирован", variant: "info" },
   assigned: { label: "Назначен", variant: "info" },
   in_work: { label: "В работе", variant: "processing" },
+  worked: { label: "Отработан", variant: "success" },
+  correction: { label: "Коррекция", variant: "warning" },
+  expired: { label: "Просрочен", variant: "warning" },
+  released: { label: "Сдан", variant: "success" },
   paid: { label: "Оплачена", variant: "success" },
+  applied: { label: "Загружен", variant: "info" },
+  reconciled: { label: "Сверен", variant: "success" },
 };
 
 export function StatusBadge({ status }: StatusBadgeProps) {

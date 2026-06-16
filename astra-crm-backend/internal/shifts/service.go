@@ -18,11 +18,18 @@ var (
 type Store interface {
 	CurrentShift(ctx context.Context, teamID int64, traderID int64) (Shift, error)
 	CreateShift(ctx context.Context, teamID int64, traderID int64) (Shift, error)
+	ShiftHistory(ctx context.Context, teamID int64, traderID int64, limit int32) ([]Shift, error)
+	TeamShiftHistory(ctx context.Context, teamID int64, limit int32) ([]Shift, error)
 	ActiveAssignment(ctx context.Context, teamID int64, traderID int64, requisiteID int64) (int64, error)
 	AssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error)
+	FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error)
+	HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error)
+	AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]AssignedRequisite, error)
+	AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64) ([]AssignedRequisite, error)
 	CreateShiftRequisite(ctx context.Context, params CreateShiftRequisiteRecord) (ShiftRequisite, error)
 	ShiftRequisites(ctx context.Context, teamID int64, traderID int64) ([]ShiftRequisite, error)
 	UpdateShiftRequisiteDetails(ctx context.Context, params UpdateShiftRequisiteDetailsRecord) (ShiftRequisite, error)
+	CloseShiftRequisite(ctx context.Context, params CloseShiftRequisiteRecord) (ShiftRequisite, error)
 	CreateTurnoverEntry(ctx context.Context, params CreateTurnoverEntryRecord) (TurnoverEntry, error)
 	LatestTurnovers(ctx context.Context, teamID int64, traderID int64) ([]TurnoverEntry, error)
 	TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]TurnoverEntry, error)
@@ -89,6 +96,18 @@ type CreateTurnoverParams struct {
 	Comment          *string
 }
 
+type CloseShiftRequisiteParams struct {
+	ActorID               int64
+	TeamID                int64
+	TraderID              int64
+	ShiftRequisiteID      int64
+	InboundTurnoverMinor  int64
+	OutboundTurnoverMinor int64
+	ClosingBalanceMinor   int64
+	Blocked               bool
+	Comment               *string
+}
+
 type CloseShiftParams struct {
 	ActorID      int64
 	TeamID       int64
@@ -108,8 +127,54 @@ func (s *Service) Current(ctx context.Context, teamID int64, traderID int64) (*S
 	return &shift, nil
 }
 
+func (s *Service) ShiftHistory(ctx context.Context, teamID int64, traderID int64, limit int32) ([]Shift, error) {
+	if teamID <= 0 || traderID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 30
+	}
+
+	return s.store.ShiftHistory(ctx, teamID, traderID, limit)
+}
+
+func (s *Service) TeamShiftHistory(ctx context.Context, teamID int64, limit int32) ([]Shift, error) {
+	if teamID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+
+	return s.store.TeamShiftHistory(ctx, teamID, limit)
+}
+
 func (s *Service) AssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
 	return s.store.AssignedRequisites(ctx, teamID, traderID)
+}
+
+func (s *Service) FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
+	return s.store.FutureAssignedRequisites(ctx, teamID, traderID)
+}
+
+func (s *Service) HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
+	return s.store.HistoricalAssignedRequisites(ctx, teamID, traderID)
+}
+
+func (s *Service) AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]AssignedRequisite, error) {
+	if teamID <= 0 || traderID <= 0 || shiftID <= 0 {
+		return nil, ErrInvalidInput
+	}
+
+	return s.store.AssignedRequisitesByShift(ctx, teamID, traderID, shiftID)
+}
+
+func (s *Service) AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64) ([]AssignedRequisite, error) {
+	if teamID <= 0 || shiftID <= 0 {
+		return nil, ErrInvalidInput
+	}
+
+	return s.store.AssignedRequisitesByTeamShift(ctx, teamID, shiftID)
 }
 
 func (s *Service) ShiftRequisites(ctx context.Context, teamID int64, traderID int64) ([]ShiftRequisite, error) {
@@ -267,12 +332,75 @@ func (s *Service) CreateTurnover(ctx context.Context, params CreateTurnoverParam
 	return entry, nil
 }
 
+func (s *Service) CloseShiftRequisite(ctx context.Context, params CloseShiftRequisiteParams) (ShiftRequisite, error) {
+	if params.ActorID <= 0 || params.TeamID <= 0 || params.TraderID <= 0 || params.ShiftRequisiteID <= 0 || params.InboundTurnoverMinor < 0 || params.OutboundTurnoverMinor < 0 || params.ClosingBalanceMinor < 0 {
+		return ShiftRequisite{}, ErrInvalidInput
+	}
+
+	closed, err := s.store.CloseShiftRequisite(ctx, CloseShiftRequisiteRecord{
+		TeamID:                params.TeamID,
+		TraderID:              params.TraderID,
+		ShiftRequisiteID:      params.ShiftRequisiteID,
+		InboundTurnoverMinor:  params.InboundTurnoverMinor,
+		OutboundTurnoverMinor: params.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   params.ClosingBalanceMinor,
+		Blocked:               params.Blocked,
+	})
+	if err != nil {
+		return ShiftRequisite{}, err
+	}
+
+	comment := cleanOptionalString(params.Comment)
+	if err := s.writeAudit(ctx, audit.Event{
+		TeamID:     params.TeamID,
+		ActorID:    params.ActorID,
+		Action:     audit.ActionShiftRequisiteClosed,
+		EntityType: "shift_requisite",
+		EntityID:   strconv.FormatInt(closed.ID, 10),
+		After:      PublicShiftRequisiteFromDomain(closed),
+		Comment:    comment,
+	}); err != nil {
+		return ShiftRequisite{}, err
+	}
+
+	return closed, nil
+}
+
 func (s *Service) CloseChecklist(ctx context.Context, teamID int64, traderID int64) (CloseChecklist, error) {
-	return s.store.CurrentShiftChecklist(ctx, teamID, traderID)
+	checklist, err := s.store.CurrentShiftChecklist(ctx, teamID, traderID)
+	if err != nil {
+		return CloseChecklist{}, err
+	}
+
+	items, err := s.store.ShiftRequisites(ctx, teamID, traderID)
+	if err != nil {
+		return CloseChecklist{}, err
+	}
+
+	var openCount int64
+	for _, item := range items {
+		if item.ShiftID != checklist.Shift.ID {
+			continue
+		}
+		if item.Status == RequisiteStatusActive || item.Status == RequisiteStatusCorrection {
+			openCount++
+		}
+	}
+
+	checklist.OpenRequisiteCount = openCount
+	checklist.AllRequisitesClosed = openCount == 0
+	checklist.CanClose = checklist.InboundImported &&
+		checklist.InboundOk &&
+		checklist.OutboundImported &&
+		checklist.OutboundOk &&
+		checklist.AllRequisitesClosed &&
+		checklist.AllPayoutsFullyPaid
+
+	return checklist, nil
 }
 
 func (s *Service) CloseCurrent(ctx context.Context, params CloseShiftParams) (Shift, error) {
-	checklist, err := s.store.CurrentShiftChecklist(ctx, params.TeamID, params.TraderID)
+	checklist, err := s.CloseChecklist(ctx, params.TeamID, params.TraderID)
 	if err != nil {
 		return Shift{}, err
 	}

@@ -71,6 +71,25 @@ components:
       required: [trader]
       properties:
         trader: { $ref: "#/components/schemas/Trader" }
+    TraderProfile:
+      type: object
+      required: [id, login, salaryRateBps, externalWorkerName, currentShiftSuccessInboundMinor, currentShiftSalaryMinor, periodSuccessInboundMinor, periodSalaryMinor]
+      properties:
+        id: { type: integer, format: int64 }
+        login: { type: string }
+        salaryRateBps: { type: integer, format: int64 }
+        externalWorkerName: { type: string }
+        currentShiftSuccessInboundMinor: { type: integer, format: int64 }
+        currentShiftSalaryMinor: { type: integer, format: int64 }
+        periodId: { type: integer, format: int64 }
+        periodTitle: { type: string }
+        periodSuccessInboundMinor: { type: integer, format: int64 }
+        periodSalaryMinor: { type: integer, format: int64 }
+    TraderProfileResponse:
+      type: object
+      required: [profile]
+      properties:
+        profile: { $ref: "#/components/schemas/TraderProfile" }
     ResetTraderPasswordResponse:
       type: object
       required: [trader, temporaryPassword]
@@ -79,23 +98,46 @@ components:
         temporaryPassword:
           type: string
           description: Temporary password returned only once. It must not be logged or stored by clients.
+    Bank:
+      type: object
+      required: [code, name]
+      properties:
+        code: { type: string }
+        name: { type: string }
+    BanksListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Bank" }
     Requisite:
       type: object
-      required: [id, teamId, phone, methodType, status, createdAt, updatedAt]
+      required: [id, teamId, phone, methodType, bankCode, bankName, status, targetTurnoverMinor, createdAt, updatedAt]
       properties:
         id: { type: integer, format: int64 }
         teamId: { type: integer, format: int64 }
         phone: { type: string }
         methodType: { type: string }
+        bankCode: { type: string }
+        bankName: { type: string }
         proxy: { type: string }
+        employeeComment: { type: string }
+        holderName: { type: string }
+        cardNumber: { type: string }
+        detailsFilledAt: { type: string, format: date-time }
+        detailsFilledBy: { type: integer, format: int64 }
         status: { type: string, enum: [active, disabled, archived] }
         assignedTraderId: { type: integer, format: int64 }
         assignedTraderLogin: { type: string }
+        assignmentStatus: { type: string, enum: [planned, assigned, in_work, worked, blocked, cancelled, expired] }
+        assignedForDate: { type: string, format: date-time }
+        targetTurnoverMinor: { type: integer, format: int64, minimum: 0 }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     RequisiteAssignment:
       type: object
-      required: [id, teamId, requisiteId, traderId, assignedBy, assignedAt, wasReassign]
+      required: [id, teamId, requisiteId, traderId, assignedBy, assignedAt, status, assignedForDate, targetTurnoverMinor, wasReassign]
       properties:
         id: { type: integer, format: int64 }
         teamId: { type: integer, format: int64 }
@@ -105,7 +147,87 @@ components:
         assignedAt: { type: string, format: date-time }
         unassignedAt: { type: string, format: date-time }
         comment: { type: string }
+        status: { type: string, enum: [planned, assigned, in_work, worked, blocked, cancelled, expired] }
+        assignedForDate: { type: string, format: date-time }
+        targetTurnoverMinor: { type: integer, format: int64, minimum: 0 }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        cancelledAt: { type: string, format: date-time }
+        shiftRequisiteId: { type: integer, format: int64 }
         wasReassign: { type: boolean }
+    RequisiteAssignmentWorkRow:
+      type: object
+      required:
+        [
+          assignmentId,
+          teamId,
+          requisiteId,
+          phone,
+          bankCode,
+          bankName,
+          traderId,
+          traderLogin,
+          status,
+          assignedForDate,
+          targetTurnoverMinor,
+          inboundTurnoverMinor,
+          outboundTurnoverMinor,
+          closingBalanceMinor,
+          assignedAt,
+          updatedAt,
+        ]
+      properties:
+        assignmentId: { type: integer, format: int64 }
+        teamId: { type: integer, format: int64 }
+        requisiteId: { type: integer, format: int64 }
+        phone: { type: string }
+        bankCode: { type: string }
+        bankName: { type: string }
+        proxy: { type: string }
+        traderId: { type: integer, format: int64 }
+        traderLogin: { type: string }
+        status: { type: string, enum: [planned, assigned, in_work, worked, blocked, cancelled, expired] }
+        assignedForDate: { type: string, format: date-time }
+        targetTurnoverMinor: { type: integer, format: int64, minimum: 0 }
+        inboundTurnoverMinor: { type: integer, format: int64 }
+        outboundTurnoverMinor: { type: integer, format: int64 }
+        closingBalanceMinor: { type: integer, format: int64, minimum: 0 }
+        cardNumber: { type: string }
+        holderName: { type: string }
+        takenAt: { type: string, format: date-time }
+        releasedAt: { type: string, format: date-time }
+        comment: { type: string }
+        assignedAt: { type: string, format: date-time }
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        shiftRequisiteId: { type: integer, format: int64 }
+    RequisiteAssignmentEvent:
+      type: object
+      required: [id, teamId, assignmentId, actorId, action, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        teamId: { type: integer, format: int64 }
+        assignmentId: { type: integer, format: int64 }
+        actorId: { type: integer, format: int64 }
+        action: { type: string }
+        beforeJson:
+          type: object
+          additionalProperties: true
+        afterJson:
+          type: object
+          additionalProperties: true
+        comment: { type: string }
+        createdAt: { type: string, format: date-time }
+    PlanRequisiteRequest:
+      type: object
+      required: [requisiteId, traderId, assignedForDate, targetTurnoverMinor]
+      properties:
+        requisiteId: { type: integer, format: int64 }
+        traderId: { type: integer, format: int64 }
+        assignedForDate: { type: string, format: date }
+        targetTurnoverMinor: { type: integer, format: int64, minimum: 0 }
+        comment: { type: string }
     RequisitesListResponse:
       type: object
       required: [items]
@@ -130,6 +252,20 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/RequisiteAssignment" }
+    AssignmentRowsResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/RequisiteAssignmentWorkRow" }
+    AssignmentEventsResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/RequisiteAssignmentEvent" }
     Shift:
       type: object
       required: [id, teamId, traderId, startedAt, status, inboundReconciliationStatus, outboundReconciliationStatus, createdAt, updatedAt]
@@ -150,6 +286,13 @@ components:
       type: object
       properties:
         shift: { $ref: "#/components/schemas/Shift" }
+    ShiftHistoryResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Shift" }
     CloseShiftResponse:
       type: object
       required: [shift]
@@ -157,20 +300,46 @@ components:
         shift: { $ref: "#/components/schemas/Shift" }
     AssignedRequisite:
       type: object
-      required: [id, teamId, phone, methodType, status, assignmentId, inWork]
+      required:
+        [
+          id,
+          teamId,
+          phone,
+          methodType,
+          bankCode,
+          bankName,
+          status,
+          assignmentId,
+          assignmentStatus,
+          assignedForDate,
+          targetTurnoverMinor,
+          inboundTurnoverMinor,
+          outboundTurnoverMinor,
+          closingBalanceMinor,
+          inWork,
+        ]
       properties:
         id: { type: integer, format: int64 }
         teamId: { type: integer, format: int64 }
         phone: { type: string }
         methodType: { type: string }
+        bankCode: { type: string }
+        bankName: { type: string }
         proxy: { type: string }
-        status: { type: string, enum: [active, disabled, archived] }
+        employeeComment: { type: string }
+        status: { type: string, enum: [active, disabled, archived, blocked] }
         assignmentId: { type: integer, format: int64 }
+        assignmentStatus: { type: string, enum: [planned, assigned, in_work, worked, blocked, cancelled, expired] }
+        assignedForDate: { type: string, format: date-time }
+        targetTurnoverMinor: { type: integer, format: int64, minimum: 0 }
         shiftRequisiteId: { type: integer, format: int64 }
         cardNumber: { type: string }
         holderName: { type: string }
-        shiftRequisiteStatus: { type: string, enum: [active, released] }
+        shiftRequisiteStatus: { type: string, enum: [active, worked, correction, released, blocked] }
         takenAt: { type: string, format: date-time }
+        inboundTurnoverMinor: { type: integer, format: int64 }
+        outboundTurnoverMinor: { type: integer, format: int64 }
+        closingBalanceMinor: { type: integer, format: int64, minimum: 0 }
         inWork: { type: boolean }
     AssignedRequisitesResponse:
       type: object
@@ -181,7 +350,7 @@ components:
           items: { $ref: "#/components/schemas/AssignedRequisite" }
     ShiftRequisite:
       type: object
-      required: [id, teamId, shiftId, traderId, requisiteId, cardNumber, holderName, takenAt, status, createdAt, updatedAt]
+      required: [id, teamId, shiftId, traderId, requisiteId, cardNumber, holderName, takenAt, status, inboundTurnoverMinor, outboundTurnoverMinor, closingBalanceMinor, createdAt, updatedAt]
       properties:
         id: { type: integer, format: int64 }
         teamId: { type: integer, format: int64 }
@@ -193,7 +362,10 @@ components:
         holderName: { type: string }
         takenAt: { type: string, format: date-time }
         releasedAt: { type: string, format: date-time }
-        status: { type: string, enum: [active, released] }
+        status: { type: string, enum: [active, worked, correction, released, blocked] }
+        inboundTurnoverMinor: { type: integer, format: int64 }
+        outboundTurnoverMinor: { type: integer, format: int64 }
+        closingBalanceMinor: { type: integer, format: int64, minimum: 0 }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     ShiftRequisitesResponse:
@@ -241,15 +413,26 @@ components:
       required: [turnover]
       properties:
         turnover: { $ref: "#/components/schemas/TurnoverEntry" }
+    CloseShiftRequisiteRequest:
+      type: object
+      required: [inboundTurnoverMinor, outboundTurnoverMinor, closingBalanceMinor, blocked]
+      properties:
+        inboundTurnoverMinor: { type: integer, format: int64, minimum: 0 }
+        outboundTurnoverMinor: { type: integer, format: int64, minimum: 0 }
+        closingBalanceMinor: { type: integer, format: int64, minimum: 0 }
+        blocked: { type: boolean }
+        comment: { type: string }
     CloseChecklist:
       type: object
-      required: [shift, inboundImported, inboundOk, outboundImported, outboundOk, allPayoutsFullyPaid, unpaidPayoutCount, canClose]
+      required: [shift, inboundImported, inboundOk, outboundImported, outboundOk, allRequisitesClosed, openRequisiteCount, allPayoutsFullyPaid, unpaidPayoutCount, canClose]
       properties:
         shift: { $ref: "#/components/schemas/Shift" }
         inboundImported: { type: boolean }
         inboundOk: { type: boolean }
         outboundImported: { type: boolean }
         outboundOk: { type: boolean }
+        allRequisitesClosed: { type: boolean }
+        openRequisiteCount: { type: integer, format: int64 }
         allPayoutsFullyPaid: { type: boolean }
         unpaidPayoutCount: { type: integer, format: int64 }
         canClose: { type: boolean }
@@ -487,10 +670,12 @@ components:
         result: { $ref: "#/components/schemas/ImportResult" }
     AccountingPeriod:
       type: object
-      required: [id, title, dateRange, inboundStatus, outboundStatus, status]
+      required: [id, title, dateFrom, dateTo, dateRange, inboundStatus, outboundStatus, status]
       properties:
         id: { type: integer, format: int64 }
         title: { type: string }
+        dateFrom: { type: string, format: date }
+        dateTo: { type: string, format: date }
         dateRange: { type: string }
         inboundStatus: { type: string, enum: [matched, mismatch, accepted_with_comment] }
         outboundStatus: { type: string, enum: [matched, mismatch, accepted_with_comment] }
@@ -528,6 +713,36 @@ components:
       required: [status]
       properties:
         status: { type: string, enum: [ok, not_ready] }
+  parameters:
+    OrderDateFrom:
+      name: dateFrom
+      in: query
+      required: false
+      schema: { type: string, format: date }
+    OrderDateTo:
+      name: dateTo
+      in: query
+      required: false
+      schema: { type: string, format: date }
+    OrderStatus:
+      name: status
+      in: query
+      required: false
+      schema: { type: string }
+    OrderTraderId:
+      name: traderId
+      in: query
+      required: false
+      schema: { type: integer, format: int64 }
+      description: Legacy single-trader filter.
+    OrderTraderIds:
+      name: traderIds
+      in: query
+      required: false
+      schema:
+        type: string
+        pattern: "^\\d+(,\\d+)*$"
+      description: Comma-separated trader ids, for example `1,2,3`.
   responses:
     Error:
       description: API error
@@ -573,6 +788,15 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuthResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /banks:
+    get:
+      responses:
+        "200":
+          description: Active bank dictionary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BanksListResponse" }
         default: { $ref: "#/components/responses/Error" }
   /teamlead/traders:
     get:
@@ -664,6 +888,78 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/RequisiteResponse" }
         default: { $ref: "#/components/responses/Error" }
+  /teamlead/requisites/activity:
+    get:
+      responses:
+        "200":
+          description: Requisite assignment activity
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssignmentRowsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/requisites/plans:
+    get:
+      responses:
+        "200":
+          description: Planned and active requisite assignments
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssignmentRowsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlanRequisiteRequest" }
+      responses:
+        "201":
+          description: Assignment plan created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssignmentResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/requisites/plans/{assignmentId}:
+    parameters:
+      - name: assignmentId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    patch:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlanRequisiteRequest" }
+      responses:
+        "200":
+          description: Assignment plan updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssignmentResponse" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      responses:
+        "200":
+          description: Assignment plan cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssignmentResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/requisites/plans/{assignmentId}/events:
+    get:
+      parameters:
+        - name: assignmentId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Assignment plan change history
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssignmentEventsResponse" }
+        default: { $ref: "#/components/responses/Error" }
   /teamlead/requisites/{requisiteId}:
     parameters:
       - name: requisiteId
@@ -736,6 +1032,47 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AssignmentHistoryResponse" }
         default: { $ref: "#/components/responses/Error" }
+  /teamlead/shift/history:
+    get:
+      responses:
+        "200":
+          description: Closed trader shifts for teamlead team
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ShiftHistoryResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/shifts/{shiftId}/requisites:
+    get:
+      parameters:
+        - name: shiftId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Requisites used in selected trader shift
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssignedRequisitesResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/profile:
+    get:
+      parameters:
+        - name: dateFrom
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: dateTo
+          in: query
+          required: false
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Trader profile and salary analytics
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TraderProfileResponse" }
+        default: { $ref: "#/components/responses/Error" }
   /trader/shift/current:
     get:
       responses:
@@ -744,6 +1081,15 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CurrentShiftResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/shift/history:
+    get:
+      responses:
+        "200":
+          description: Closed shift report history
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ShiftHistoryResponse" }
         default: { $ref: "#/components/responses/Error" }
   /trader/shift/current/checklist:
     get:
@@ -759,6 +1105,38 @@ paths:
       responses:
         "200":
           description: Assigned requisites with in-work state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssignedRequisitesResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/requisites/future:
+    get:
+      responses:
+        "200":
+          description: Future planned requisites for trader
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssignedRequisitesResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/requisites/history:
+    get:
+      responses:
+        "200":
+          description: Historical closed or blocked requisites for trader
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssignedRequisitesResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/shifts/{shiftId}/requisites:
+    get:
+      parameters:
+        - name: shiftId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Requisites used in selected trader shift
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AssignedRequisitesResponse" }
@@ -830,6 +1208,25 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TurnoversResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/shift-requisites/{shiftRequisiteId}/close:
+    post:
+      parameters:
+        - name: shiftRequisiteId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CloseShiftRequisiteRequest" }
+      responses:
+        "200":
+          description: Shift requisite closed with final turnovers
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ShiftRequisiteResponse" }
         default: { $ref: "#/components/responses/Error" }
   /trader/shift/current/close:
     post:
@@ -949,6 +1346,9 @@ paths:
           in: path
           required: true
           schema: { type: string, enum: [inbound, outbound] }
+        - $ref: "#/components/parameters/OrderDateFrom"
+        - $ref: "#/components/parameters/OrderDateTo"
+        - $ref: "#/components/parameters/OrderStatus"
       responses:
         "200":
           description: Active trader order scope
@@ -963,6 +1363,9 @@ paths:
           in: path
           required: true
           schema: { type: string, enum: [inbound, outbound] }
+        - $ref: "#/components/parameters/OrderDateFrom"
+        - $ref: "#/components/parameters/OrderDateTo"
+        - $ref: "#/components/parameters/OrderStatus"
       responses:
         "200":
           description: Trader dashboard for active shift order scope
@@ -983,6 +1386,20 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/{direction}/reconciliation/items:
+    get:
+      parameters:
+        - name: direction
+          in: path
+          required: true
+          schema: { type: string, enum: [inbound, outbound] }
+      responses:
+        "200":
+          description: Latest trader reconciliation items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationItemsResponse" }
         default: { $ref: "#/components/responses/Error" }
   /trader/{direction}/reconciliation/{runId}/accept:
     post:
@@ -1027,9 +1444,14 @@ paths:
           in: path
           required: true
           schema: { type: string, enum: [inbound, outbound] }
+        - $ref: "#/components/parameters/OrderDateFrom"
+        - $ref: "#/components/parameters/OrderDateTo"
+        - $ref: "#/components/parameters/OrderStatus"
+        - $ref: "#/components/parameters/OrderTraderId"
+        - $ref: "#/components/parameters/OrderTraderIds"
       responses:
         "200":
-          description: Active teamlead order scope
+          description: Active trader-shift transactions for traders in the teamlead team
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OrdersListResponse" }
@@ -1041,9 +1463,14 @@ paths:
           in: path
           required: true
           schema: { type: string, enum: [inbound, outbound] }
+        - $ref: "#/components/parameters/OrderDateFrom"
+        - $ref: "#/components/parameters/OrderDateTo"
+        - $ref: "#/components/parameters/OrderStatus"
+        - $ref: "#/components/parameters/OrderTraderId"
+        - $ref: "#/components/parameters/OrderTraderIds"
       responses:
         "200":
-          description: Teamlead dashboard for active period order scope
+          description: Teamlead dashboard over active trader-shift transactions
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DashboardResponse" }
@@ -1053,6 +1480,15 @@ paths:
       responses:
         "200":
           description: Latest teamlead inbound period reconciliation run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/outbound/reconciliation/latest:
+    get:
+      responses:
+        "200":
+          description: Latest teamlead outbound period reconciliation run
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReconciliationResponse" }
@@ -1088,6 +1524,48 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/periods/{periodId}/reconciliation/outbound:
+    get:
+      parameters:
+        - name: periodId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Period outbound reconciliation run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/periods/{periodId}/reconciliation/inbound/items:
+    get:
+      parameters:
+        - name: periodId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Period inbound reconciliation items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationItemsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/periods/{periodId}/reconciliation/outbound/items:
+    get:
+      parameters:
+        - name: periodId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Period outbound reconciliation items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationItemsResponse" }
         default: { $ref: "#/components/responses/Error" }
   /teamlead/periods/{periodId}/reconciliation/items:
     get:

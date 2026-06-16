@@ -244,7 +244,7 @@ JOIN trader_profiles p ON p.user_id = u.id
 WHERE u.team_id = $1
   AND u.role = 'trader'
   AND u.deleted_at IS NULL
-ORDER BY u.id
+ORDER BY u.created_at DESC, u.id DESC
 `
 
 type ListTraderDetailsByTeamRow struct {
@@ -303,7 +303,7 @@ FROM users u
 WHERE u.team_id = $1
   AND u.role = 'trader'
   AND u.deleted_at IS NULL
-ORDER BY u.id
+ORDER BY u.created_at DESC, u.id DESC
 `
 
 func (q *Queries) ListTradersByTeam(ctx context.Context, teamID int64) ([]User, error) {

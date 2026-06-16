@@ -204,6 +204,11 @@ func orderFiltersFromRequest(w http.ResponseWriter, r *http.Request) (orders.Fil
 		RespondError(w, ValidationError(fields))
 		return orders.Filters{}, false
 	}
+	traderIDs, ok := optionalInt64List(query["traderIds"], "traderIds", fields)
+	if !ok {
+		RespondError(w, ValidationError(fields))
+		return orders.Filters{}, false
+	}
 	amountFrom, ok := optionalInt64(query.Get("amountFrom"), "amountFrom", fields, true)
 	if !ok {
 		RespondError(w, ValidationError(fields))
@@ -229,6 +234,7 @@ func orderFiltersFromRequest(w http.ResponseWriter, r *http.Request) (orders.Fil
 		DateFrom:   dateFrom,
 		DateTo:     dateTo,
 		TraderID:   traderID,
+		TraderIDs:  traderIDs,
 		WorkerName: optionalCleanString(query.Get("workerName")),
 		Requisite:  optionalCleanString(query.Get("requisite")),
 		MethodType: optionalCleanString(query.Get("methodType")),
@@ -239,6 +245,35 @@ func orderFiltersFromRequest(w http.ResponseWriter, r *http.Request) (orders.Fil
 		PageSize:   pageSize,
 		Sort:       strings.TrimSpace(query.Get("sort")),
 	}, true
+}
+
+func optionalInt64List(rawValues []string, field string, fields map[string]string) ([]int64, bool) {
+	if len(rawValues) == 0 {
+		return nil, true
+	}
+
+	values := make([]int64, 0)
+	seen := map[int64]bool{}
+	for _, rawValue := range rawValues {
+		for _, rawPart := range strings.Split(rawValue, ",") {
+			rawPart = strings.TrimSpace(rawPart)
+			if rawPart == "" || rawPart == "all" {
+				continue
+			}
+			value, err := strconv.ParseInt(rawPart, 10, 64)
+			if err != nil || value <= 0 {
+				fields[field] = "Некорректный список числовых значений"
+				return nil, false
+			}
+			if seen[value] {
+				continue
+			}
+			seen[value] = true
+			values = append(values, value)
+		}
+	}
+
+	return values, true
 }
 
 func optionalDate(raw string, field string, fields map[string]string) (*time.Time, bool) {

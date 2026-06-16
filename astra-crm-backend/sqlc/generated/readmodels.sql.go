@@ -56,34 +56,35 @@ SELECT
 FROM order_scope_items osi
 LEFT JOIN users u ON u.id = osi.trader_id
 WHERE osi.team_id = $1
-  AND osi.scope_type = 'teamlead_period'
+  AND osi.scope_type = 'trader_shift'
   AND osi.direction = $2
   AND osi.is_active = TRUE
   AND ($3::date IS NULL OR osi.created_at_external::date >= $3::date)
   AND ($4::date IS NULL OR osi.created_at_external::date <= $4::date)
   AND ($5::bigint IS NULL OR osi.trader_id = $5::bigint)
-  AND ($6::text IS NULL OR osi.worker_name ILIKE '%' || $6::text || '%')
+  AND (COALESCE(cardinality($6::bigint[]), 0) = 0 OR osi.trader_id = ANY($6::bigint[]))
+  AND ($7::text IS NULL OR osi.worker_name ILIKE '%' || $7::text || '%')
   AND (
-      $7::text IS NULL
-      OR osi.requisite_raw ILIKE '%' || $7::text || '%'
-      OR osi.requisite_phone ILIKE '%' || $7::text || '%'
+      $8::text IS NULL
+      OR osi.requisite_raw ILIKE '%' || $8::text || '%'
+      OR osi.requisite_phone ILIKE '%' || $8::text || '%'
   )
-  AND ($8::text IS NULL OR osi.method_type = $8::text)
+  AND ($9::text IS NULL OR osi.method_type = $9::text)
   AND (
-      $9::text IS NULL
-      OR osi.raw_status = $9::text
-      OR osi.normalized_status = $9::text
+      $10::text IS NULL
+      OR osi.raw_status = $10::text
+      OR osi.normalized_status = $10::text
   )
-  AND ($10::bigint IS NULL OR osi.amount_minor >= $10::bigint)
-  AND ($11::bigint IS NULL OR osi.amount_minor <= $11::bigint)
+  AND ($11::bigint IS NULL OR osi.amount_minor >= $11::bigint)
+  AND ($12::bigint IS NULL OR osi.amount_minor <= $12::bigint)
 ORDER BY
-    CASE WHEN $12::text = 'amount_asc' THEN osi.amount_minor END ASC,
-    CASE WHEN $12::text = 'amount_desc' THEN osi.amount_minor END DESC,
-    CASE WHEN $12::text = 'created_at_asc' THEN osi.created_at_external END ASC,
+    CASE WHEN $13::text = 'amount_asc' THEN osi.amount_minor END ASC,
+    CASE WHEN $13::text = 'amount_desc' THEN osi.amount_minor END DESC,
+    CASE WHEN $13::text = 'created_at_asc' THEN osi.created_at_external END ASC,
     osi.created_at_external DESC,
     osi.id DESC
-LIMIT $14
-OFFSET $13
+LIMIT $15
+OFFSET $14
 `
 
 type ListTeamleadOrdersParams struct {
@@ -92,6 +93,7 @@ type ListTeamleadOrdersParams struct {
 	DateFrom   pgtype.Date
 	DateTo     pgtype.Date
 	TraderID   pgtype.Int8
+	TraderIds  []int64
 	WorkerName pgtype.Text
 	Requisite  pgtype.Text
 	MethodType pgtype.Text
@@ -131,6 +133,7 @@ func (q *Queries) ListTeamleadOrders(ctx context.Context, arg ListTeamleadOrders
 		arg.DateFrom,
 		arg.DateTo,
 		arg.TraderID,
+		arg.TraderIds,
 		arg.WorkerName,
 		arg.Requisite,
 		arg.MethodType,
@@ -335,12 +338,13 @@ SELECT
     count(*) FILTER (WHERE osi.normalized_status = 'unknown')::bigint AS unknown_count
 FROM order_scope_items osi
 WHERE osi.team_id = $1
-  AND osi.scope_type = 'teamlead_period'
+  AND osi.scope_type = 'trader_shift'
   AND osi.direction = $2
   AND osi.is_active = TRUE
   AND ($3::date IS NULL OR osi.created_at_external::date >= $3::date)
   AND ($4::date IS NULL OR osi.created_at_external::date <= $4::date)
   AND ($5::bigint IS NULL OR osi.trader_id = $5::bigint)
+  AND (COALESCE(cardinality($6::bigint[]), 0) = 0 OR osi.trader_id = ANY($6::bigint[]))
 `
 
 type TeamleadOrdersSummaryParams struct {
@@ -349,6 +353,7 @@ type TeamleadOrdersSummaryParams struct {
 	DateFrom  pgtype.Date
 	DateTo    pgtype.Date
 	TraderID  pgtype.Int8
+	TraderIds []int64
 }
 
 type TeamleadOrdersSummaryRow struct {
@@ -369,6 +374,7 @@ func (q *Queries) TeamleadOrdersSummary(ctx context.Context, arg TeamleadOrdersS
 		arg.DateFrom,
 		arg.DateTo,
 		arg.TraderID,
+		arg.TraderIds,
 	)
 	var i TeamleadOrdersSummaryRow
 	err := row.Scan(
@@ -388,20 +394,30 @@ const teamleadRecentImports = `-- name: TeamleadRecentImports :many
 SELECT id, team_id, uploaded_by, scope_type, direction, shift_id, accounting_period_id, trader_id, file_name, file_hash, rows_count, status, superseded_by_batch_id, error_message, created_at, applied_at
 FROM import_batches
 WHERE team_id = $1
-  AND scope_type = 'teamlead_period'
+  AND scope_type = 'trader_shift'
   AND direction = $2
+  AND ($3::bigint IS NULL OR trader_id = $3::bigint)
+  AND (COALESCE(cardinality($4::bigint[]), 0) = 0 OR trader_id = ANY($4::bigint[]))
 ORDER BY created_at DESC, id DESC
-LIMIT $3
+LIMIT $5
 `
 
 type TeamleadRecentImportsParams struct {
 	TeamID     int64
 	Direction  string
+	TraderID   pgtype.Int8
+	TraderIds  []int64
 	LimitCount int32
 }
 
 func (q *Queries) TeamleadRecentImports(ctx context.Context, arg TeamleadRecentImportsParams) ([]ImportBatch, error) {
-	rows, err := q.db.Query(ctx, teamleadRecentImports, arg.TeamID, arg.Direction, arg.LimitCount)
+	rows, err := q.db.Query(ctx, teamleadRecentImports,
+		arg.TeamID,
+		arg.Direction,
+		arg.TraderID,
+		arg.TraderIds,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -445,12 +461,13 @@ SELECT
     count(*)::bigint AS count
 FROM order_scope_items osi
 WHERE osi.team_id = $1
-  AND osi.scope_type = 'teamlead_period'
+  AND osi.scope_type = 'trader_shift'
   AND osi.direction = $2
   AND osi.is_active = TRUE
   AND ($3::date IS NULL OR osi.created_at_external::date >= $3::date)
   AND ($4::date IS NULL OR osi.created_at_external::date <= $4::date)
   AND ($5::bigint IS NULL OR osi.trader_id = $5::bigint)
+  AND (COALESCE(cardinality($6::bigint[]), 0) = 0 OR osi.trader_id = ANY($6::bigint[]))
 GROUP BY osi.raw_status, osi.normalized_status
 ORDER BY count DESC, amount_minor DESC, osi.raw_status
 `
@@ -461,6 +478,7 @@ type TeamleadStatusBreakdownParams struct {
 	DateFrom  pgtype.Date
 	DateTo    pgtype.Date
 	TraderID  pgtype.Int8
+	TraderIds []int64
 }
 
 type TeamleadStatusBreakdownRow struct {
@@ -477,6 +495,7 @@ func (q *Queries) TeamleadStatusBreakdown(ctx context.Context, arg TeamleadStatu
 		arg.DateFrom,
 		arg.DateTo,
 		arg.TraderID,
+		arg.TraderIds,
 	)
 	if err != nil {
 		return nil, err
