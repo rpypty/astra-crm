@@ -157,6 +157,100 @@ func (h *TraderReconciliationHandler) OutboundItems(w http.ResponseWriter, r *ht
 	})
 }
 
+func (h *TraderReconciliationHandler) ShiftInbound(w http.ResponseWriter, r *http.Request) {
+	h.shift(w, r, "inbound")
+}
+
+func (h *TraderReconciliationHandler) ShiftOutbound(w http.ResponseWriter, r *http.Request) {
+	h.shift(w, r, "outbound")
+}
+
+func (h *TraderReconciliationHandler) ShiftInboundItems(w http.ResponseWriter, r *http.Request) {
+	h.shiftItems(w, r, "inbound")
+}
+
+func (h *TraderReconciliationHandler) ShiftOutboundItems(w http.ResponseWriter, r *http.Request) {
+	h.shiftItems(w, r, "outbound")
+}
+
+func (h *TraderReconciliationHandler) shift(w http.ResponseWriter, r *http.Request, direction string) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	shiftID, ok := shiftIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var (
+		run reconciliation.Run
+		err error
+	)
+	switch direction {
+	case "inbound":
+		run, err = h.service.LatestTraderInbound(r.Context(), actor.TeamID, actor.ID, shiftID)
+	case "outbound":
+		run, err = h.service.LatestTraderOutbound(r.Context(), actor.TeamID, actor.ID, shiftID)
+	default:
+		RespondError(w, NotFoundError())
+		return
+	}
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, reconciliationRunResponse{
+		Run: reconciliation.PublicRunFromDomain(run),
+	})
+}
+
+func (h *TraderReconciliationHandler) shiftItems(w http.ResponseWriter, r *http.Request, direction string) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	shiftID, ok := shiftIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var (
+		items []reconciliation.Item
+		err   error
+	)
+	switch direction {
+	case "inbound":
+		items, err = h.service.ListTraderInboundItems(r.Context(), actor.TeamID, actor.ID, shiftID)
+	case "outbound":
+		items, err = h.service.ListTraderOutboundItems(r.Context(), actor.TeamID, actor.ID, shiftID)
+	default:
+		RespondError(w, NotFoundError())
+		return
+	}
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, traderReconciliationItemsResponse{
+		Items: reconciliation.PublicItemsFromDomain(items),
+	})
+}
+
 func (h *TraderReconciliationHandler) AcceptInbound(w http.ResponseWriter, r *http.Request) {
 	actor, ok := CurrentUser(r.Context())
 	if !ok {

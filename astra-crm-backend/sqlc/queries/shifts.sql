@@ -260,7 +260,25 @@ WHERE sr.id = sqlc.arg(shift_requisite_id)
 RETURNING sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id, sr.assignment_id, sr.card_number, sr.holder_name, sr.taken_at, sr.released_at, sr.status, sr.inbound_turnover_minor, sr.outbound_turnover_minor, sr.closing_balance_minor, sr.created_at, sr.updated_at;
 
 -- name: CloseShiftRequisite :one
-WITH updated_sr AS (
+WITH target AS (
+    SELECT
+        sr.id,
+        sr.team_id,
+        sr.trader_id,
+        sr.shift_id,
+        sr.requisite_id,
+        sr.inbound_turnover_minor AS old_inbound_turnover_minor,
+        sr.outbound_turnover_minor AS old_outbound_turnover_minor
+    FROM shift_requisites sr
+    JOIN trader_shifts ts ON ts.id = sr.shift_id
+    WHERE sr.id = sqlc.arg(shift_requisite_id)
+      AND sr.team_id = sqlc.arg(team_id)
+      AND sr.trader_id = sqlc.arg(trader_id)
+      AND sr.status IN ('active', 'correction')
+      AND ts.id = sr.shift_id
+      AND ts.status IN ('open', 'closing')
+),
+updated_sr AS (
     UPDATE shift_requisites sr
     SET
         inbound_turnover_minor = sqlc.arg(inbound_turnover_minor),
@@ -269,14 +287,42 @@ WITH updated_sr AS (
         released_at = COALESCE(sr.released_at, now()),
         status = CASE WHEN sqlc.arg(blocked)::boolean THEN 'blocked' ELSE 'worked' END,
         updated_at = now()
-    FROM trader_shifts ts
-    WHERE sr.id = sqlc.arg(shift_requisite_id)
-      AND sr.team_id = sqlc.arg(team_id)
-      AND sr.trader_id = sqlc.arg(trader_id)
-      AND sr.status IN ('active', 'correction')
-      AND ts.id = sr.shift_id
-      AND ts.status IN ('open', 'closing')
-    RETURNING sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id, sr.assignment_id, sr.card_number, sr.holder_name, sr.taken_at, sr.released_at, sr.status, sr.inbound_turnover_minor, sr.outbound_turnover_minor, sr.closing_balance_minor, sr.created_at, sr.updated_at
+    FROM target
+    WHERE sr.id = target.id
+    RETURNING
+        sr.id,
+        sr.team_id,
+        sr.shift_id,
+        sr.trader_id,
+        sr.requisite_id,
+        sr.assignment_id,
+        sr.card_number,
+        sr.holder_name,
+        sr.taken_at,
+        sr.released_at,
+        sr.status,
+        sr.inbound_turnover_minor,
+        sr.outbound_turnover_minor,
+        sr.closing_balance_minor,
+        sr.created_at,
+        sr.updated_at,
+        target.old_inbound_turnover_minor,
+        target.old_outbound_turnover_minor
+),
+updated_requisite AS (
+    UPDATE requisites r
+    SET
+        total_inbound_turnover_minor = GREATEST(0, r.total_inbound_turnover_minor + updated_sr.inbound_turnover_minor - updated_sr.old_inbound_turnover_minor),
+        total_outbound_turnover_minor = GREATEST(0, r.total_outbound_turnover_minor + updated_sr.outbound_turnover_minor - updated_sr.old_outbound_turnover_minor),
+        last_closing_balance_minor = updated_sr.closing_balance_minor,
+        last_activity_status = updated_sr.status,
+        last_activity_at = COALESCE(updated_sr.released_at, updated_sr.taken_at, updated_sr.updated_at),
+        last_shift_requisite_id = updated_sr.id,
+        updated_at = now()
+    FROM updated_sr
+    WHERE r.team_id = updated_sr.team_id
+      AND r.id = updated_sr.requisite_id
+    RETURNING r.id
 )
 SELECT id, team_id, shift_id, trader_id, requisite_id, assignment_id, card_number, holder_name, taken_at, released_at, status, inbound_turnover_minor, outbound_turnover_minor, closing_balance_minor, created_at, updated_at
 FROM updated_sr;

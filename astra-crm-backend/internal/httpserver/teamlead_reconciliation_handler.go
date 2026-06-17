@@ -12,6 +12,10 @@ import (
 type TeamleadReconciliationService interface {
 	LatestTeamleadInbound(ctx context.Context, teamID int64) (reconciliation.Run, error)
 	LatestTeamleadOutbound(ctx context.Context, teamID int64) (reconciliation.Run, error)
+	LatestTraderInboundByShift(ctx context.Context, teamID int64, shiftID int64) (reconciliation.Run, error)
+	LatestTraderOutboundByShift(ctx context.Context, teamID int64, shiftID int64) (reconciliation.Run, error)
+	ListTraderInboundItemsByShift(ctx context.Context, teamID int64, shiftID int64) ([]reconciliation.Item, error)
+	ListTraderOutboundItemsByShift(ctx context.Context, teamID int64, shiftID int64) ([]reconciliation.Item, error)
 	LatestTeamleadPeriodInbound(ctx context.Context, teamID int64, accountingPeriodID int64) (reconciliation.Run, error)
 	LatestTeamleadPeriodOutbound(ctx context.Context, teamID int64, accountingPeriodID int64) (reconciliation.Run, error)
 	ListTeamleadPeriodInboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]reconciliation.Item, error)
@@ -131,6 +135,100 @@ func (h *TeamleadReconciliationHandler) PeriodItems(w http.ResponseWriter, r *ht
 	h.PeriodInboundItems(w, r)
 }
 
+func (h *TeamleadReconciliationHandler) ShiftInbound(w http.ResponseWriter, r *http.Request) {
+	h.shift(w, r, "inbound")
+}
+
+func (h *TeamleadReconciliationHandler) ShiftOutbound(w http.ResponseWriter, r *http.Request) {
+	h.shift(w, r, "outbound")
+}
+
+func (h *TeamleadReconciliationHandler) ShiftInboundItems(w http.ResponseWriter, r *http.Request) {
+	h.shiftItems(w, r, "inbound")
+}
+
+func (h *TeamleadReconciliationHandler) ShiftOutboundItems(w http.ResponseWriter, r *http.Request) {
+	h.shiftItems(w, r, "outbound")
+}
+
+func (h *TeamleadReconciliationHandler) shift(w http.ResponseWriter, r *http.Request, direction string) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	shiftID, ok := shiftIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var (
+		run reconciliation.Run
+		err error
+	)
+	switch direction {
+	case "inbound":
+		run, err = h.service.LatestTraderInboundByShift(r.Context(), actor.TeamID, shiftID)
+	case "outbound":
+		run, err = h.service.LatestTraderOutboundByShift(r.Context(), actor.TeamID, shiftID)
+	default:
+		RespondError(w, NotFoundError())
+		return
+	}
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, reconciliationRunResponse{
+		Run: reconciliation.PublicRunFromDomain(run),
+	})
+}
+
+func (h *TeamleadReconciliationHandler) shiftItems(w http.ResponseWriter, r *http.Request, direction string) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	shiftID, ok := shiftIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var (
+		items []reconciliation.Item
+		err   error
+	)
+	switch direction {
+	case "inbound":
+		items, err = h.service.ListTraderInboundItemsByShift(r.Context(), actor.TeamID, shiftID)
+	case "outbound":
+		items, err = h.service.ListTraderOutboundItemsByShift(r.Context(), actor.TeamID, shiftID)
+	default:
+		RespondError(w, NotFoundError())
+		return
+	}
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, reconciliationItemsResponse{
+		Items: reconciliation.PublicItemsFromDomain(items),
+	})
+}
+
 func (h *TeamleadReconciliationHandler) periodItems(w http.ResponseWriter, r *http.Request, direction string) {
 	actor, ok := CurrentUser(r.Context())
 	if !ok {
@@ -168,6 +266,19 @@ func (h *TeamleadReconciliationHandler) periodItems(w http.ResponseWriter, r *ht
 	WriteJSON(w, http.StatusOK, reconciliationItemsResponse{
 		Items: reconciliation.PublicItemsFromDomain(items),
 	})
+}
+
+func shiftIDFromRequest(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	raw := chi.URLParam(r, "shiftId")
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		RespondError(w, ValidationError(map[string]string{
+			"shiftId": "Некорректный ID смены",
+		}))
+		return 0, false
+	}
+
+	return id, true
 }
 
 func periodIDFromRequest(w http.ResponseWriter, r *http.Request) (int64, bool) {

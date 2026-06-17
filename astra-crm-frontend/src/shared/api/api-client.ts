@@ -1,4 +1,4 @@
-import type { ApiSchema } from "@/lib/generated/openapi";
+import type { ApiSchema } from "@/shared/api/generated/openapi";
 
 export type ApiErrorPayload = {
   error?: string | ApiSchema<"ErrorResponse">["error"];

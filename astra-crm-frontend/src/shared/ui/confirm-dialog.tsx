@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/shared/ui/button";
 import {
   Dialog,
   DialogClose,
@@ -8,7 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog";
+} from "@/shared/ui/dialog";
 
 type ConfirmDialogProps = {
   trigger: ReactNode;

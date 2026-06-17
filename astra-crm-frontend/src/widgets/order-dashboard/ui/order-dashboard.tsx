@@ -6,10 +6,10 @@ import {
   Tooltip,
 } from "recharts";
 import type { ReactNode } from "react";
-import { EmptyState } from "@/components/crm/empty-state";
-import { Card, CardContent } from "@/components/ui/card";
-import type { OrderDashboard as OrderDashboardData, OrderDirection } from "@/lib/domain";
-import { formatMoneyMinor } from "@/lib/utils";
+import { EmptyState } from "@/shared/ui/empty-state";
+import { Card, CardContent } from "@/shared/ui/card";
+import type { OrderDashboard as OrderDashboardData, OrderDirection } from "@/shared/model/domain";
+import { formatMoneyMinor } from "@/shared/lib/utils";
 
 type OrderDashboardProps = {
   dashboard?: OrderDashboardData;

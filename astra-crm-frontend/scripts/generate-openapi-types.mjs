@@ -6,7 +6,7 @@ import { parseDocument } from "yaml";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const specPath = path.resolve(projectRoot, "../docs/openapi.yaml");
-const outputPath = path.resolve(projectRoot, "src/lib/generated/openapi.ts");
+const outputPath = path.resolve(projectRoot, "src/shared/api/generated/openapi.ts");
 const checkOnly = process.argv.includes("--check");
 
 const source = fs.readFileSync(specPath, "utf8");

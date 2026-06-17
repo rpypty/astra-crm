@@ -1,9 +1,9 @@
 import { Navigate, Outlet, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import { useAuth } from "@/app/auth";
-import { AppShell } from "@/components/layout/app-shell";
-import { LoadingSkeleton } from "@/components/crm/loading-skeleton";
-import { LoginPage } from "@/pages/login-page";
+import { useAuth } from "@/features/auth/model/auth";
+import { AppShell } from "@/widgets/app-shell/ui/app-shell";
+import { LoadingSkeleton } from "@/shared/ui/loading-skeleton";
+import { LoginPage } from "@/pages/login";
 import {
   TeamleadAuditPage,
   TeamleadDashboardPage,
@@ -12,14 +12,14 @@ import {
   TeamleadRequisitesPage,
   TeamleadTransactionsPage,
   TeamleadTradersPage,
-} from "@/pages/teamlead-pages";
+} from "@/pages/teamlead";
 import {
   TraderAnalyticsPage,
   TraderPayoutsPage,
   TraderReportsPage,
   TraderRequisitesPage,
   TraderTransactionsPage,
-} from "@/pages/trader-pages";
+} from "@/pages/trader";
 
 const rootRoute = createRootRoute({
   component: () => <Outlet />,

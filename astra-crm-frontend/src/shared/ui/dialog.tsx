@@ -2,7 +2,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import type { ComponentPropsWithoutRef, ElementRef } from "react";
 import { forwardRef } from "react";
-import { cn } from "@/lib/utils";
+import { cn } from "@/shared/lib/utils";
 
 export const Dialog = DialogPrimitive.Root;
 export const DialogTrigger = DialogPrimitive.Trigger;

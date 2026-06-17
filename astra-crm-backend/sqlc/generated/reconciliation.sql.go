@@ -1472,6 +1472,51 @@ func (q *Queries) LatestTraderInboundReconciliationRun(ctx context.Context, arg 
 	return i, err
 }
 
+const latestTraderInboundReconciliationRunByShift = `-- name: LatestTraderInboundReconciliationRunByShift :one
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE team_id = $1
+  AND shift_id = $2
+  AND type = 'trader_shift_inbound'
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`
+
+type LatestTraderInboundReconciliationRunByShiftParams struct {
+	TeamID  int64
+	ShiftID pgtype.Int8
+}
+
+func (q *Queries) LatestTraderInboundReconciliationRunByShift(ctx context.Context, arg LatestTraderInboundReconciliationRunByShiftParams) (ReconciliationRun, error) {
+	row := q.db.QueryRow(ctx, latestTraderInboundReconciliationRunByShift, arg.TeamID, arg.ShiftID)
+	var i ReconciliationRun
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.Type,
+		&i.ScopeType,
+		&i.ShiftID,
+		&i.AccountingPeriodID,
+		&i.TraderID,
+		&i.ImportBatchID,
+		&i.ExpectedAmountMinor,
+		&i.ActualAmountMinor,
+		&i.DiffAmountMinor,
+		&i.SuccessAmountMinor,
+		&i.SuccessCount,
+		&i.FailedAmountMinor,
+		&i.FailedCount,
+		&i.TotalAmountMinor,
+		&i.TotalCount,
+		&i.Status,
+		&i.Comment,
+		&i.ConfirmedBy,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const latestTraderOutboundReconciliationRun = `-- name: LatestTraderOutboundReconciliationRun :one
 SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
 FROM reconciliation_runs
@@ -1491,6 +1536,51 @@ type LatestTraderOutboundReconciliationRunParams struct {
 
 func (q *Queries) LatestTraderOutboundReconciliationRun(ctx context.Context, arg LatestTraderOutboundReconciliationRunParams) (ReconciliationRun, error) {
 	row := q.db.QueryRow(ctx, latestTraderOutboundReconciliationRun, arg.TeamID, arg.TraderID, arg.ShiftID)
+	var i ReconciliationRun
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.Type,
+		&i.ScopeType,
+		&i.ShiftID,
+		&i.AccountingPeriodID,
+		&i.TraderID,
+		&i.ImportBatchID,
+		&i.ExpectedAmountMinor,
+		&i.ActualAmountMinor,
+		&i.DiffAmountMinor,
+		&i.SuccessAmountMinor,
+		&i.SuccessCount,
+		&i.FailedAmountMinor,
+		&i.FailedCount,
+		&i.TotalAmountMinor,
+		&i.TotalCount,
+		&i.Status,
+		&i.Comment,
+		&i.ConfirmedBy,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const latestTraderOutboundReconciliationRunByShift = `-- name: LatestTraderOutboundReconciliationRunByShift :one
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE team_id = $1
+  AND shift_id = $2
+  AND type = 'trader_shift_outbound'
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`
+
+type LatestTraderOutboundReconciliationRunByShiftParams struct {
+	TeamID  int64
+	ShiftID pgtype.Int8
+}
+
+func (q *Queries) LatestTraderOutboundReconciliationRunByShift(ctx context.Context, arg LatestTraderOutboundReconciliationRunByShiftParams) (ReconciliationRun, error) {
+	row := q.db.QueryRow(ctx, latestTraderOutboundReconciliationRunByShift, arg.TeamID, arg.ShiftID)
 	var i ReconciliationRun
 	err := row.Scan(
 		&i.ID,

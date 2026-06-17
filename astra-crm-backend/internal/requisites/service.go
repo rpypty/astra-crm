@@ -31,6 +31,7 @@ type Store interface {
 	AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64) ([]Assignment, error)
 	ListPlans(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error)
 	ListActivity(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error)
+	Report(ctx context.Context, teamID int64, requisiteID int64) (RequisiteReport, error)
 	GetAssignment(ctx context.Context, teamID int64, assignmentID int64) (Assignment, error)
 	UpdatePlan(ctx context.Context, params UpdatePlanRecord) (Assignment, error)
 	CancelPlan(ctx context.Context, teamID int64, assignmentID int64) (Assignment, error)
@@ -352,6 +353,14 @@ func (s *Service) Plans(ctx context.Context, teamID int64) ([]AssignmentWorkRow,
 
 func (s *Service) Activity(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {
 	return s.store.ListActivity(ctx, teamID)
+}
+
+func (s *Service) Report(ctx context.Context, teamID int64, requisiteID int64) (RequisiteReport, error) {
+	if teamID <= 0 || requisiteID <= 0 {
+		return RequisiteReport{}, ErrInvalidInput
+	}
+
+	return s.store.Report(ctx, teamID, requisiteID)
 }
 
 func (s *Service) CreatePlan(ctx context.Context, params PlanParams) (Assignment, error) {

@@ -46,24 +46,28 @@ test("teamlead creates trader and requisite, trader closes matched shift", async
   await expect(page.getByText("Закрыта").first()).toBeVisible();
 });
 
-test("trader accepts inbound mismatch with comment and closes shift with discrepancy", async ({ page, request }) => {
+test("teamlead sees invoice and payout mismatches in closed shift report details", async ({ page, request }) => {
   const id = uniqueId();
-  const setup = await prepareMismatchShift(request, id);
+  const setup = await prepareMismatchShiftWithReport(request, id);
 
-  await loginUI(page, setup.traderLogin, traderPassword, /\/trader\/requisites/);
-  await page.goto("/trader/inbound");
-  await expect(page.getByText("Есть расхождение сверки")).toBeVisible();
+  await loginUI(page, teamleadLogin, teamleadPassword, /\/teamlead\/dashboard/);
+  await page.goto("/teamlead/reports");
+  await expect(page.getByRole("heading", { name: "Отчеты" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Подтвердить расхождение" }).click();
-  const dialog = page.getByRole("dialog", { name: "Подтвердить расхождение" });
-  await dialog.locator("textarea").fill("E2E accepted mismatch with required comment");
-  await dialog.getByRole("button", { name: "Подтвердить" }).click();
-  await expect(dialog).toBeHidden();
-  await expect(page.getByText("Есть расхождение сверки")).toBeHidden();
+  const reportRow = page.getByRole("row").filter({ hasText: setup.traderLogin }).first();
+  await expect(reportRow).toContainText("С расхождением");
+  await reportRow.getByText(`#${setup.shiftId}`).click();
 
-  await page.goto("/trader/requisites");
-  await closeShiftUI(page);
-  await expect(page.getByText("С расхождением").first()).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: new RegExp(`Детали отчета #${setup.shiftId}`) });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Инвойсы").first()).toBeVisible();
+  await expect(dialog.getByText("Выплаты").first()).toBeVisible();
+  await expect(dialog.getByText("Итоговая сумма не сходится")).toHaveCount(2);
+  await expect(dialog.getByText(setup.inboundComment)).toBeVisible();
+  await expect(dialog.getByText(setup.outboundComment)).toBeVisible();
+  await expect(dialog.getByText(formatPhoneForUI(setup.requisitePhones[0]))).toBeVisible();
+  await expect(dialog.getByText(/7\s?500,00\s?₽/).first()).toBeVisible();
+  await expect(dialog.getByText(/2\s?000,00\s?₽/).first()).toBeVisible();
 });
 
 async function loginUI(page: Page, login: string, password: string, targetURL: RegExp) {
@@ -163,19 +167,27 @@ async function importCsvUI(page: Page, content: string, filename: string) {
 }
 
 async function closeShiftUI(page: Page) {
-  await page.getByRole("button", { name: "Закрыть смену" }).first().click();
-  const dialog = page.getByRole("dialog", { name: "Чеклист закрытия смены" });
-  await expect(dialog.getByText("Все проверки пройдены.")).toBeVisible();
-  await dialog.getByRole("button", { name: "Закрыть смену" }).first().click();
-  await expect(dialog).toBeHidden();
+  await page.goto("/trader/reports");
+  await page.getByRole("button", { name: "Сдать смену" }).click();
+  const reportDialog = page.getByRole("dialog", { name: "Сдать отчет и закрыть смену" });
+  await expect(reportDialog.getByText("готово").first()).toBeVisible();
+  await reportDialog.getByRole("button", { name: "Сдать отчет и закрыть смену" }).click();
+
+  const confirmDialog = page.getByRole("dialog", { name: "Закрыть смену?" });
+  await confirmDialog.getByRole("button", { name: "Закрыть смену" }).click();
+  await expect(reportDialog).toBeHidden();
 }
 
-async function prepareMismatchShift(request: APIRequestContext, id: string) {
+async function prepareMismatchShiftWithReport(request: APIRequestContext, id: string) {
   const cookieJar = new CookieJar();
   await apiLogin(request, cookieJar, teamleadLogin, teamleadPassword);
 
   const traderLogin = `e2e_mismatch_${id}`;
   const workerName = `E2E_MIS_${id}`;
+  const phoneSeed = id.replace(/\D/g, "").slice(-6).padStart(6, "0");
+  const proxyPrefix = `${Number(phoneSeed.slice(0, 2))}.${Number(phoneSeed.slice(2, 4))}.${Number(phoneSeed.slice(4, 6))}`;
+  const inboundComment = "E2E accepted invoice mismatch";
+  const outboundComment = "E2E accepted payout mismatch";
   const trader = await apiJSON<{ trader: { id: number } }>(request, cookieJar, "/teamlead/traders", {
     method: "POST",
     data: {
@@ -185,57 +197,155 @@ async function prepareMismatchShift(request: APIRequestContext, id: string) {
       externalWorkerName: workerName,
     },
   });
-  const requisite = await apiJSON<{ requisite: { id: number } }>(request, cookieJar, "/teamlead/requisites", {
-    method: "POST",
-    data: {
-      phone: `+7988${id.slice(-7)}`,
-      methodType: "SBP",
-      proxy: "127.0.0.1:9000",
-      assignedTraderId: trader.trader.id,
-    },
-  });
 
-  await apiLogin(request, cookieJar, traderLogin, traderPassword);
-  const shiftRequisite = await apiJSON<{ shiftRequisite: { id: number } }>(
-    request,
-    cookieJar,
-    `/trader/requisites/${requisite.requisite.id}/take`,
-    {
+  const requisitePhones: string[] = [];
+  const requisites: Array<{ id: number; phone: string; inbound: number; outbound: number; balance: number }> = [];
+  const amounts = [
+    { inbound: 100000, outbound: 40000, balance: 60000 },
+    { inbound: 200000, outbound: 60000, balance: 140000 },
+    { inbound: 150000, outbound: 50000, balance: 100000 },
+    { inbound: 125000, outbound: 30000, balance: 95000 },
+    { inbound: 175000, outbound: 20000, balance: 155000 },
+  ];
+  for (const [index, amount] of amounts.entries()) {
+    const phone = `+7988${phoneSeed}${index}`;
+    const requisite = await apiJSON<{ requisite: { id: number } }>(request, cookieJar, "/teamlead/requisites", {
       method: "POST",
       data: {
-        cardNumber: "4111111111111111",
-        holderName: "E2E Mismatch",
+        phone,
+        methodType: "SBP",
+        bankCode: "sber",
+        proxy: `10.${proxyPrefix}:90${index}`,
+        assignedTraderId: trader.trader.id,
       },
-    },
-  );
-  await apiJSON(request, cookieJar, "/trader/shift/current/turnovers", {
-    method: "POST",
-    data: {
-      shiftRequisiteId: shiftRequisite.shiftRequisite.id,
-      amountMinor: 200000,
-      comment: "E2E mismatch turnover",
-    },
-  });
+    });
+    requisites.push({ id: requisite.requisite.id, phone, ...amount });
+    requisitePhones.push(phone);
+  }
+
+  await apiLogin(request, cookieJar, traderLogin, traderPassword);
+  const shiftRequisites: Array<{ id: number; inbound: number; outbound: number; balance: number }> = [];
+  for (const [index, requisite] of requisites.entries()) {
+    const shiftRequisite = await apiJSON<{ shiftRequisite: { id: number; shiftId: number } }>(
+      request,
+      cookieJar,
+      `/trader/requisites/${requisite.id}/take`,
+      {
+        method: "POST",
+        data: {
+          cardNumber: `411111111111111${index}`,
+          holderName: "E2E Mismatch",
+        },
+      },
+    );
+    shiftRequisites.push({
+      id: shiftRequisite.shiftRequisite.id,
+      inbound: requisite.inbound,
+      outbound: requisite.outbound,
+      balance: requisite.balance,
+    });
+    await apiJSON(request, cookieJar, "/trader/shift/current/turnovers", {
+      method: "POST",
+      data: {
+        shiftRequisiteId: shiftRequisite.shiftRequisite.id,
+        amountMinor: requisite.inbound,
+        comment: `E2E turnover ${index + 1}`,
+      },
+    });
+  }
+
   const payout = await apiJSON<{ payout: { id: number } }>(request, cookieJar, "/trader/payouts", {
     method: "POST",
     data: {
       destinationBank: "E2E Bank",
       destinationRequisite: "2200000000000000",
-      amountMinor: 50000,
+      amountMinor: 200000,
     },
   });
-  await apiJSON(request, cookieJar, `/trader/payouts/${payout.payout.id}/transfers`, {
-    method: "POST",
-    data: {
-      sourceShiftRequisiteId: shiftRequisite.shiftRequisite.id,
-      amountMinor: 50000,
-      comment: "E2E mismatch transfer",
-    },
-  });
-  await apiUpload(request, cookieJar, "/trader/inbound/import", traderCSV(workerName, `e2e-in-mis-${id}`, 1000, "hand_success"));
-  await apiUpload(request, cookieJar, "/trader/outbound/import", traderCSV(workerName, `e2e-out-mis-${id}`, 500, "hand_success"));
+  for (const [index, shiftRequisite] of shiftRequisites.entries()) {
+    await apiJSON(request, cookieJar, `/trader/payouts/${payout.payout.id}/transfers`, {
+      method: "POST",
+      data: {
+        sourceShiftRequisiteId: shiftRequisite.id,
+        amountMinor: shiftRequisite.outbound,
+        comment: `E2E payout transfer ${index + 1}`,
+      },
+    });
+  }
 
-  return { traderLogin };
+  for (const shiftRequisite of shiftRequisites) {
+    await apiJSON(request, cookieJar, `/trader/shift-requisites/${shiftRequisite.id}/close`, {
+      method: "POST",
+      data: {
+        inboundTurnoverMinor: shiftRequisite.inbound,
+        outboundTurnoverMinor: shiftRequisite.outbound,
+        closingBalanceMinor: shiftRequisite.balance,
+        blocked: false,
+        comment: "E2E close requisite",
+      },
+    });
+  }
+
+  await apiUpload(
+    request,
+    cookieJar,
+    "/trader/inbound/import",
+    traderCSVRows(workerName, [
+      { innerId: `e2e-in-mis-${id}-1`, amount: 3000, status: "hand_success" },
+      { innerId: `e2e-in-mis-${id}-2`, amount: 2500, status: "hand_success" },
+      { innerId: `e2e-in-mis-${id}-3`, amount: 1500, status: "hand_success" },
+    ]),
+  );
+  await apiUpload(
+    request,
+    cookieJar,
+    "/trader/outbound/import",
+    traderCSVRows(workerName, [
+      { innerId: `e2e-out-mis-${id}-1`, amount: 1000, status: "hand_success" },
+      { innerId: `e2e-out-mis-${id}-2`, amount: 800, status: "hand_success" },
+    ]),
+  );
+
+  const inboundRun = await apiJSON<{ run: { id: number; status: string } }>(
+    request,
+    cookieJar,
+    "/trader/inbound/reconciliation/latest",
+  );
+  await expect(inboundRun.run.status).toBe("mismatch");
+  await apiJSON(request, cookieJar, `/trader/inbound/reconciliation/${inboundRun.run.id}/accept`, {
+    method: "POST",
+    data: { comment: inboundComment },
+  });
+
+  const outboundRun = await apiJSON<{ run: { id: number; status: string } }>(
+    request,
+    cookieJar,
+    "/trader/outbound/reconciliation/latest",
+  );
+  await expect(outboundRun.run.status).toBe("mismatch");
+  await apiJSON(request, cookieJar, `/trader/outbound/reconciliation/${outboundRun.run.id}/accept`, {
+    method: "POST",
+    data: { comment: outboundComment },
+  });
+
+  const closeResponse = await apiJSON<{ shift: { id: number; status: string } }>(
+    request,
+    cookieJar,
+    "/trader/shift/current/close",
+    {
+      method: "POST",
+      data: { closeComment: "E2E close with accepted discrepancy" },
+    },
+  );
+  await expect(closeResponse.shift.status).toBe("closed_with_discrepancy");
+
+  return {
+    traderLogin,
+    shiftId: closeResponse.shift.id,
+    inboundComment,
+    outboundComment,
+    requisitePhones,
+  };
 }
 
 async function apiLogin(request: APIRequestContext, cookieJar: CookieJar, login: string, password: string) {
@@ -290,9 +400,16 @@ class CookieJar {
 }
 
 function traderCSV(workerName: string, innerId: string, amount: number, status: string) {
+  return traderCSVRows(workerName, [{ innerId, amount, status }]);
+}
+
+function traderCSVRows(workerName: string, rows: Array<{ innerId: string; amount: number; status: string }>) {
   return [
     "id|innerId|requisite|requisitePhone|deviceName|methodType|methodName|amount|courseWorker|currency|status|createdAt|closedAt|updatedAt|oldAmount|receipt|orderComment|requisiteId|workerName|workerAmount|workerProfit|ordered|counted|initials",
-    `${innerId}|${innerId}|79991111111|79991111111|device-1|СБП|sbp|${amount}.0|91.20|RUB|${status}|28.05.2026 14:00:00|28.05.2026 14:05:00|28.05.2026 14:05:00|None|None|e2e|req-1|${workerName}|${amount}.0|0.0|true|true|EE`,
+    ...rows.map(
+      (row, index) =>
+        `${row.innerId}|${row.innerId}|7999111111${index}|7999111111${index}|device-${index + 1}|СБП|sbp|${row.amount}.0|91.20|RUB|${row.status}|28.05.2026 14:00:00|28.05.2026 14:05:00|28.05.2026 14:05:00|None|None|e2e|req-${index + 1}|${workerName}|${row.amount}.0|0.0|true|true|EE`,
+    ),
     "",
   ].join("\n");
 }
@@ -303,4 +420,12 @@ function uniqueId() {
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function formatPhoneForUI(phone: string) {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("7")) {
+    return `+7 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7, 9)}-${digits.slice(9, 11)}`;
+  }
+  return phone;
 }

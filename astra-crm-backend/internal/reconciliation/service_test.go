@@ -481,7 +481,23 @@ func (s *fakeStore) LatestTraderInbound(ctx context.Context, teamID int64, trade
 	return s.latestRun, nil
 }
 
+func (s *fakeStore) LatestTraderInboundByShift(ctx context.Context, teamID int64, shiftID int64) (Run, error) {
+	s.latestCalled = true
+	if s.latestErr != nil {
+		return Run{}, s.latestErr
+	}
+	return s.latestRun, nil
+}
+
 func (s *fakeStore) LatestTraderOutbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (Run, error) {
+	s.latestOutboundCalled = true
+	if s.latestOutboundErr != nil {
+		return Run{}, s.latestOutboundErr
+	}
+	return s.latestOutboundRun, nil
+}
+
+func (s *fakeStore) LatestTraderOutboundByShift(ctx context.Context, teamID int64, shiftID int64) (Run, error) {
 	s.latestOutboundCalled = true
 	if s.latestOutboundErr != nil {
 		return Run{}, s.latestOutboundErr

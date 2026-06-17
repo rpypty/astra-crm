@@ -1,4 +1,4 @@
-import { formatMoneyMinor } from "@/lib/utils";
+import { formatMoneyMinor } from "@/shared/lib/utils";
 
 type MoneyCellProps = {
   valueMinor: number;

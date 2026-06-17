@@ -9,19 +9,19 @@ import {
 import { MoreHorizontal, Search } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { EmptyState } from "@/components/crm/empty-state";
-import { ErrorState } from "@/components/crm/error-state";
-import { LoadingSkeleton } from "@/components/crm/loading-skeleton";
-import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/shared/ui/empty-state";
+import { ErrorState } from "@/shared/ui/error-state";
+import { LoadingSkeleton } from "@/shared/ui/loading-skeleton";
+import { Button } from "@/shared/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+} from "@/shared/ui/dropdown-menu";
+import { Input } from "@/shared/ui/input";
+import { Select } from "@/shared/ui/select";
+import { cn } from "@/shared/lib/utils";
 
 export type DataTableAction<TData> = {
   label: string;
@@ -158,7 +158,7 @@ export function DataTable<TData>({
         {primaryAction}
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
+      <div className="overflow-x-auto rounded-lg border border-border bg-card">
         {error ? (
           <div className="p-4">
             <ErrorState message={error} />
@@ -172,7 +172,7 @@ export function DataTable<TData>({
             <EmptyState title={emptyTitle} description={emptyDescription} />
           </div>
         ) : (
-          <table className="w-full border-collapse text-sm">
+          <table className="min-w-full border-collapse text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-normal text-muted-foreground">
               {table.getHeaderGroups().map((headerGroup) => (
                 <tr key={headerGroup.id}>

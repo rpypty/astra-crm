@@ -1,4 +1,4 @@
-import { formatRussianPhone, normalizeRussianPhone, phoneDigits } from "@/lib/utils";
+import { formatRussianPhone, normalizeRussianPhone, phoneDigits } from "@/shared/lib/utils";
 
 type RequisiteCellProps = {
   phone: string;

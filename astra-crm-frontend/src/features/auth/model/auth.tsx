@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, type PropsWithChildren, useContext } from "react";
-import type { CurrentUser } from "@/lib/domain";
-import { api } from "@/lib/api";
-import { queryKeys } from "@/lib/query-keys";
+import type { CurrentUser } from "@/shared/model/domain";
+import { api } from "@/shared/api/api";
+import { queryKeys } from "@/shared/api/query-keys";
 
 type AuthContextValue = {
   user?: CurrentUser;

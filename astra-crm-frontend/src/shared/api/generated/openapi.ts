@@ -128,6 +128,51 @@ export type components = {
   updatedAt: string;
   shiftRequisiteId?: number;
 };
+    RequisiteReportSummary: {
+  id: number;
+  teamId: number;
+  phone: string;
+  methodType: string;
+  bankCode: string;
+  bankName: string;
+  proxy?: string;
+  employeeComment?: string;
+  holderName?: string;
+  cardNumber?: string;
+  status: "active" | "disabled" | "archived";
+  totalInboundTurnoverMinor: number;
+  totalOutboundTurnoverMinor: number;
+  lastClosingBalanceMinor: number;
+  latestStatus: string;
+  lastActivityAt?: string;
+  lastShiftRequisiteId?: number;
+};
+    RequisiteReportShift: {
+  shiftRequisiteId: number;
+  shiftId: number;
+  teamId: number;
+  requisiteId: number;
+  traderId: number;
+  traderLogin: string;
+  shiftStartedAt: string;
+  shiftClosedAt?: string;
+  shiftStatus: "open" | "closing" | "closed" | "closed_with_discrepancy";
+  takenAt: string;
+  releasedAt?: string;
+  requisiteStatus: "active" | "worked" | "correction" | "released" | "blocked";
+  inboundTurnoverMinor: number;
+  outboundTurnoverMinor: number;
+  targetTurnoverMinor: number;
+  closingBalanceMinor: number;
+  cardNumber?: string;
+  holderName?: string;
+  assignedForDate?: string;
+  assignmentStatus: string;
+};
+    RequisiteReport: {
+  summary: components["schemas"]["RequisiteReportSummary"];
+  shifts: components["schemas"]["RequisiteReportShift"][];
+};
     RequisiteAssignmentEvent: {
   id: number;
   teamId: number;
@@ -164,6 +209,9 @@ export type components = {
 };
     AssignmentRowsResponse: {
   items: components["schemas"]["RequisiteAssignmentWorkRow"][];
+};
+    RequisiteReportResponse: {
+  report: components["schemas"]["RequisiteReport"];
 };
     AssignmentEventsResponse: {
   items: components["schemas"]["RequisiteAssignmentEvent"][];

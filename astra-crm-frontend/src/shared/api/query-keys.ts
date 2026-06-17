@@ -8,10 +8,15 @@ export const queryKeys = {
     requisites: (params?: Record<string, unknown>) => ["teamlead", "requisites", params] as const,
     requisitePlans: ["teamlead", "requisites", "plans"] as const,
     requisiteActivity: ["teamlead", "requisites", "activity"] as const,
+    requisiteReport: (requisiteId: number | undefined) => ["teamlead", "requisites", requisiteId, "report"] as const,
     requisitePlanEvents: (assignmentId: number | undefined) =>
       ["teamlead", "requisites", "plans", assignmentId, "events"] as const,
     shiftHistory: ["teamlead", "shift", "history"] as const,
     shiftReportRequisites: (shiftId: number) => ["teamlead", "shift", shiftId, "requisites"] as const,
+    shiftReportReconciliation: (shiftId: number, direction: "inbound" | "outbound") =>
+      ["teamlead", "shift", shiftId, direction, "reconciliation"] as const,
+    shiftReportReconciliationItems: (shiftId: number, direction: "inbound" | "outbound") =>
+      ["teamlead", "shift", shiftId, direction, "reconciliation", "items"] as const,
     dashboard: (direction: "inbound" | "outbound", params?: Record<string, unknown>) =>
       ["teamlead", direction, "dashboard", params] as const,
     orders: (direction: "inbound" | "outbound", params?: Record<string, unknown>) =>
@@ -23,6 +28,10 @@ export const queryKeys = {
     currentShift: ["trader", "shift", "current"] as const,
     shiftHistory: ["trader", "shift", "history"] as const,
     shiftReportRequisites: (shiftId: number) => ["trader", "shift", shiftId, "requisites"] as const,
+    shiftReportReconciliation: (shiftId: number, direction: "inbound" | "outbound") =>
+      ["trader", "shift", shiftId, direction, "reconciliation"] as const,
+    shiftReportReconciliationItems: (shiftId: number, direction: "inbound" | "outbound") =>
+      ["trader", "shift", shiftId, direction, "reconciliation", "items"] as const,
     requisites: (params?: Record<string, unknown>) => ["trader", "requisites", params] as const,
     futureRequisites: ["trader", "requisites", "future"] as const,
     historicalRequisites: ["trader", "requisites", "history"] as const,

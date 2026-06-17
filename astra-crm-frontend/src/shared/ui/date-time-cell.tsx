@@ -1,4 +1,4 @@
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime } from "@/shared/lib/utils";
 
 type DateTimeCellProps = {
   value?: string | Date | null;

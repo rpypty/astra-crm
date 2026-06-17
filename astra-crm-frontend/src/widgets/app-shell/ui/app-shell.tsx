@@ -1,8 +1,8 @@
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import { BarChart3, ClipboardList, CreditCard, Landmark, ReceiptText, Users } from "lucide-react";
-import { useAuth } from "@/app/auth";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { useAuth } from "@/features/auth/model/auth";
+import { Button } from "@/shared/ui/button";
+import { cn } from "@/shared/lib/utils";
 
 type Role = "teamlead" | "trader";
 

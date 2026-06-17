@@ -225,3 +225,7 @@ func (s *fakeTeamleadRequisiteService) CancelPlan(ctx context.Context, actorID i
 func (s *fakeTeamleadRequisiteService) AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]requisites.AssignmentEvent, error) {
 	return nil, nil
 }
+
+func (s *fakeTeamleadRequisiteService) Report(ctx context.Context, teamID int64, requisiteID int64) (requisites.RequisiteReport, error) {
+	return requisites.RequisiteReport{}, nil
+}

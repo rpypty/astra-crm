@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { StatusBadge } from "@/components/crm/status-badge";
+import { StatusBadge } from "@/entities/status/ui/status-badge";
 
 describe("StatusBadge", () => {
   it("renders user-facing status label", () => {

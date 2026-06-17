@@ -220,22 +220,28 @@ type ReconciliationRun struct {
 }
 
 type Requisite struct {
-	ID              int64
-	TeamID          int64
-	Phone           string
-	MethodType      string
-	Proxy           pgtype.Text
-	Status          string
-	CreatedBy       int64
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
-	DeletedAt       pgtype.Timestamptz
-	BankCode        string
-	EmployeeComment pgtype.Text
-	HolderName      pgtype.Text
-	CardNumber      pgtype.Text
-	DetailsFilledAt pgtype.Timestamptz
-	DetailsFilledBy pgtype.Int8
+	ID                         int64
+	TeamID                     int64
+	Phone                      string
+	MethodType                 string
+	Proxy                      pgtype.Text
+	Status                     string
+	CreatedBy                  int64
+	CreatedAt                  pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+	DeletedAt                  pgtype.Timestamptz
+	BankCode                   string
+	EmployeeComment            pgtype.Text
+	HolderName                 pgtype.Text
+	CardNumber                 pgtype.Text
+	DetailsFilledAt            pgtype.Timestamptz
+	DetailsFilledBy            pgtype.Int8
+	TotalInboundTurnoverMinor  int64
+	TotalOutboundTurnoverMinor int64
+	LastClosingBalanceMinor    int64
+	LastActivityStatus         pgtype.Text
+	LastActivityAt             pgtype.Timestamptz
+	LastShiftRequisiteID       pgtype.Int8
 }
 
 type RequisiteAssignment struct {

@@ -28,6 +28,7 @@ type TeamleadRequisiteService interface {
 	UpdatePlan(ctx context.Context, params requisites.PlanParams) (requisites.Assignment, error)
 	CancelPlan(ctx context.Context, actorID int64, teamID int64, assignmentID int64) (requisites.Assignment, error)
 	AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]requisites.AssignmentEvent, error)
+	Report(ctx context.Context, teamID int64, requisiteID int64) (requisites.RequisiteReport, error)
 }
 
 type TeamleadRequisitesHandler struct {
@@ -60,6 +61,10 @@ type assignmentRowsResponse struct {
 
 type assignmentEventsResponse struct {
 	Items []requisites.PublicAssignmentEvent `json:"items"`
+}
+
+type requisiteReportResponse struct {
+	Report requisites.PublicRequisiteReport `json:"report"`
 }
 
 type createRequisiteRequest struct {
@@ -156,6 +161,33 @@ func (h *TeamleadRequisitesHandler) Plans(w http.ResponseWriter, r *http.Request
 
 	WriteJSON(w, http.StatusOK, assignmentRowsResponse{
 		Items: requisites.PublicAssignmentWorkRows(items),
+	})
+}
+
+func (h *TeamleadRequisitesHandler) Report(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	requisiteID, ok := requisiteIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	report, err := h.service.Report(r.Context(), actor.TeamID, requisiteID)
+	if err != nil {
+		RespondError(w, mapRequisiteError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, requisiteReportResponse{
+		Report: requisites.PublicReport(report),
 	})
 }
 

@@ -156,6 +156,43 @@ func TestTeamleadReconciliationHandlerPeriodItemsReturnsItems(t *testing.T) {
 	}
 }
 
+func TestTeamleadReconciliationHandlerShiftInboundItemsReturnsItems(t *testing.T) {
+	service := &fakeTeamleadReconciliationService{
+		shiftItems: []reconciliation.Item{
+			{
+				ID:                90,
+				IssueType:         "total_mismatch",
+				TeamleadValueJSON: []byte(`{"amountMinor":700000}`),
+				TraderValueJSON:   []byte(`{"amountMinor":750000}`),
+				Message:           reconciliationTestStringPtr("invoice total mismatch"),
+				CreatedAt:         time.Date(2026, 6, 9, 10, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	handler := NewTeamleadReconciliationHandler(service)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/teamlead/shifts/33/reconciliation/inbound/items", nil)
+	request = request.WithContext(withTeamleadReconciliationRouteParam(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     1,
+		TeamID: 2,
+		Role:   users.RoleTeamlead,
+		Status: users.StatusActive,
+	}), "shiftId", "33"))
+
+	handler.ShiftInboundItems(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if service.shiftItemsTeamID != 2 || service.shiftItemsShiftID != 33 {
+		t.Fatalf("shift items call = team:%d shift:%d, want 2/33", service.shiftItemsTeamID, service.shiftItemsShiftID)
+	}
+	if !strings.Contains(response.Body.String(), `"issueType":"total_mismatch"`) {
+		t.Fatalf("response does not include issue type: %s", response.Body.String())
+	}
+}
+
 type fakeTeamleadReconciliationService struct {
 	latestTeamID         int64
 	latestRun            reconciliation.Run
@@ -179,6 +216,21 @@ type fakeTeamleadReconciliationService struct {
 	itemsErr              error
 	outboundItemsTeamID   int64
 	outboundItemsPeriodID int64
+
+	shiftTeamID              int64
+	shiftID                  int64
+	shiftRun                 reconciliation.Run
+	shiftErr                 error
+	shiftOutboundTeamID      int64
+	shiftOutboundID          int64
+	shiftOutboundRun         reconciliation.Run
+	shiftOutboundErr         error
+	shiftItemsTeamID         int64
+	shiftItemsShiftID        int64
+	shiftItems               []reconciliation.Item
+	shiftItemsErr            error
+	shiftOutboundItemsTeamID int64
+	shiftOutboundItemsID     int64
 }
 
 func (s *fakeTeamleadReconciliationService) LatestTeamleadInbound(ctx context.Context, teamID int64) (reconciliation.Run, error) {
@@ -215,6 +267,24 @@ func (s *fakeTeamleadReconciliationService) LatestTeamleadPeriodOutbound(ctx con
 	return s.periodOutboundRun, nil
 }
 
+func (s *fakeTeamleadReconciliationService) LatestTraderInboundByShift(ctx context.Context, teamID int64, shiftID int64) (reconciliation.Run, error) {
+	s.shiftTeamID = teamID
+	s.shiftID = shiftID
+	if s.shiftErr != nil {
+		return reconciliation.Run{}, s.shiftErr
+	}
+	return s.shiftRun, nil
+}
+
+func (s *fakeTeamleadReconciliationService) LatestTraderOutboundByShift(ctx context.Context, teamID int64, shiftID int64) (reconciliation.Run, error) {
+	s.shiftOutboundTeamID = teamID
+	s.shiftOutboundID = shiftID
+	if s.shiftOutboundErr != nil {
+		return reconciliation.Run{}, s.shiftOutboundErr
+	}
+	return s.shiftOutboundRun, nil
+}
+
 func (s *fakeTeamleadReconciliationService) ListTeamleadPeriodInboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]reconciliation.Item, error) {
 	s.itemsTeamID = teamID
 	s.itemsPeriodID = accountingPeriodID
@@ -231,6 +301,24 @@ func (s *fakeTeamleadReconciliationService) ListTeamleadPeriodOutboundItems(ctx 
 		return nil, s.itemsErr
 	}
 	return s.items, nil
+}
+
+func (s *fakeTeamleadReconciliationService) ListTraderInboundItemsByShift(ctx context.Context, teamID int64, shiftID int64) ([]reconciliation.Item, error) {
+	s.shiftItemsTeamID = teamID
+	s.shiftItemsShiftID = shiftID
+	if s.shiftItemsErr != nil {
+		return nil, s.shiftItemsErr
+	}
+	return s.shiftItems, nil
+}
+
+func (s *fakeTeamleadReconciliationService) ListTraderOutboundItemsByShift(ctx context.Context, teamID int64, shiftID int64) ([]reconciliation.Item, error) {
+	s.shiftOutboundItemsTeamID = teamID
+	s.shiftOutboundItemsID = shiftID
+	if s.shiftItemsErr != nil {
+		return nil, s.shiftItemsErr
+	}
+	return s.shiftItems, nil
 }
 
 func withTeamleadReconciliationRouteParam(ctx context.Context, key string, value string) context.Context {

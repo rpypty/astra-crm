@@ -1,5 +1,5 @@
-import { ApiError, apiClient, queryString } from "@/lib/api-client";
-import type { ApiSchema } from "@/lib/generated/openapi";
+import { ApiError, apiClient, queryString } from "@/shared/api/api-client";
+import type { ApiSchema } from "@/shared/api/generated/openapi";
 import type {
   AccountingPeriod,
   AssignmentHistoryItem,
@@ -19,14 +19,17 @@ import type {
   Requisite,
   RequisiteAssignmentEvent,
   RequisiteAssignmentWorkRow,
+  RequisiteReport,
+  RequisiteReportShift,
+  RequisiteReportSummary,
   ShiftReport,
   ShiftRequisite,
   Trader,
   TraderProfile,
   TurnoverEntry,
   UserStatus,
-} from "@/lib/domain";
-import type { PeriodFilter } from "@/lib/period-filter";
+} from "@/shared/model/domain";
+import type { PeriodFilter } from "@/shared/lib/period-filter";
 
 type AuthResponse = ApiSchema<"AuthResponse">;
 type BanksListResponse = ApiSchema<"BanksListResponse">;
@@ -39,6 +42,7 @@ type AssignmentResponse = ApiSchema<"AssignmentResponse">;
 type AssignmentHistoryResponse = ApiSchema<"AssignmentHistoryResponse">;
 type AssignmentRowsResponse = ApiSchema<"AssignmentRowsResponse">;
 type AssignmentEventsResponse = ApiSchema<"AssignmentEventsResponse">;
+type RequisiteReportResponse = ApiSchema<"RequisiteReportResponse">;
 type CurrentShiftResponse = ApiSchema<"CurrentShiftResponse">;
 type ShiftHistoryResponse = ApiSchema<"ShiftHistoryResponse">;
 type ChecklistResponse = ApiSchema<"ChecklistResponse">;
@@ -65,6 +69,8 @@ type BackendRequisite = ApiSchema<"Requisite">;
 type BackendAssignment = ApiSchema<"RequisiteAssignment">;
 type BackendAssignmentWorkRow = ApiSchema<"RequisiteAssignmentWorkRow">;
 type BackendAssignmentEvent = ApiSchema<"RequisiteAssignmentEvent">;
+type BackendRequisiteReportSummary = ApiSchema<"RequisiteReportSummary">;
+type BackendRequisiteReportShift = ApiSchema<"RequisiteReportShift">;
 type BackendAssignedRequisite = ApiSchema<"AssignedRequisite">;
 type BackendTurnover = ApiSchema<"TurnoverEntry">;
 type BackendPayout = ApiSchema<"Payout">;
@@ -222,6 +228,10 @@ export const api = {
       );
       return response.items.map(toAssignmentEvent);
     },
+    async report(requisiteId: number): Promise<RequisiteReport> {
+      const response = await apiClient.get<RequisiteReportResponse>(`/teamlead/requisites/${requisiteId}/report`);
+      return toRequisiteReport(response.report);
+    },
     archive: (requisiteId: number) => apiClient.delete<void>(`/teamlead/requisites/${requisiteId}`),
   },
 
@@ -260,6 +270,24 @@ export const api = {
     async reportRequisites(shiftId: number) {
       const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>(`/trader/shifts/${shiftId}/requisites`);
       return response.items.map((item) => toShiftRequisite(item, new Map()));
+    },
+    async reportReconciliation(shiftId: number, direction: OrderDirection): Promise<ReconciliationSummary | null> {
+      try {
+        const response = await apiClient.get<ReconciliationResponse>(`/trader/shifts/${shiftId}/reconciliation/${direction}`);
+        return toReconciliation(response.run);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    async reportReconciliationItems(shiftId: number, direction: OrderDirection): Promise<ReconciliationItem[]> {
+      try {
+        const response = await apiClient.get<ReconciliationItemsResponse>(`/trader/shifts/${shiftId}/reconciliation/${direction}/items`);
+        return response.items.map(toReconciliationItem);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return [];
+        throw error;
+      }
     },
     async takeRequisite(input: { shiftRequisiteId: number; cardNumber: string; holderName: string }) {
       await apiClient.post<TakeRequisiteResponse>(`/trader/requisites/${input.shiftRequisiteId}/take`, {
@@ -314,6 +342,24 @@ export const api = {
     async reportRequisites(shiftId: number) {
       const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>(`/teamlead/shifts/${shiftId}/requisites`);
       return response.items.map((item) => toShiftRequisite(item, new Map()));
+    },
+    async reportReconciliation(shiftId: number, direction: OrderDirection): Promise<ReconciliationSummary | null> {
+      try {
+        const response = await apiClient.get<ReconciliationResponse>(`/teamlead/shifts/${shiftId}/reconciliation/${direction}`);
+        return toReconciliation(response.run);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    async reportReconciliationItems(shiftId: number, direction: OrderDirection): Promise<ReconciliationItem[]> {
+      try {
+        const response = await apiClient.get<ReconciliationItemsResponse>(`/teamlead/shifts/${shiftId}/reconciliation/${direction}/items`);
+        return response.items.map(toReconciliationItem);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return [];
+        throw error;
+      }
     },
   },
 
@@ -531,6 +577,57 @@ function toAssignmentEvent(item: BackendAssignmentEvent): RequisiteAssignmentEve
     afterJson: item.afterJson,
     comment: item.comment,
     createdAt: item.createdAt,
+  };
+}
+
+function toRequisiteReport(report: ApiSchema<"RequisiteReport">): RequisiteReport {
+  return {
+    summary: toRequisiteReportSummary(report.summary),
+    shifts: report.shifts.map(toRequisiteReportShift),
+  };
+}
+
+function toRequisiteReportSummary(item: BackendRequisiteReportSummary): RequisiteReportSummary {
+  return {
+    id: item.id,
+    phone: item.phone,
+    methodType: item.methodType as RequisiteReportSummary["methodType"],
+    bankCode: item.bankCode,
+    bankName: item.bankName,
+    proxy: item.proxy ?? "",
+    employeeComment: item.employeeComment,
+    holderName: item.holderName,
+    cardNumber: item.cardNumber,
+    status: item.status,
+    totalInboundTurnoverMinor: item.totalInboundTurnoverMinor,
+    totalOutboundTurnoverMinor: item.totalOutboundTurnoverMinor,
+    lastClosingBalanceMinor: item.lastClosingBalanceMinor,
+    latestStatus: item.latestStatus,
+    lastActivityAt: item.lastActivityAt,
+    lastShiftRequisiteId: item.lastShiftRequisiteId,
+  };
+}
+
+function toRequisiteReportShift(item: BackendRequisiteReportShift): RequisiteReportShift {
+  return {
+    shiftRequisiteId: item.shiftRequisiteId,
+    shiftId: item.shiftId,
+    traderId: item.traderId,
+    traderLogin: item.traderLogin,
+    shiftStartedAt: item.shiftStartedAt,
+    shiftClosedAt: item.shiftClosedAt,
+    shiftStatus: item.shiftStatus,
+    takenAt: item.takenAt,
+    releasedAt: item.releasedAt,
+    requisiteStatus: item.requisiteStatus,
+    inboundTurnoverMinor: item.inboundTurnoverMinor,
+    outboundTurnoverMinor: item.outboundTurnoverMinor,
+    targetTurnoverMinor: item.targetTurnoverMinor,
+    closingBalanceMinor: item.closingBalanceMinor,
+    cardNumber: item.cardNumber,
+    holderName: item.holderName,
+    assignedForDate: item.assignedForDate,
+    assignmentStatus: item.assignmentStatus,
   };
 }
 

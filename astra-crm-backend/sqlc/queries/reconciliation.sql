@@ -79,6 +79,15 @@ WHERE team_id = sqlc.arg(team_id)
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
 
+-- name: LatestTraderInboundReconciliationRunByShift :one
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE team_id = sqlc.arg(team_id)
+  AND shift_id = sqlc.arg(shift_id)
+  AND type = 'trader_shift_inbound'
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
+
 -- name: UpdateTraderShiftInboundReconciliationStatus :exec
 UPDATE trader_shifts
 SET inbound_reconciliation_status = sqlc.arg(status),
@@ -210,6 +219,15 @@ SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id,
 FROM reconciliation_runs
 WHERE team_id = sqlc.arg(team_id)
   AND trader_id = sqlc.arg(trader_id)
+  AND shift_id = sqlc.arg(shift_id)
+  AND type = 'trader_shift_outbound'
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
+
+-- name: LatestTraderOutboundReconciliationRunByShift :one
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE team_id = sqlc.arg(team_id)
   AND shift_id = sqlc.arg(shift_id)
   AND type = 'trader_shift_outbound'
 ORDER BY created_at DESC, id DESC

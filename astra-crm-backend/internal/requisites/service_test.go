@@ -207,6 +207,10 @@ func (s *fakeStore) AssignmentEvents(ctx context.Context, teamID int64, assignme
 	return nil, nil
 }
 
+func (s *fakeStore) Report(ctx context.Context, teamID int64, requisiteID int64) (RequisiteReport, error) {
+	return RequisiteReport{}, nil
+}
+
 type fakeTraderReader struct {
 	trader users.Trader
 	err    error

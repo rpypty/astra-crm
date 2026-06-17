@@ -1,4 +1,4 @@
-import type { Order } from "@/lib/domain";
+import type { Order } from "@/shared/model/domain";
 
 export function filterOrdersBySearch(orders: Order[], search?: string) {
   const normalizedSearch = search?.trim().toLowerCase();

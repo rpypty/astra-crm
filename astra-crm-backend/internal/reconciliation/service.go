@@ -16,9 +16,11 @@ var ErrInvalidInput = errors.New("invalid reconciliation input")
 type Store interface {
 	RecalculateTraderInbound(ctx context.Context, record RecalculateTraderInboundRecord) (Run, error)
 	LatestTraderInbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (Run, error)
+	LatestTraderInboundByShift(ctx context.Context, teamID int64, shiftID int64) (Run, error)
 	AcceptTraderInbound(ctx context.Context, record AcceptTraderInboundRecord) (Run, error)
 	RecalculateTraderOutbound(ctx context.Context, record RecalculateTraderOutboundRecord) (Run, error)
 	LatestTraderOutbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (Run, error)
+	LatestTraderOutboundByShift(ctx context.Context, teamID int64, shiftID int64) (Run, error)
 	AcceptTraderOutbound(ctx context.Context, record AcceptTraderOutboundRecord) (Run, error)
 	RecalculateTeamleadPeriodInbound(ctx context.Context, record RecalculateTeamleadPeriodInboundRecord) (Run, error)
 	RecalculateTeamleadPeriodOutbound(ctx context.Context, record RecalculateTeamleadPeriodOutboundRecord) (Run, error)
@@ -147,12 +149,28 @@ func (s *Service) LatestTraderInbound(ctx context.Context, teamID int64, traderI
 	return s.store.LatestTraderInbound(ctx, teamID, traderID, shiftID)
 }
 
+func (s *Service) LatestTraderInboundByShift(ctx context.Context, teamID int64, shiftID int64) (Run, error) {
+	if teamID <= 0 || shiftID <= 0 {
+		return Run{}, ErrInvalidInput
+	}
+
+	return s.store.LatestTraderInboundByShift(ctx, teamID, shiftID)
+}
+
 func (s *Service) LatestTraderOutbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (Run, error) {
 	if teamID <= 0 || traderID <= 0 || shiftID <= 0 {
 		return Run{}, ErrInvalidInput
 	}
 
 	return s.store.LatestTraderOutbound(ctx, teamID, traderID, shiftID)
+}
+
+func (s *Service) LatestTraderOutboundByShift(ctx context.Context, teamID int64, shiftID int64) (Run, error) {
+	if teamID <= 0 || shiftID <= 0 {
+		return Run{}, ErrInvalidInput
+	}
+
+	return s.store.LatestTraderOutboundByShift(ctx, teamID, shiftID)
 }
 
 func (s *Service) LatestTeamleadPeriodInbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error) {
@@ -214,8 +232,26 @@ func (s *Service) ListTraderInboundItems(ctx context.Context, teamID int64, trad
 	return s.store.ListItems(ctx, run.ID)
 }
 
+func (s *Service) ListTraderInboundItemsByShift(ctx context.Context, teamID int64, shiftID int64) ([]Item, error) {
+	run, err := s.LatestTraderInboundByShift(ctx, teamID, shiftID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.store.ListItems(ctx, run.ID)
+}
+
 func (s *Service) ListTraderOutboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]Item, error) {
 	run, err := s.LatestTraderOutbound(ctx, teamID, traderID, shiftID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.store.ListItems(ctx, run.ID)
+}
+
+func (s *Service) ListTraderOutboundItemsByShift(ctx context.Context, teamID int64, shiftID int64) ([]Item, error) {
+	run, err := s.LatestTraderOutboundByShift(ctx, teamID, shiftID)
 	if err != nil {
 		return nil, err
 	}

@@ -4,11 +4,11 @@ import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { useAuth } from "@/app/auth";
-import { FormField } from "@/components/crm/form-field";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { useAuth } from "@/features/auth/model/auth";
+import { FormField } from "@/shared/ui/form-field";
+import { Button } from "@/shared/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
+import { Input } from "@/shared/ui/input";
 
 const loginSchema = z.object({
   login: z.string().min(1, "Введите логин"),

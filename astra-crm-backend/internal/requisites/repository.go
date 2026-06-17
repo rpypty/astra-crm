@@ -125,6 +125,54 @@ type AssignmentWorkRow struct {
 	ShiftRequisiteID      *int64
 }
 
+type RequisiteReport struct {
+	Summary RequisiteReportSummary
+	Shifts  []RequisiteReportShift
+}
+
+type RequisiteReportSummary struct {
+	ID                         int64
+	TeamID                     int64
+	Phone                      string
+	MethodType                 string
+	BankCode                   string
+	BankName                   string
+	Proxy                      *string
+	EmployeeComment            *string
+	HolderName                 *string
+	CardNumber                 *string
+	Status                     string
+	TotalInboundTurnoverMinor  int64
+	TotalOutboundTurnoverMinor int64
+	LastClosingBalanceMinor    int64
+	LatestStatus               string
+	LastActivityAt             *time.Time
+	LastShiftRequisiteID       *int64
+}
+
+type RequisiteReportShift struct {
+	ShiftRequisiteID      int64
+	ShiftID               int64
+	TeamID                int64
+	RequisiteID           int64
+	TraderID              int64
+	TraderLogin           string
+	ShiftStartedAt        time.Time
+	ShiftClosedAt         *time.Time
+	ShiftStatus           string
+	TakenAt               time.Time
+	ReleasedAt            *time.Time
+	RequisiteStatus       string
+	InboundTurnoverMinor  int64
+	OutboundTurnoverMinor int64
+	TargetTurnoverMinor   int64
+	ClosingBalanceMinor   int64
+	CardNumber            *string
+	HolderName            *string
+	AssignedForDate       *time.Time
+	AssignmentStatus      string
+}
+
 type txBeginner interface {
 	Begin(ctx context.Context) (pgx.Tx, error)
 }
@@ -393,6 +441,37 @@ func (r *Repository) ListActivity(ctx context.Context, teamID int64) ([]Assignme
 	}
 
 	return items, nil
+}
+
+func (r *Repository) Report(ctx context.Context, teamID int64, requisiteID int64) (RequisiteReport, error) {
+	summaryRow, err := r.queries.GetRequisiteReportSummary(ctx, db.GetRequisiteReportSummaryParams{
+		TeamID:      teamID,
+		RequisiteID: requisiteID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return RequisiteReport{}, ErrNotFound
+	}
+	if err != nil {
+		return RequisiteReport{}, err
+	}
+
+	shiftRows, err := r.queries.ListRequisiteReportShifts(ctx, db.ListRequisiteReportShiftsParams{
+		TeamID:      teamID,
+		RequisiteID: requisiteID,
+	})
+	if err != nil {
+		return RequisiteReport{}, err
+	}
+
+	shifts := make([]RequisiteReportShift, 0, len(shiftRows))
+	for _, row := range shiftRows {
+		shifts = append(shifts, fromReportShiftRow(row))
+	}
+
+	return RequisiteReport{
+		Summary: fromReportSummaryRow(summaryRow),
+		Shifts:  shifts,
+	}, nil
 }
 
 func (r *Repository) GetAssignment(ctx context.Context, teamID int64, assignmentID int64) (Assignment, error) {
@@ -726,6 +805,53 @@ func fromDBAssignmentEvent(row db.RequisiteAssignmentEvent) AssignmentEvent {
 		AfterJSON:    row.AfterJson,
 		Comment:      textPtr(row.Comment),
 		CreatedAt:    row.CreatedAt.Time,
+	}
+}
+
+func fromReportSummaryRow(row db.GetRequisiteReportSummaryRow) RequisiteReportSummary {
+	return RequisiteReportSummary{
+		ID:                         row.ID,
+		TeamID:                     row.TeamID,
+		Phone:                      row.Phone,
+		MethodType:                 row.MethodType,
+		BankCode:                   row.BankCode,
+		BankName:                   row.BankName,
+		Proxy:                      textPtr(row.Proxy),
+		EmployeeComment:            textPtr(row.EmployeeComment),
+		HolderName:                 textPtr(row.HolderName),
+		CardNumber:                 textPtr(row.CardNumber),
+		Status:                     row.Status,
+		TotalInboundTurnoverMinor:  row.TotalInboundTurnoverMinor,
+		TotalOutboundTurnoverMinor: row.TotalOutboundTurnoverMinor,
+		LastClosingBalanceMinor:    row.LastClosingBalanceMinor,
+		LatestStatus:               row.LatestStatus,
+		LastActivityAt:             timePtr(row.LastActivityAt),
+		LastShiftRequisiteID:       int64Ptr(row.LastShiftRequisiteID),
+	}
+}
+
+func fromReportShiftRow(row db.ListRequisiteReportShiftsRow) RequisiteReportShift {
+	return RequisiteReportShift{
+		ShiftRequisiteID:      row.ShiftRequisiteID,
+		ShiftID:               row.ShiftID,
+		TeamID:                row.TeamID,
+		RequisiteID:           row.RequisiteID,
+		TraderID:              row.TraderID,
+		TraderLogin:           row.TraderLogin,
+		ShiftStartedAt:        row.ShiftStartedAt.Time,
+		ShiftClosedAt:         timePtr(row.ShiftClosedAt),
+		ShiftStatus:           row.ShiftStatus,
+		TakenAt:               row.TakenAt.Time,
+		ReleasedAt:            timePtr(row.ReleasedAt),
+		RequisiteStatus:       row.RequisiteStatus,
+		InboundTurnoverMinor:  row.InboundTurnoverMinor,
+		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
+		TargetTurnoverMinor:   row.TargetTurnoverMinor,
+		ClosingBalanceMinor:   row.ClosingBalanceMinor,
+		CardNumber:            stringPtr(row.CardNumber),
+		HolderName:            stringPtr(row.HolderName),
+		AssignedForDate:       datePtr(row.AssignedForDate),
+		AssignmentStatus:      row.AssignmentStatus,
 	}
 }
 

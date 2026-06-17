@@ -74,6 +74,51 @@ export type RequisiteAssignmentWorkRow = {
   shiftRequisiteId?: number;
 };
 
+export type RequisiteReport = {
+  summary: RequisiteReportSummary;
+  shifts: RequisiteReportShift[];
+};
+
+export type RequisiteReportSummary = {
+  id: number;
+  phone: string;
+  methodType: "SBP" | "C2C";
+  bankCode: string;
+  bankName: string;
+  proxy: string;
+  employeeComment?: string;
+  holderName?: string;
+  cardNumber?: string;
+  status: "active" | "disabled" | "archived";
+  totalInboundTurnoverMinor: number;
+  totalOutboundTurnoverMinor: number;
+  lastClosingBalanceMinor: number;
+  latestStatus: string;
+  lastActivityAt?: string;
+  lastShiftRequisiteId?: number;
+};
+
+export type RequisiteReportShift = {
+  shiftRequisiteId: number;
+  shiftId: number;
+  traderId: number;
+  traderLogin: string;
+  shiftStartedAt: string;
+  shiftClosedAt?: string;
+  shiftStatus: "open" | "closing" | "closed" | "closed_with_discrepancy";
+  takenAt: string;
+  releasedAt?: string;
+  requisiteStatus: "active" | "worked" | "correction" | "released" | "blocked";
+  inboundTurnoverMinor: number;
+  outboundTurnoverMinor: number;
+  targetTurnoverMinor: number;
+  closingBalanceMinor: number;
+  cardNumber?: string;
+  holderName?: string;
+  assignedForDate?: string;
+  assignmentStatus: string;
+};
+
 export type RequisiteAssignmentEvent = {
   id: number;
   assignmentId: number;

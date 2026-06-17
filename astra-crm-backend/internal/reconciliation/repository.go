@@ -391,6 +391,41 @@ func (r *Repository) LatestTraderInbound(ctx context.Context, teamID int64, trad
 	return fromDBRun(run), nil
 }
 
+func (r *Repository) LatestTraderInboundByShift(ctx context.Context, teamID int64, shiftID int64) (Run, error) {
+	if r.db == nil {
+		return Run{}, ErrRepositoryNotConfigured
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Run{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	run, err := db.New(tx).LatestTraderInboundReconciliationRunByShift(ctx, db.LatestTraderInboundReconciliationRunByShiftParams{
+		TeamID:  teamID,
+		ShiftID: int8Value(&shiftID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, ErrRunNotFound
+	}
+	if err != nil {
+		return Run{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Run{}, err
+	}
+	committed = true
+
+	return fromDBRun(run), nil
+}
+
 func (r *Repository) LatestTraderOutbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (Run, error) {
 	if r.db == nil {
 		return Run{}, ErrRepositoryNotConfigured
@@ -411,6 +446,41 @@ func (r *Repository) LatestTraderOutbound(ctx context.Context, teamID int64, tra
 		TeamID:   teamID,
 		TraderID: int8Value(&traderID),
 		ShiftID:  int8Value(&shiftID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, ErrRunNotFound
+	}
+	if err != nil {
+		return Run{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Run{}, err
+	}
+	committed = true
+
+	return fromDBRun(run), nil
+}
+
+func (r *Repository) LatestTraderOutboundByShift(ctx context.Context, teamID int64, shiftID int64) (Run, error) {
+	if r.db == nil {
+		return Run{}, ErrRepositoryNotConfigured
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Run{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	run, err := db.New(tx).LatestTraderOutboundReconciliationRunByShift(ctx, db.LatestTraderOutboundReconciliationRunByShiftParams{
+		TeamID:  teamID,
+		ShiftID: int8Value(&shiftID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, ErrRunNotFound

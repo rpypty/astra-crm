@@ -1,10 +1,10 @@
 import { CalendarRange, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
-import type { PeriodFilter } from "@/lib/period-filter";
+import { Button } from "@/shared/ui/button";
+import { Card, CardContent } from "@/shared/ui/card";
+import { Input } from "@/shared/ui/input";
+import { cn } from "@/shared/lib/utils";
+import type { PeriodFilter } from "@/shared/lib/period-filter";
 
 type PeriodFilterBarProps = {
   value: PeriodFilter;

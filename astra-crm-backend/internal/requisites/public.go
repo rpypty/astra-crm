@@ -87,6 +87,54 @@ type PublicAssignmentEvent struct {
 	CreatedAt    time.Time `json:"createdAt"`
 }
 
+type PublicRequisiteReport struct {
+	Summary PublicRequisiteReportSummary `json:"summary"`
+	Shifts  []PublicRequisiteReportShift `json:"shifts"`
+}
+
+type PublicRequisiteReportSummary struct {
+	ID                         int64      `json:"id"`
+	TeamID                     int64      `json:"teamId"`
+	Phone                      string     `json:"phone"`
+	MethodType                 string     `json:"methodType"`
+	BankCode                   string     `json:"bankCode"`
+	BankName                   string     `json:"bankName"`
+	Proxy                      *string    `json:"proxy,omitempty"`
+	EmployeeComment            *string    `json:"employeeComment,omitempty"`
+	HolderName                 *string    `json:"holderName,omitempty"`
+	CardNumber                 *string    `json:"cardNumber,omitempty"`
+	Status                     string     `json:"status"`
+	TotalInboundTurnoverMinor  int64      `json:"totalInboundTurnoverMinor"`
+	TotalOutboundTurnoverMinor int64      `json:"totalOutboundTurnoverMinor"`
+	LastClosingBalanceMinor    int64      `json:"lastClosingBalanceMinor"`
+	LatestStatus               string     `json:"latestStatus"`
+	LastActivityAt             *time.Time `json:"lastActivityAt,omitempty"`
+	LastShiftRequisiteID       *int64     `json:"lastShiftRequisiteId,omitempty"`
+}
+
+type PublicRequisiteReportShift struct {
+	ShiftRequisiteID      int64      `json:"shiftRequisiteId"`
+	ShiftID               int64      `json:"shiftId"`
+	TeamID                int64      `json:"teamId"`
+	RequisiteID           int64      `json:"requisiteId"`
+	TraderID              int64      `json:"traderId"`
+	TraderLogin           string     `json:"traderLogin"`
+	ShiftStartedAt        time.Time  `json:"shiftStartedAt"`
+	ShiftClosedAt         *time.Time `json:"shiftClosedAt,omitempty"`
+	ShiftStatus           string     `json:"shiftStatus"`
+	TakenAt               time.Time  `json:"takenAt"`
+	ReleasedAt            *time.Time `json:"releasedAt,omitempty"`
+	RequisiteStatus       string     `json:"requisiteStatus"`
+	InboundTurnoverMinor  int64      `json:"inboundTurnoverMinor"`
+	OutboundTurnoverMinor int64      `json:"outboundTurnoverMinor"`
+	TargetTurnoverMinor   int64      `json:"targetTurnoverMinor"`
+	ClosingBalanceMinor   int64      `json:"closingBalanceMinor"`
+	CardNumber            *string    `json:"cardNumber,omitempty"`
+	HolderName            *string    `json:"holderName,omitempty"`
+	AssignedForDate       *time.Time `json:"assignedForDate,omitempty"`
+	AssignmentStatus      string     `json:"assignmentStatus"`
+}
+
 type JSONValue = json.RawMessage
 
 func rawJSONValue(value []byte) JSONValue {
@@ -217,6 +265,69 @@ func PublicAssignmentEvents(items []AssignmentEvent) []PublicAssignmentEvent {
 	result := make([]PublicAssignmentEvent, 0, len(items))
 	for _, item := range items {
 		result = append(result, PublicAssignmentEventFromDomain(item))
+	}
+
+	return result
+}
+
+func PublicReport(report RequisiteReport) PublicRequisiteReport {
+	return PublicRequisiteReport{
+		Summary: PublicReportSummary(report.Summary),
+		Shifts:  PublicReportShifts(report.Shifts),
+	}
+}
+
+func PublicReportSummary(summary RequisiteReportSummary) PublicRequisiteReportSummary {
+	return PublicRequisiteReportSummary{
+		ID:                         summary.ID,
+		TeamID:                     summary.TeamID,
+		Phone:                      summary.Phone,
+		MethodType:                 summary.MethodType,
+		BankCode:                   summary.BankCode,
+		BankName:                   summary.BankName,
+		Proxy:                      summary.Proxy,
+		EmployeeComment:            summary.EmployeeComment,
+		HolderName:                 summary.HolderName,
+		CardNumber:                 summary.CardNumber,
+		Status:                     summary.Status,
+		TotalInboundTurnoverMinor:  summary.TotalInboundTurnoverMinor,
+		TotalOutboundTurnoverMinor: summary.TotalOutboundTurnoverMinor,
+		LastClosingBalanceMinor:    summary.LastClosingBalanceMinor,
+		LatestStatus:               summary.LatestStatus,
+		LastActivityAt:             summary.LastActivityAt,
+		LastShiftRequisiteID:       summary.LastShiftRequisiteID,
+	}
+}
+
+func PublicReportShift(item RequisiteReportShift) PublicRequisiteReportShift {
+	return PublicRequisiteReportShift{
+		ShiftRequisiteID:      item.ShiftRequisiteID,
+		ShiftID:               item.ShiftID,
+		TeamID:                item.TeamID,
+		RequisiteID:           item.RequisiteID,
+		TraderID:              item.TraderID,
+		TraderLogin:           item.TraderLogin,
+		ShiftStartedAt:        item.ShiftStartedAt,
+		ShiftClosedAt:         item.ShiftClosedAt,
+		ShiftStatus:           item.ShiftStatus,
+		TakenAt:               item.TakenAt,
+		ReleasedAt:            item.ReleasedAt,
+		RequisiteStatus:       item.RequisiteStatus,
+		InboundTurnoverMinor:  item.InboundTurnoverMinor,
+		OutboundTurnoverMinor: item.OutboundTurnoverMinor,
+		TargetTurnoverMinor:   item.TargetTurnoverMinor,
+		ClosingBalanceMinor:   item.ClosingBalanceMinor,
+		CardNumber:            item.CardNumber,
+		HolderName:            item.HolderName,
+		AssignedForDate:       item.AssignedForDate,
+		AssignmentStatus:      item.AssignmentStatus,
+	}
+}
+
+func PublicReportShifts(items []RequisiteReportShift) []PublicRequisiteReportShift {
+	result := make([]PublicRequisiteReportShift, 0, len(items))
+	for _, item := range items {
+		result = append(result, PublicReportShift(item))
 	}
 
 	return result

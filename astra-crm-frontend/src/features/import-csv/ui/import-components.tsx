@@ -4,11 +4,11 @@ import { AlertTriangle, Upload } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-import { FormField } from "@/components/crm/form-field";
-import { MoneyCell } from "@/components/crm/money-cell";
-import { StatusBadge } from "@/components/crm/status-badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { FormField } from "@/shared/ui/form-field";
+import { MoneyCell } from "@/entities/order/ui/money-cell";
+import { StatusBadge } from "@/entities/status/ui/status-badge";
+import { Button } from "@/shared/ui/button";
+import { Card, CardContent } from "@/shared/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -16,12 +16,12 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import type { ImportResult, OrderDirection, ReconciliationSummary } from "@/lib/domain";
-import { api } from "@/lib/api";
-import { formatMoneyMinor } from "@/lib/utils";
+} from "@/shared/ui/dialog";
+import { Input } from "@/shared/ui/input";
+import { Textarea } from "@/shared/ui/textarea";
+import type { ImportResult, OrderDirection, ReconciliationSummary } from "@/shared/model/domain";
+import { api } from "@/shared/api/api";
+import { formatMoneyMinor } from "@/shared/lib/utils";
 
 const acceptSchema = z.object({
   comment: z.string().trim().min(1, "Комментарий обязателен для подтверждения расхождения"),

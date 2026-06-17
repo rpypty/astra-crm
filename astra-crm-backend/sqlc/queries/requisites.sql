@@ -276,6 +276,7 @@ JOIN banks b ON b.code = r.bank_code
 JOIN users u ON u.id = ra.trader_id
 LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = sqlc.arg(team_id)
+  AND ra.status IN ('planned', 'assigned')
 ORDER BY ra.assigned_for_date DESC, ra.updated_at DESC, ra.id DESC;
 
 -- name: ListTeamleadRequisiteActivity :many
@@ -311,3 +312,66 @@ JOIN users u ON u.id = ra.trader_id
 LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = sqlc.arg(team_id)
 ORDER BY COALESCE(ra.completed_at, ra.started_at, ra.assigned_at) DESC, ra.id DESC;
+
+-- name: GetRequisiteReportSummary :one
+SELECT
+    r.id,
+    r.team_id,
+    r.phone,
+    r.method_type,
+    r.bank_code,
+    b.name AS bank_name,
+    r.proxy,
+    r.employee_comment,
+    r.holder_name,
+    r.card_number,
+    r.status,
+    r.total_inbound_turnover_minor,
+    r.total_outbound_turnover_minor,
+    r.last_closing_balance_minor,
+    COALESCE(latest_assignment.status, r.last_activity_status, '') AS latest_status,
+    r.last_activity_at,
+    r.last_shift_requisite_id
+FROM requisites r
+JOIN banks b ON b.code = r.bank_code
+LEFT JOIN LATERAL (
+    SELECT ra.status
+    FROM requisite_assignments ra
+    WHERE ra.team_id = r.team_id
+      AND ra.requisite_id = r.id
+    ORDER BY COALESCE(ra.completed_at, ra.cancelled_at, ra.unassigned_at, ra.updated_at, ra.assigned_at) DESC, ra.id DESC
+    LIMIT 1
+) latest_assignment ON true
+WHERE r.team_id = sqlc.arg(team_id)
+  AND r.id = sqlc.arg(requisite_id)
+  AND r.deleted_at IS NULL;
+
+-- name: ListRequisiteReportShifts :many
+SELECT
+    sr.id AS shift_requisite_id,
+    sr.shift_id,
+    sr.team_id,
+    sr.requisite_id,
+    sr.trader_id,
+    u.login AS trader_login,
+    ts.started_at AS shift_started_at,
+    ts.closed_at AS shift_closed_at,
+    ts.status AS shift_status,
+    sr.taken_at,
+    sr.released_at,
+    sr.status AS requisite_status,
+    sr.inbound_turnover_minor,
+    sr.outbound_turnover_minor,
+    COALESCE(ra.target_turnover_minor, 0) AS target_turnover_minor,
+    sr.closing_balance_minor,
+    sr.card_number,
+    sr.holder_name,
+    ra.assigned_for_date,
+    COALESCE(ra.status, '') AS assignment_status
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+JOIN users u ON u.id = sr.trader_id
+LEFT JOIN requisite_assignments ra ON ra.id = sr.assignment_id
+WHERE sr.team_id = sqlc.arg(team_id)
+  AND sr.requisite_id = sqlc.arg(requisite_id)
+ORDER BY COALESCE(ra.assigned_for_date, sr.taken_at::date) ASC, sr.taken_at ASC, sr.id ASC;
