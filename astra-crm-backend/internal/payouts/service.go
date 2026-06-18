@@ -114,8 +114,8 @@ func (s *Service) GetOrder(ctx context.Context, teamID int64, traderID int64, pa
 
 func (s *Service) CreateOrder(ctx context.Context, params CreateOrderParams) (Order, error) {
 	destinationBank := strings.TrimSpace(params.DestinationBank)
-	destinationRequisite := strings.TrimSpace(params.DestinationRequisite)
-	if params.ActorID <= 0 || params.TeamID <= 0 || params.TraderID <= 0 || destinationBank == "" || destinationRequisite == "" || params.AmountMinor <= 0 {
+	destinationRequisite, ok := normalizeDestinationRequisite(params.DestinationRequisite)
+	if params.ActorID <= 0 || params.TeamID <= 0 || params.TraderID <= 0 || destinationBank == "" || !ok || params.AmountMinor <= 0 {
 		return Order{}, ErrInvalidInput
 	}
 
@@ -163,8 +163,8 @@ func (s *Service) PatchOrder(ctx context.Context, params PatchOrderParams) (Orde
 		next.DestinationBank = destinationBank
 	}
 	if params.DestinationRequisite != nil {
-		destinationRequisite := strings.TrimSpace(*params.DestinationRequisite)
-		if destinationRequisite == "" {
+		destinationRequisite, ok := normalizeDestinationRequisite(*params.DestinationRequisite)
+		if !ok {
 			return Order{}, ErrInvalidInput
 		}
 		next.DestinationRequisite = destinationRequisite
@@ -350,4 +350,34 @@ func cleanOptionalString(value *string) *string {
 	}
 
 	return &trimmed
+}
+
+func normalizeDestinationRequisite(value string) (string, bool) {
+	digits := digitsOnly(value)
+	if len(digits) == 16 {
+		return digits, true
+	}
+	if len(digits) == 10 {
+		return "7" + digits, true
+	}
+	if len(digits) == 11 && digits[0] == '8' {
+		return "7" + digits[1:], true
+	}
+	if len(digits) == 11 && digits[0] == '7' {
+		return digits, true
+	}
+
+	return "", false
+}
+
+func digitsOnly(value string) string {
+	var builder strings.Builder
+	builder.Grow(len(value))
+	for _, char := range value {
+		if char >= '0' && char <= '9' {
+			builder.WriteRune(char)
+		}
+	}
+
+	return builder.String()
 }

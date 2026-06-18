@@ -55,6 +55,42 @@ func TestServiceCreateOrderRejectsInvalidAmount(t *testing.T) {
 	}
 }
 
+func TestServiceCreateOrderAcceptsCardDestination(t *testing.T) {
+	store := &fakeStore{}
+	service := NewService(store, nil)
+
+	_, err := service.CreateOrder(context.Background(), CreateOrderParams{
+		ActorID:              1,
+		TeamID:               2,
+		TraderID:             3,
+		DestinationBank:      "Tinkoff",
+		DestinationRequisite: "2200 7001 2345 6789",
+		AmountMinor:          100000,
+	})
+	if err != nil {
+		t.Fatalf("CreateOrder() error = %v", err)
+	}
+	if store.createRecord.DestinationRequisite != "2200700123456789" {
+		t.Fatalf("destination requisite = %q, want normalized card", store.createRecord.DestinationRequisite)
+	}
+}
+
+func TestServiceCreateOrderRejectsInvalidDestination(t *testing.T) {
+	service := NewService(&fakeStore{}, nil)
+
+	_, err := service.CreateOrder(context.Background(), CreateOrderParams{
+		ActorID:              1,
+		TeamID:               2,
+		TraderID:             3,
+		DestinationBank:      "Tinkoff",
+		DestinationRequisite: "12345",
+		AmountMinor:          100000,
+	})
+	if err != ErrInvalidInput {
+		t.Fatalf("CreateOrder() error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestServiceAddTransferAuditsMutation(t *testing.T) {
 	store := &fakeStore{}
 	auditService := &fakeAuditService{}

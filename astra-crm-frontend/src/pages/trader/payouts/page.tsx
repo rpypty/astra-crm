@@ -38,7 +38,8 @@ import { queryKeys } from "@/shared/api/query-keys";
 import {
   formatMoneyMinor,
   formatRussianPhone,
-  isValidRussianPhone,
+  cardDigits,
+  formatCardNumber,
   normalizeRussianPhone,
   parseMoneyToMinor,
 } from "@/shared/lib/utils";
@@ -46,7 +47,7 @@ import { MetricCard } from "@/shared/ui/metric-card";
 
 const payoutSchema = z.object({
   destinationBank: z.string().min(1, "Выберите банк"),
-  destinationRequisite: z.string().min(1, "Введите номер телефона").refine(isValidRussianPhone, "Введите корректный номер телефона"),
+  destinationRequisite: z.string().min(1, "Введите телефон или карту").refine(isValidPayoutDestination, "Введите корректный телефон или карту из 16 цифр"),
   amount: z.string().min(1, "Введите сумму").regex(/^\d+$/, "Введите сумму цифрами").refine((value) => parseMoneyToMinor(value) > 0, "Сумма должна быть больше 0"),
 });
 
@@ -76,6 +77,29 @@ function formatLiveRussianPhone(value: string) {
   if (normalizedDigits.length <= 6) return `+7 (${code}) ${first}`;
   if (normalizedDigits.length <= 8) return `+7 (${code}) ${first}-${second}`;
   return `+7 (${code}) ${first}-${second}-${third}`;
+}
+
+function isValidPayoutDestination(value: string) {
+  const digits = cardDigits(value);
+  if (digits.length === 16) return true;
+  return /^7\d{10}$/.test(digits) || (digits.length === 11 && digits.startsWith("8")) || digits.length === 10;
+}
+
+function normalizePayoutDestination(value: string) {
+  const digits = cardDigits(value);
+  if (digits.length === 16) return digits;
+  return normalizeRussianPhone(value);
+}
+
+function formatLivePayoutDestination(value: string) {
+  const digits = cardDigits(value);
+  const looksLikeCard = digits.length > 11 || (digits.length > 0 && !["7", "8", "9"].includes(digits[0]));
+  if (looksLikeCard) return formatCardNumber(digits.slice(0, 16));
+  return formatLiveRussianPhone(value);
+}
+
+function formatPayoutDestination(value: string) {
+  return cardDigits(value).length === 16 ? formatCardNumber(value) : formatRussianPhone(value);
 }
 
 function errorMessage(error: unknown) {
@@ -144,8 +168,8 @@ export function TraderPayoutsPage() {
       { accessorKey: "destinationBank", header: "Банк" },
       {
         accessorKey: "destinationRequisite",
-        header: "Телефон",
-        cell: ({ row }) => <span className="tabular-nums">{formatRussianPhone(row.original.destinationRequisite)}</span>,
+        header: "Реквизит",
+        cell: ({ row }) => <span className="tabular-nums">{formatPayoutDestination(row.original.destinationRequisite)}</span>,
       },
       { accessorKey: "amountMinor", header: () => <div className="text-right">Сумма</div>, cell: ({ row }) => <MoneyCell valueMinor={row.original.amountMinor} /> },
       { accessorKey: "paidMinor", header: () => <div className="text-right">Оплачено</div>, cell: ({ row }) => <MoneyCell valueMinor={row.original.paidMinor} /> },
@@ -174,8 +198,8 @@ export function TraderPayoutsPage() {
       { accessorKey: "destinationBank", header: "Банк" },
       {
         accessorKey: "destinationRequisite",
-        header: "Телефон",
-        cell: ({ row }) => <span className="tabular-nums">{formatRussianPhone(row.original.destinationRequisite)}</span>,
+        header: "Реквизит",
+        cell: ({ row }) => <span className="tabular-nums">{formatPayoutDestination(row.original.destinationRequisite)}</span>,
       },
       { accessorKey: "amountMinor", header: () => <div className="text-right">Сумма</div>, cell: ({ row }) => <MoneyCell valueMinor={row.original.amountMinor} /> },
       { accessorKey: "paidMinor", header: () => <div className="text-right">Оплачено</div>, cell: ({ row }) => <MoneyCell valueMinor={row.original.paidMinor} /> },
@@ -348,7 +372,7 @@ function CreatePayoutDialog({
             try {
               await onSubmit({
                 destinationBank: values.destinationBank,
-                destinationRequisite: normalizeRussianPhone(values.destinationRequisite),
+                destinationRequisite: normalizePayoutDestination(values.destinationRequisite),
                 amountMinor: parseMoneyToMinor(values.amount),
               });
               closeDialog();
@@ -360,7 +384,6 @@ function CreatePayoutDialog({
           <FormField
             label="Банк получателя"
             error={form.formState.errors.destinationBank?.message}
-            labelInfo="Банк реквизита получателя, на который нужно отправить выплату."
             help="Это банк получателя из выплатного ордера, а не наш реквизит-источник."
           >
             <SearchableSelect
@@ -374,19 +397,18 @@ function CreatePayoutDialog({
             />
           </FormField>
           <FormField
-            label="Телефон получателя"
+            label="Реквизит получателя"
             error={form.formState.errors.destinationRequisite?.message}
-            labelInfo="Телефон или реквизит назначения, куда должна уйти выплата."
-            help="Введите реквизит получателя из выплатного ордера. Этот номер не используется как наш источник списания."
+            help="Введите телефон получателя или номер карты из 16 цифр. Этот реквизит не используется как наш источник списания."
           >
             <Input
               {...destinationRequisiteField}
               value={destinationRequisiteValue}
               inputMode="numeric"
               autoComplete="tel"
-              placeholder="+7 (999) 123-45-67"
+              placeholder="+7 (999) 123-45-67 или 0000 0000 0000 0000"
               onChange={(event) =>
-                form.setValue("destinationRequisite", formatLiveRussianPhone(event.target.value), {
+                form.setValue("destinationRequisite", formatLivePayoutDestination(event.target.value), {
                   shouldDirty: true,
                   shouldValidate: true,
                 })
@@ -396,7 +418,6 @@ function CreatePayoutDialog({
           <FormField
             label="Сумма выплаты"
             error={form.formState.errors.amount?.message}
-            labelInfo="Полная сумма, которую нужно отправить получателю по этой выплате."
             help="Если трейдер платит частями, отдельные переводы добавляются в деталях выплаты после создания."
           >
             <Input
@@ -448,7 +469,7 @@ function EditPayoutDialog({
 
     form.reset({
       destinationBank: payout.destinationBank,
-      destinationRequisite: formatLiveRussianPhone(payout.destinationRequisite),
+      destinationRequisite: formatLivePayoutDestination(payout.destinationRequisite),
       amount: String(Math.trunc(payout.amountMinor / 100)),
     });
   }, [form, payout]);
@@ -476,7 +497,7 @@ function EditPayoutDialog({
                 await onSubmit({
                   id: payout.id,
                   destinationBank: values.destinationBank,
-                  destinationRequisite: normalizeRussianPhone(values.destinationRequisite),
+                  destinationRequisite: normalizePayoutDestination(values.destinationRequisite),
                   amountMinor,
                 });
               } catch {
@@ -500,18 +521,18 @@ function EditPayoutDialog({
               />
             </FormField>
             <FormField
-              label="Телефон получателя"
+              label="Реквизит получателя"
               error={form.formState.errors.destinationRequisite?.message}
-              help="Реквизит назначения, куда должна уйти выплата."
+              help="Телефон получателя или номер карты из 16 цифр."
             >
               <Input
                 {...destinationRequisiteField}
                 value={destinationRequisiteValue}
                 inputMode="numeric"
                 autoComplete="tel"
-                placeholder="+7 (999) 123-45-67"
+                placeholder="+7 (999) 123-45-67 или 0000 0000 0000 0000"
                 onChange={(event) =>
-                  form.setValue("destinationRequisite", formatLiveRussianPhone(event.target.value), {
+                  form.setValue("destinationRequisite", formatLivePayoutDestination(event.target.value), {
                     shouldDirty: true,
                     shouldValidate: true,
                   })
@@ -569,7 +590,7 @@ function DeletePayoutDialog({
         {payout ? (
           <div className="rounded-md border border-border bg-slate-50 p-3 text-sm">
             <div className="font-medium">{payout.destinationBank}</div>
-            <div className="text-muted-foreground">{formatRussianPhone(payout.destinationRequisite)}</div>
+            <div className="text-muted-foreground">{formatPayoutDestination(payout.destinationRequisite)}</div>
             <div className="mt-2 font-semibold">{formatMoneyMinor(payout.amountMinor)}</div>
           </div>
         ) : null}
