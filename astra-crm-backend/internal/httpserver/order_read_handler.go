@@ -15,7 +15,7 @@ type OrderReadService interface {
 	ListTraderOrders(ctx context.Context, teamID int64, traderID int64, direction string, filters orders.Filters) (orders.ListResult, error)
 	ListTeamleadOrders(ctx context.Context, teamID int64, direction string, filters orders.Filters) (orders.ListResult, error)
 	TraderDashboard(ctx context.Context, teamID int64, traderID int64, direction string, filters orders.Filters) (orders.Dashboard, error)
-	TeamleadDashboard(ctx context.Context, teamID int64, direction string, filters orders.Filters) (orders.Dashboard, error)
+	TeamleadDashboard(ctx context.Context, teamID int64, actorID int64, direction string, filters orders.Filters) (orders.Dashboard, error)
 }
 
 type OrderReadHandler struct {
@@ -143,7 +143,7 @@ func (h *OrderReadHandler) teamleadDashboard(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	dashboard, err := h.service.TeamleadDashboard(r.Context(), actor.TeamID, direction, filters)
+	dashboard, err := h.service.TeamleadDashboard(r.Context(), actor.TeamID, actor.ID, direction, filters)
 	if err != nil {
 		RespondError(w, mapOrderReadError(err))
 		return

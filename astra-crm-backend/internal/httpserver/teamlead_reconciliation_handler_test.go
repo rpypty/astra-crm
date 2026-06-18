@@ -247,7 +247,7 @@ type fakeTeamleadReconciliationService struct {
 	shiftOutboundItemsID     int64
 }
 
-func (s *fakeTeamleadReconciliationService) LatestTeamleadInbound(ctx context.Context, teamID int64) (reconciliation.Run, error) {
+func (s *fakeTeamleadReconciliationService) LatestTeamleadInbound(ctx context.Context, teamID int64, actorID int64) (reconciliation.Run, error) {
 	s.latestTeamID = teamID
 	if s.latestErr != nil {
 		return reconciliation.Run{}, s.latestErr
@@ -255,7 +255,7 @@ func (s *fakeTeamleadReconciliationService) LatestTeamleadInbound(ctx context.Co
 	return s.latestRun, nil
 }
 
-func (s *fakeTeamleadReconciliationService) LatestTeamleadOutbound(ctx context.Context, teamID int64) (reconciliation.Run, error) {
+func (s *fakeTeamleadReconciliationService) LatestTeamleadOutbound(ctx context.Context, teamID int64, actorID int64) (reconciliation.Run, error) {
 	s.latestOutboundTeamID = teamID
 	if s.latestOutboundErr != nil {
 		return reconciliation.Run{}, s.latestOutboundErr
@@ -272,7 +272,7 @@ func (s *fakeTeamleadReconciliationService) RecalculateTeamleadCurrent(ctx conte
 	return s.startRun, nil
 }
 
-func (s *fakeTeamleadReconciliationService) ListTeamleadInboundItems(ctx context.Context, teamID int64) ([]reconciliation.Item, error) {
+func (s *fakeTeamleadReconciliationService) ListTeamleadInboundItems(ctx context.Context, teamID int64, actorID int64) ([]reconciliation.Item, error) {
 	s.itemsTeamID = teamID
 	if s.itemsErr != nil {
 		return nil, s.itemsErr
@@ -280,7 +280,7 @@ func (s *fakeTeamleadReconciliationService) ListTeamleadInboundItems(ctx context
 	return s.items, nil
 }
 
-func (s *fakeTeamleadReconciliationService) ListTeamleadOutboundItems(ctx context.Context, teamID int64) ([]reconciliation.Item, error) {
+func (s *fakeTeamleadReconciliationService) ListTeamleadOutboundItems(ctx context.Context, teamID int64, actorID int64) ([]reconciliation.Item, error) {
 	s.outboundItemsTeamID = teamID
 	if s.itemsErr != nil {
 		return nil, s.itemsErr

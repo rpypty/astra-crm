@@ -550,7 +550,7 @@ func (s *fakeStore) LatestTeamleadPeriodOutbound(ctx context.Context, teamID int
 	}, nil
 }
 
-func (s *fakeStore) LatestTeamleadInbound(ctx context.Context, teamID int64) (Run, error) {
+func (s *fakeStore) LatestTeamleadInbound(ctx context.Context, teamID int64, actorID int64) (Run, error) {
 	return Run{
 		ID:        71,
 		TeamID:    teamID,
@@ -561,7 +561,7 @@ func (s *fakeStore) LatestTeamleadInbound(ctx context.Context, teamID int64) (Ru
 	}, nil
 }
 
-func (s *fakeStore) LatestTeamleadOutbound(ctx context.Context, teamID int64) (Run, error) {
+func (s *fakeStore) LatestTeamleadOutbound(ctx context.Context, teamID int64, actorID int64) (Run, error) {
 	return Run{
 		ID:        81,
 		TeamID:    teamID,
@@ -572,11 +572,11 @@ func (s *fakeStore) LatestTeamleadOutbound(ctx context.Context, teamID int64) (R
 	}, nil
 }
 
-func (s *fakeStore) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, direction string, limit int32) ([]Run, error) {
+func (s *fakeStore) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, actorID int64, direction string, limit int32) ([]Run, error) {
 	return s.teamleadCurrentRuns, nil
 }
 
-func (s *fakeStore) GetTeamleadCurrentRun(ctx context.Context, teamID int64, direction string, runID int64) (Run, error) {
+func (s *fakeStore) GetTeamleadCurrentRun(ctx context.Context, teamID int64, actorID int64, direction string, runID int64) (Run, error) {
 	return s.teamleadCurrentRun, nil
 }
 

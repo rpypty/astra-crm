@@ -784,10 +784,16 @@ LIMIT 1;
 -- name: LatestTeamleadInboundReconciliationRun :one
 SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
 FROM reconciliation_runs
-WHERE team_id = sqlc.arg(team_id)
-  AND type = 'teamlead_period_inbound'
-  AND accounting_period_id IS NULL
-ORDER BY created_at DESC, id DESC
+WHERE reconciliation_runs.team_id = sqlc.arg(team_id)
+  AND reconciliation_runs.type = 'teamlead_period_inbound'
+  AND reconciliation_runs.accounting_period_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = reconciliation_runs.import_batch_id
+        AND ib.uploaded_by = sqlc.arg(uploaded_by)
+  )
+ORDER BY reconciliation_runs.created_at DESC, reconciliation_runs.id DESC
 LIMIT 1;
 
 -- name: CalculateTeamleadPeriodOutboundSummary :one
@@ -1050,34 +1056,52 @@ LIMIT 1;
 -- name: LatestTeamleadOutboundReconciliationRun :one
 SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
 FROM reconciliation_runs
-WHERE team_id = sqlc.arg(team_id)
-  AND type = 'teamlead_period_outbound'
-  AND accounting_period_id IS NULL
-ORDER BY created_at DESC, id DESC
+WHERE reconciliation_runs.team_id = sqlc.arg(team_id)
+  AND reconciliation_runs.type = 'teamlead_period_outbound'
+  AND reconciliation_runs.accounting_period_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = reconciliation_runs.import_batch_id
+        AND ib.uploaded_by = sqlc.arg(uploaded_by)
+  )
+ORDER BY reconciliation_runs.created_at DESC, reconciliation_runs.id DESC
 LIMIT 1;
 
 -- name: ListTeamleadCurrentReconciliationRuns :many
 SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
 FROM reconciliation_runs
-WHERE team_id = sqlc.arg(team_id)
-  AND type = CASE
+WHERE reconciliation_runs.team_id = sqlc.arg(team_id)
+  AND reconciliation_runs.type = CASE
       WHEN sqlc.arg(direction)::text = 'inbound' THEN 'teamlead_period_inbound'
       ELSE 'teamlead_period_outbound'
   END
-  AND accounting_period_id IS NULL
-ORDER BY created_at DESC, id DESC
+  AND reconciliation_runs.accounting_period_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = reconciliation_runs.import_batch_id
+        AND ib.uploaded_by = sqlc.arg(uploaded_by)
+  )
+ORDER BY reconciliation_runs.created_at DESC, reconciliation_runs.id DESC
 LIMIT sqlc.arg(limit_count);
 
 -- name: GetTeamleadCurrentReconciliationRun :one
 SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
 FROM reconciliation_runs
-WHERE id = sqlc.arg(run_id)
-  AND team_id = sqlc.arg(team_id)
-  AND type = CASE
+WHERE reconciliation_runs.id = sqlc.arg(run_id)
+  AND reconciliation_runs.team_id = sqlc.arg(team_id)
+  AND reconciliation_runs.type = CASE
       WHEN sqlc.arg(direction)::text = 'inbound' THEN 'teamlead_period_inbound'
       ELSE 'teamlead_period_outbound'
   END
-  AND accounting_period_id IS NULL
+  AND reconciliation_runs.accounting_period_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = reconciliation_runs.import_batch_id
+        AND ib.uploaded_by = sqlc.arg(uploaded_by)
+  )
 LIMIT 1;
 
 -- name: LatestActiveTeamleadCurrentImportBatch :one
@@ -1087,6 +1111,7 @@ WHERE team_id = sqlc.arg(team_id)
   AND scope_type = 'teamlead_period'
   AND accounting_period_id IS NULL
   AND direction = sqlc.arg(direction)
+  AND uploaded_by = sqlc.arg(uploaded_by)
   AND status IN ('applied', 'reconciled')
   AND superseded_by_batch_id IS NULL
 ORDER BY applied_at DESC NULLS LAST, id DESC
@@ -1100,6 +1125,7 @@ WITH latest_import AS (
       AND ib.scope_type = 'teamlead_period'
       AND ib.accounting_period_id IS NULL
       AND ib.direction = sqlc.arg(direction)
+      AND ib.uploaded_by = sqlc.arg(uploaded_by)
       AND ib.status IN ('applied', 'reconciled')
       AND ib.superseded_by_batch_id IS NULL
     ORDER BY ib.applied_at DESC NULLS LAST, ib.id DESC
@@ -1342,11 +1368,17 @@ SET status = 'accepted_with_comment',
     comment = sqlc.arg(comment),
     confirmed_by = sqlc.arg(confirmed_by),
     confirmed_at = now()
-WHERE id = sqlc.arg(run_id)
-  AND team_id = sqlc.arg(team_id)
-  AND type IN ('teamlead_period_inbound', 'teamlead_period_outbound')
-  AND accounting_period_id IS NULL
-  AND status = 'mismatch'
+WHERE reconciliation_runs.id = sqlc.arg(run_id)
+  AND reconciliation_runs.team_id = sqlc.arg(team_id)
+  AND reconciliation_runs.type IN ('teamlead_period_inbound', 'teamlead_period_outbound')
+  AND reconciliation_runs.accounting_period_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = reconciliation_runs.import_batch_id
+        AND ib.uploaded_by = sqlc.arg(actor_id)
+  )
+  AND reconciliation_runs.status = 'mismatch'
   AND btrim(sqlc.arg(comment)) <> ''
 RETURNING id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at;
 

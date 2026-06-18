@@ -11,14 +11,14 @@ import (
 )
 
 type TeamleadReconciliationService interface {
-	LatestTeamleadInbound(ctx context.Context, teamID int64) (reconciliation.Run, error)
-	LatestTeamleadOutbound(ctx context.Context, teamID int64) (reconciliation.Run, error)
+	LatestTeamleadInbound(ctx context.Context, teamID int64, actorID int64) (reconciliation.Run, error)
+	LatestTeamleadOutbound(ctx context.Context, teamID int64, actorID int64) (reconciliation.Run, error)
 	RecalculateTeamleadCurrent(ctx context.Context, params reconciliation.RecalculateTeamleadCurrentParams) (reconciliation.Run, error)
 	ListTeamleadCurrentRuns(ctx context.Context, params reconciliation.ListTeamleadCurrentRunsParams) ([]reconciliation.Run, error)
 	GetTeamleadCurrentRun(ctx context.Context, params reconciliation.GetTeamleadCurrentRunParams) (reconciliation.Run, error)
 	ListTeamleadCurrentItems(ctx context.Context, params reconciliation.GetTeamleadCurrentRunParams) ([]reconciliation.Item, error)
-	ListTeamleadInboundItems(ctx context.Context, teamID int64) ([]reconciliation.Item, error)
-	ListTeamleadOutboundItems(ctx context.Context, teamID int64) ([]reconciliation.Item, error)
+	ListTeamleadInboundItems(ctx context.Context, teamID int64, actorID int64) ([]reconciliation.Item, error)
+	ListTeamleadOutboundItems(ctx context.Context, teamID int64, actorID int64) ([]reconciliation.Item, error)
 	AcceptTeamleadCurrent(ctx context.Context, params reconciliation.AcceptTeamleadCurrentParams) (reconciliation.Run, error)
 	LatestTraderInboundByShift(ctx context.Context, teamID int64, shiftID int64) (reconciliation.Run, error)
 	LatestTraderOutboundByShift(ctx context.Context, teamID int64, shiftID int64) (reconciliation.Run, error)
@@ -119,9 +119,9 @@ func (h *TeamleadReconciliationHandler) latest(w http.ResponseWriter, r *http.Re
 	)
 	switch direction {
 	case "inbound":
-		run, err = h.service.LatestTeamleadInbound(r.Context(), actor.TeamID)
+		run, err = h.service.LatestTeamleadInbound(r.Context(), actor.TeamID, actor.ID)
 	case "outbound":
-		run, err = h.service.LatestTeamleadOutbound(r.Context(), actor.TeamID)
+		run, err = h.service.LatestTeamleadOutbound(r.Context(), actor.TeamID, actor.ID)
 	default:
 		RespondError(w, NotFoundError())
 		return
@@ -149,6 +149,7 @@ func (h *TeamleadReconciliationHandler) start(w http.ResponseWriter, r *http.Req
 
 	run, err := h.service.RecalculateTeamleadCurrent(r.Context(), reconciliation.RecalculateTeamleadCurrentParams{
 		TeamID:    actor.TeamID,
+		ActorID:   actor.ID,
 		Direction: direction,
 	})
 	if err != nil {
@@ -178,9 +179,9 @@ func (h *TeamleadReconciliationHandler) currentItems(w http.ResponseWriter, r *h
 	)
 	switch direction {
 	case "inbound":
-		items, err = h.service.ListTeamleadInboundItems(r.Context(), actor.TeamID)
+		items, err = h.service.ListTeamleadInboundItems(r.Context(), actor.TeamID, actor.ID)
 	case "outbound":
-		items, err = h.service.ListTeamleadOutboundItems(r.Context(), actor.TeamID)
+		items, err = h.service.ListTeamleadOutboundItems(r.Context(), actor.TeamID, actor.ID)
 	default:
 		RespondError(w, NotFoundError())
 		return
@@ -208,6 +209,7 @@ func (h *TeamleadReconciliationHandler) history(w http.ResponseWriter, r *http.R
 
 	runs, err := h.service.ListTeamleadCurrentRuns(r.Context(), reconciliation.ListTeamleadCurrentRunsParams{
 		TeamID:    actor.TeamID,
+		ActorID:   actor.ID,
 		Direction: direction,
 		Limit:     limitFromQuery(r, 50),
 	})
@@ -239,6 +241,7 @@ func (h *TeamleadReconciliationHandler) currentRun(w http.ResponseWriter, r *htt
 
 	run, err := h.service.GetTeamleadCurrentRun(r.Context(), reconciliation.GetTeamleadCurrentRunParams{
 		TeamID:    actor.TeamID,
+		ActorID:   actor.ID,
 		Direction: direction,
 		RunID:     runID,
 	})
@@ -270,6 +273,7 @@ func (h *TeamleadReconciliationHandler) currentRunItems(w http.ResponseWriter, r
 
 	items, err := h.service.ListTeamleadCurrentItems(r.Context(), reconciliation.GetTeamleadCurrentRunParams{
 		TeamID:    actor.TeamID,
+		ActorID:   actor.ID,
 		Direction: direction,
 		RunID:     runID,
 	})

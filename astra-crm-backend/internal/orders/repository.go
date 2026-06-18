@@ -217,6 +217,7 @@ func (r *Repository) TeamleadDashboard(ctx context.Context, scope Scope, filters
 	importRows, err := r.queries.TeamleadRecentImports(ctx, db.TeamleadRecentImportsParams{
 		TeamID:     scope.TeamID,
 		Direction:  scope.Direction,
+		UploadedBy: *scope.ActorID,
 		LimitCount: 10,
 	})
 	if err != nil {

@@ -353,25 +353,37 @@ const deactivateTeamleadPeriodScopeItems = `-- name: DeactivateTeamleadPeriodSco
 UPDATE order_scope_items
 SET is_active = FALSE,
     deactivated_at = now()
-WHERE team_id = $1
-  AND scope_type = 'teamlead_period'
-  AND (
-      accounting_period_id = $2
-      OR ($2::bigint IS NULL AND accounting_period_id IS NULL)
+WHERE order_scope_items.team_id = $1
+  AND order_scope_items.scope_type = 'teamlead_period'
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = order_scope_items.import_batch_id
+        AND ib.uploaded_by = $2
   )
-  AND direction = $3
-  AND is_active = TRUE
+  AND (
+      order_scope_items.accounting_period_id = $3
+      OR ($3::bigint IS NULL AND order_scope_items.accounting_period_id IS NULL)
+  )
+  AND order_scope_items.direction = $4
+  AND order_scope_items.is_active = TRUE
 RETURNING id
 `
 
 type DeactivateTeamleadPeriodScopeItemsParams struct {
 	TeamID             int64
+	UploadedBy         int64
 	AccountingPeriodID pgtype.Int8
 	Direction          string
 }
 
 func (q *Queries) DeactivateTeamleadPeriodScopeItems(ctx context.Context, arg DeactivateTeamleadPeriodScopeItemsParams) ([]int64, error) {
-	rows, err := q.db.Query(ctx, deactivateTeamleadPeriodScopeItems, arg.TeamID, arg.AccountingPeriodID, arg.Direction)
+	rows, err := q.db.Query(ctx, deactivateTeamleadPeriodScopeItems,
+		arg.TeamID,
+		arg.UploadedBy,
+		arg.AccountingPeriodID,
+		arg.Direction,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -519,11 +531,12 @@ SET status = 'superseded',
     superseded_by_batch_id = $1
 WHERE team_id = $2
   AND scope_type = 'teamlead_period'
+  AND uploaded_by = $3
   AND (
-      accounting_period_id = $3
-      OR ($3::bigint IS NULL AND accounting_period_id IS NULL)
+      accounting_period_id = $4
+      OR ($4::bigint IS NULL AND accounting_period_id IS NULL)
   )
-  AND direction = $4
+  AND direction = $5
   AND id <> $1
   AND superseded_by_batch_id IS NULL
   AND status IN ('parsed', 'applied', 'reconciled')
@@ -533,6 +546,7 @@ RETURNING id
 type SupersedeTeamleadPeriodImportBatchesParams struct {
 	NewBatchID         pgtype.Int8
 	TeamID             int64
+	UploadedBy         int64
 	AccountingPeriodID pgtype.Int8
 	Direction          string
 }
@@ -541,6 +555,7 @@ func (q *Queries) SupersedeTeamleadPeriodImportBatches(ctx context.Context, arg 
 	rows, err := q.db.Query(ctx, supersedeTeamleadPeriodImportBatches,
 		arg.NewBatchID,
 		arg.TeamID,
+		arg.UploadedBy,
 		arg.AccountingPeriodID,
 		arg.Direction,
 	)

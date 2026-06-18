@@ -27,10 +27,10 @@ type Store interface {
 	RecalculateTeamleadCurrent(ctx context.Context, record RecalculateTeamleadCurrentRecord) (Run, error)
 	LatestTeamleadPeriodInbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error)
 	LatestTeamleadPeriodOutbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error)
-	LatestTeamleadInbound(ctx context.Context, teamID int64) (Run, error)
-	LatestTeamleadOutbound(ctx context.Context, teamID int64) (Run, error)
-	ListTeamleadCurrentRuns(ctx context.Context, teamID int64, direction string, limit int32) ([]Run, error)
-	GetTeamleadCurrentRun(ctx context.Context, teamID int64, direction string, runID int64) (Run, error)
+	LatestTeamleadInbound(ctx context.Context, teamID int64, actorID int64) (Run, error)
+	LatestTeamleadOutbound(ctx context.Context, teamID int64, actorID int64) (Run, error)
+	ListTeamleadCurrentRuns(ctx context.Context, teamID int64, actorID int64, direction string, limit int32) ([]Run, error)
+	GetTeamleadCurrentRun(ctx context.Context, teamID int64, actorID int64, direction string, runID int64) (Run, error)
 	AcceptTeamleadCurrent(ctx context.Context, record AcceptTeamleadCurrentRecord) (Run, error)
 	ListItems(ctx context.Context, runID int64) ([]Item, error)
 	ListActiveTeamleadInboundPeriodScopes(ctx context.Context, teamID int64) ([]TeamleadInboundPeriodScope, error)
@@ -81,6 +81,7 @@ type RecalculateTeamleadPeriodOutboundParams struct {
 
 type RecalculateTeamleadCurrentParams struct {
 	TeamID    int64
+	ActorID   int64
 	Direction string
 }
 
@@ -110,12 +111,14 @@ type AcceptTeamleadCurrentParams struct {
 
 type ListTeamleadCurrentRunsParams struct {
 	TeamID    int64
+	ActorID   int64
 	Direction string
 	Limit     int32
 }
 
 type GetTeamleadCurrentRunParams struct {
 	TeamID    int64
+	ActorID   int64
 	Direction string
 	RunID     int64
 }
@@ -171,12 +174,13 @@ func (s *Service) RecalculateTeamleadPeriodOutbound(ctx context.Context, params 
 }
 
 func (s *Service) RecalculateTeamleadCurrent(ctx context.Context, params RecalculateTeamleadCurrentParams) (Run, error) {
-	if params.TeamID <= 0 || !isSupportedDirection(params.Direction) {
+	if params.TeamID <= 0 || params.ActorID <= 0 || !isSupportedDirection(params.Direction) {
 		return Run{}, ErrInvalidInput
 	}
 
 	return s.store.RecalculateTeamleadCurrent(ctx, RecalculateTeamleadCurrentRecord{
 		TeamID:    params.TeamID,
+		ActorID:   params.ActorID,
 		Direction: params.Direction,
 	})
 }
@@ -229,24 +233,24 @@ func (s *Service) LatestTeamleadPeriodOutbound(ctx context.Context, teamID int64
 	return s.store.LatestTeamleadPeriodOutbound(ctx, teamID, accountingPeriodID)
 }
 
-func (s *Service) LatestTeamleadInbound(ctx context.Context, teamID int64) (Run, error) {
-	if teamID <= 0 {
+func (s *Service) LatestTeamleadInbound(ctx context.Context, teamID int64, actorID int64) (Run, error) {
+	if teamID <= 0 || actorID <= 0 {
 		return Run{}, ErrInvalidInput
 	}
 
-	return s.store.LatestTeamleadInbound(ctx, teamID)
+	return s.store.LatestTeamleadInbound(ctx, teamID, actorID)
 }
 
-func (s *Service) LatestTeamleadOutbound(ctx context.Context, teamID int64) (Run, error) {
-	if teamID <= 0 {
+func (s *Service) LatestTeamleadOutbound(ctx context.Context, teamID int64, actorID int64) (Run, error) {
+	if teamID <= 0 || actorID <= 0 {
 		return Run{}, ErrInvalidInput
 	}
 
-	return s.store.LatestTeamleadOutbound(ctx, teamID)
+	return s.store.LatestTeamleadOutbound(ctx, teamID, actorID)
 }
 
 func (s *Service) ListTeamleadCurrentRuns(ctx context.Context, params ListTeamleadCurrentRunsParams) ([]Run, error) {
-	if params.TeamID <= 0 || !isSupportedDirection(params.Direction) {
+	if params.TeamID <= 0 || params.ActorID <= 0 || !isSupportedDirection(params.Direction) {
 		return nil, ErrInvalidInput
 	}
 	limit := params.Limit
@@ -254,15 +258,15 @@ func (s *Service) ListTeamleadCurrentRuns(ctx context.Context, params ListTeamle
 		limit = 50
 	}
 
-	return s.store.ListTeamleadCurrentRuns(ctx, params.TeamID, params.Direction, limit)
+	return s.store.ListTeamleadCurrentRuns(ctx, params.TeamID, params.ActorID, params.Direction, limit)
 }
 
 func (s *Service) GetTeamleadCurrentRun(ctx context.Context, params GetTeamleadCurrentRunParams) (Run, error) {
-	if params.TeamID <= 0 || params.RunID <= 0 || !isSupportedDirection(params.Direction) {
+	if params.TeamID <= 0 || params.ActorID <= 0 || params.RunID <= 0 || !isSupportedDirection(params.Direction) {
 		return Run{}, ErrInvalidInput
 	}
 
-	return s.store.GetTeamleadCurrentRun(ctx, params.TeamID, params.Direction, params.RunID)
+	return s.store.GetTeamleadCurrentRun(ctx, params.TeamID, params.ActorID, params.Direction, params.RunID)
 }
 
 func (s *Service) ListTeamleadCurrentItems(ctx context.Context, params GetTeamleadCurrentRunParams) ([]Item, error) {
@@ -274,8 +278,8 @@ func (s *Service) ListTeamleadCurrentItems(ctx context.Context, params GetTeamle
 	return s.store.ListItems(ctx, run.ID)
 }
 
-func (s *Service) ListTeamleadInboundItems(ctx context.Context, teamID int64) ([]Item, error) {
-	run, err := s.LatestTeamleadInbound(ctx, teamID)
+func (s *Service) ListTeamleadInboundItems(ctx context.Context, teamID int64, actorID int64) ([]Item, error) {
+	run, err := s.LatestTeamleadInbound(ctx, teamID, actorID)
 	if err != nil {
 		return nil, err
 	}
@@ -283,8 +287,8 @@ func (s *Service) ListTeamleadInboundItems(ctx context.Context, teamID int64) ([
 	return s.store.ListItems(ctx, run.ID)
 }
 
-func (s *Service) ListTeamleadOutboundItems(ctx context.Context, teamID int64) ([]Item, error) {
-	run, err := s.LatestTeamleadOutbound(ctx, teamID)
+func (s *Service) ListTeamleadOutboundItems(ctx context.Context, teamID int64, actorID int64) ([]Item, error) {
+	run, err := s.LatestTeamleadOutbound(ctx, teamID, actorID)
 	if err != nil {
 		return nil, err
 	}

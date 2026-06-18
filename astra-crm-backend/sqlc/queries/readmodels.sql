@@ -255,5 +255,6 @@ WHERE team_id = sqlc.arg(team_id)
   AND scope_type = 'teamlead_period'
   AND accounting_period_id IS NULL
   AND direction = sqlc.arg(direction)
+  AND uploaded_by = sqlc.arg(uploaded_by)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(limit_count);

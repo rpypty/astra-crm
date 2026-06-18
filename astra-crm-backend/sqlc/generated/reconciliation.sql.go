@@ -17,11 +17,17 @@ SET status = 'accepted_with_comment',
     comment = $1,
     confirmed_by = $2,
     confirmed_at = now()
-WHERE id = $3
-  AND team_id = $4
-  AND type IN ('teamlead_period_inbound', 'teamlead_period_outbound')
-  AND accounting_period_id IS NULL
-  AND status = 'mismatch'
+WHERE reconciliation_runs.id = $3
+  AND reconciliation_runs.team_id = $4
+  AND reconciliation_runs.type IN ('teamlead_period_inbound', 'teamlead_period_outbound')
+  AND reconciliation_runs.accounting_period_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = reconciliation_runs.import_batch_id
+        AND ib.uploaded_by = $5
+  )
+  AND reconciliation_runs.status = 'mismatch'
   AND btrim($1) <> ''
 RETURNING id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
 `
@@ -31,6 +37,7 @@ type AcceptTeamleadCurrentReconciliationRunParams struct {
 	ConfirmedBy pgtype.Int8
 	RunID       int64
 	TeamID      int64
+	ActorID     int64
 }
 
 func (q *Queries) AcceptTeamleadCurrentReconciliationRun(ctx context.Context, arg AcceptTeamleadCurrentReconciliationRunParams) (ReconciliationRun, error) {
@@ -39,6 +46,7 @@ func (q *Queries) AcceptTeamleadCurrentReconciliationRun(ctx context.Context, ar
 		arg.ConfirmedBy,
 		arg.RunID,
 		arg.TeamID,
+		arg.ActorID,
 	)
 	var i ReconciliationRun
 	err := row.Scan(
@@ -194,6 +202,7 @@ WITH latest_import AS (
       AND ib.scope_type = 'teamlead_period'
       AND ib.accounting_period_id IS NULL
       AND ib.direction = $2
+      AND ib.uploaded_by = $3
       AND ib.status IN ('applied', 'reconciled')
       AND ib.superseded_by_batch_id IS NULL
     ORDER BY ib.applied_at DESC NULLS LAST, ib.id DESC
@@ -239,8 +248,9 @@ SELECT
 `
 
 type CalculateTeamleadCurrentSummaryParams struct {
-	TeamID    int64
-	Direction string
+	TeamID     int64
+	Direction  string
+	UploadedBy int64
 }
 
 type CalculateTeamleadCurrentSummaryRow struct {
@@ -256,7 +266,7 @@ type CalculateTeamleadCurrentSummaryRow struct {
 }
 
 func (q *Queries) CalculateTeamleadCurrentSummary(ctx context.Context, arg CalculateTeamleadCurrentSummaryParams) (CalculateTeamleadCurrentSummaryRow, error) {
-	row := q.db.QueryRow(ctx, calculateTeamleadCurrentSummary, arg.TeamID, arg.Direction)
+	row := q.db.QueryRow(ctx, calculateTeamleadCurrentSummary, arg.TeamID, arg.Direction, arg.UploadedBy)
 	var i CalculateTeamleadCurrentSummaryRow
 	err := row.Scan(
 		&i.ImportBatchID,
@@ -1989,24 +1999,36 @@ func (q *Queries) CreateTraderOutboundReconciliationRun(ctx context.Context, arg
 const getTeamleadCurrentReconciliationRun = `-- name: GetTeamleadCurrentReconciliationRun :one
 SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
 FROM reconciliation_runs
-WHERE id = $1
-  AND team_id = $2
-  AND type = CASE
+WHERE reconciliation_runs.id = $1
+  AND reconciliation_runs.team_id = $2
+  AND reconciliation_runs.type = CASE
       WHEN $3::text = 'inbound' THEN 'teamlead_period_inbound'
       ELSE 'teamlead_period_outbound'
   END
-  AND accounting_period_id IS NULL
+  AND reconciliation_runs.accounting_period_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = reconciliation_runs.import_batch_id
+        AND ib.uploaded_by = $4
+  )
 LIMIT 1
 `
 
 type GetTeamleadCurrentReconciliationRunParams struct {
-	RunID     int64
-	TeamID    int64
-	Direction string
+	RunID      int64
+	TeamID     int64
+	Direction  string
+	UploadedBy int64
 }
 
 func (q *Queries) GetTeamleadCurrentReconciliationRun(ctx context.Context, arg GetTeamleadCurrentReconciliationRunParams) (ReconciliationRun, error) {
-	row := q.db.QueryRow(ctx, getTeamleadCurrentReconciliationRun, arg.RunID, arg.TeamID, arg.Direction)
+	row := q.db.QueryRow(ctx, getTeamleadCurrentReconciliationRun,
+		arg.RunID,
+		arg.TeamID,
+		arg.Direction,
+		arg.UploadedBy,
+	)
 	var i ReconciliationRun
 	err := row.Scan(
 		&i.ID,
@@ -2042,6 +2064,7 @@ WHERE team_id = $1
   AND scope_type = 'teamlead_period'
   AND accounting_period_id IS NULL
   AND direction = $2
+  AND uploaded_by = $3
   AND status IN ('applied', 'reconciled')
   AND superseded_by_batch_id IS NULL
 ORDER BY applied_at DESC NULLS LAST, id DESC
@@ -2049,12 +2072,13 @@ LIMIT 1
 `
 
 type LatestActiveTeamleadCurrentImportBatchParams struct {
-	TeamID    int64
-	Direction string
+	TeamID     int64
+	Direction  string
+	UploadedBy int64
 }
 
 func (q *Queries) LatestActiveTeamleadCurrentImportBatch(ctx context.Context, arg LatestActiveTeamleadCurrentImportBatchParams) (ImportBatch, error) {
-	row := q.db.QueryRow(ctx, latestActiveTeamleadCurrentImportBatch, arg.TeamID, arg.Direction)
+	row := q.db.QueryRow(ctx, latestActiveTeamleadCurrentImportBatch, arg.TeamID, arg.Direction, arg.UploadedBy)
 	var i ImportBatch
 	err := row.Scan(
 		&i.ID,
@@ -2080,15 +2104,26 @@ func (q *Queries) LatestActiveTeamleadCurrentImportBatch(ctx context.Context, ar
 const latestTeamleadInboundReconciliationRun = `-- name: LatestTeamleadInboundReconciliationRun :one
 SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
 FROM reconciliation_runs
-WHERE team_id = $1
-  AND type = 'teamlead_period_inbound'
-  AND accounting_period_id IS NULL
-ORDER BY created_at DESC, id DESC
+WHERE reconciliation_runs.team_id = $1
+  AND reconciliation_runs.type = 'teamlead_period_inbound'
+  AND reconciliation_runs.accounting_period_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = reconciliation_runs.import_batch_id
+        AND ib.uploaded_by = $2
+  )
+ORDER BY reconciliation_runs.created_at DESC, reconciliation_runs.id DESC
 LIMIT 1
 `
 
-func (q *Queries) LatestTeamleadInboundReconciliationRun(ctx context.Context, teamID int64) (ReconciliationRun, error) {
-	row := q.db.QueryRow(ctx, latestTeamleadInboundReconciliationRun, teamID)
+type LatestTeamleadInboundReconciliationRunParams struct {
+	TeamID     int64
+	UploadedBy int64
+}
+
+func (q *Queries) LatestTeamleadInboundReconciliationRun(ctx context.Context, arg LatestTeamleadInboundReconciliationRunParams) (ReconciliationRun, error) {
+	row := q.db.QueryRow(ctx, latestTeamleadInboundReconciliationRun, arg.TeamID, arg.UploadedBy)
 	var i ReconciliationRun
 	err := row.Scan(
 		&i.ID,
@@ -2120,15 +2155,26 @@ func (q *Queries) LatestTeamleadInboundReconciliationRun(ctx context.Context, te
 const latestTeamleadOutboundReconciliationRun = `-- name: LatestTeamleadOutboundReconciliationRun :one
 SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
 FROM reconciliation_runs
-WHERE team_id = $1
-  AND type = 'teamlead_period_outbound'
-  AND accounting_period_id IS NULL
-ORDER BY created_at DESC, id DESC
+WHERE reconciliation_runs.team_id = $1
+  AND reconciliation_runs.type = 'teamlead_period_outbound'
+  AND reconciliation_runs.accounting_period_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = reconciliation_runs.import_batch_id
+        AND ib.uploaded_by = $2
+  )
+ORDER BY reconciliation_runs.created_at DESC, reconciliation_runs.id DESC
 LIMIT 1
 `
 
-func (q *Queries) LatestTeamleadOutboundReconciliationRun(ctx context.Context, teamID int64) (ReconciliationRun, error) {
-	row := q.db.QueryRow(ctx, latestTeamleadOutboundReconciliationRun, teamID)
+type LatestTeamleadOutboundReconciliationRunParams struct {
+	TeamID     int64
+	UploadedBy int64
+}
+
+func (q *Queries) LatestTeamleadOutboundReconciliationRun(ctx context.Context, arg LatestTeamleadOutboundReconciliationRunParams) (ReconciliationRun, error) {
+	row := q.db.QueryRow(ctx, latestTeamleadOutboundReconciliationRun, arg.TeamID, arg.UploadedBy)
 	var i ReconciliationRun
 	err := row.Scan(
 		&i.ID,
@@ -2549,24 +2595,36 @@ func (q *Queries) ListReconciliationItemsForRun(ctx context.Context, runID int64
 const listTeamleadCurrentReconciliationRuns = `-- name: ListTeamleadCurrentReconciliationRuns :many
 SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
 FROM reconciliation_runs
-WHERE team_id = $1
-  AND type = CASE
+WHERE reconciliation_runs.team_id = $1
+  AND reconciliation_runs.type = CASE
       WHEN $2::text = 'inbound' THEN 'teamlead_period_inbound'
       ELSE 'teamlead_period_outbound'
   END
-  AND accounting_period_id IS NULL
-ORDER BY created_at DESC, id DESC
-LIMIT $3
+  AND reconciliation_runs.accounting_period_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = reconciliation_runs.import_batch_id
+        AND ib.uploaded_by = $3
+  )
+ORDER BY reconciliation_runs.created_at DESC, reconciliation_runs.id DESC
+LIMIT $4
 `
 
 type ListTeamleadCurrentReconciliationRunsParams struct {
 	TeamID     int64
 	Direction  string
+	UploadedBy int64
 	LimitCount int32
 }
 
 func (q *Queries) ListTeamleadCurrentReconciliationRuns(ctx context.Context, arg ListTeamleadCurrentReconciliationRunsParams) ([]ReconciliationRun, error) {
-	rows, err := q.db.Query(ctx, listTeamleadCurrentReconciliationRuns, arg.TeamID, arg.Direction, arg.LimitCount)
+	rows, err := q.db.Query(ctx, listTeamleadCurrentReconciliationRuns,
+		arg.TeamID,
+		arg.Direction,
+		arg.UploadedBy,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -410,8 +410,9 @@ func (r *Repository) RecalculateTeamleadCurrent(ctx context.Context, record Reca
 
 	queries := db.New(tx)
 	latestImport, err := queries.LatestActiveTeamleadCurrentImportBatch(ctx, db.LatestActiveTeamleadCurrentImportBatchParams{
-		TeamID:    record.TeamID,
-		Direction: record.Direction,
+		TeamID:     record.TeamID,
+		Direction:  record.Direction,
+		UploadedBy: record.ActorID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, ErrRunNotFound
@@ -421,8 +422,9 @@ func (r *Repository) RecalculateTeamleadCurrent(ctx context.Context, record Reca
 	}
 
 	summary, err := queries.CalculateTeamleadCurrentSummary(ctx, db.CalculateTeamleadCurrentSummaryParams{
-		TeamID:    record.TeamID,
-		Direction: record.Direction,
+		TeamID:     record.TeamID,
+		Direction:  record.Direction,
+		UploadedBy: record.ActorID,
 	})
 	if err != nil {
 		return Run{}, err
@@ -697,7 +699,7 @@ func (r *Repository) LatestTeamleadPeriodOutbound(ctx context.Context, teamID in
 	return fromDBRun(run), nil
 }
 
-func (r *Repository) LatestTeamleadInbound(ctx context.Context, teamID int64) (Run, error) {
+func (r *Repository) LatestTeamleadInbound(ctx context.Context, teamID int64, actorID int64) (Run, error) {
 	if r.db == nil {
 		return Run{}, ErrRepositoryNotConfigured
 	}
@@ -713,7 +715,10 @@ func (r *Repository) LatestTeamleadInbound(ctx context.Context, teamID int64) (R
 		}
 	}()
 
-	run, err := db.New(tx).LatestTeamleadInboundReconciliationRun(ctx, teamID)
+	run, err := db.New(tx).LatestTeamleadInboundReconciliationRun(ctx, db.LatestTeamleadInboundReconciliationRunParams{
+		TeamID:     teamID,
+		UploadedBy: actorID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, ErrRunNotFound
 	}
@@ -729,7 +734,7 @@ func (r *Repository) LatestTeamleadInbound(ctx context.Context, teamID int64) (R
 	return fromDBRun(run), nil
 }
 
-func (r *Repository) LatestTeamleadOutbound(ctx context.Context, teamID int64) (Run, error) {
+func (r *Repository) LatestTeamleadOutbound(ctx context.Context, teamID int64, actorID int64) (Run, error) {
 	if r.db == nil {
 		return Run{}, ErrRepositoryNotConfigured
 	}
@@ -745,7 +750,10 @@ func (r *Repository) LatestTeamleadOutbound(ctx context.Context, teamID int64) (
 		}
 	}()
 
-	run, err := db.New(tx).LatestTeamleadOutboundReconciliationRun(ctx, teamID)
+	run, err := db.New(tx).LatestTeamleadOutboundReconciliationRun(ctx, db.LatestTeamleadOutboundReconciliationRunParams{
+		TeamID:     teamID,
+		UploadedBy: actorID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, ErrRunNotFound
 	}
@@ -761,7 +769,7 @@ func (r *Repository) LatestTeamleadOutbound(ctx context.Context, teamID int64) (
 	return fromDBRun(run), nil
 }
 
-func (r *Repository) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, direction string, limit int32) ([]Run, error) {
+func (r *Repository) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, actorID int64, direction string, limit int32) ([]Run, error) {
 	if r.db == nil {
 		return nil, ErrRepositoryNotConfigured
 	}
@@ -780,6 +788,7 @@ func (r *Repository) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, 
 	rows, err := db.New(tx).ListTeamleadCurrentReconciliationRuns(ctx, db.ListTeamleadCurrentReconciliationRunsParams{
 		TeamID:     teamID,
 		Direction:  direction,
+		UploadedBy: actorID,
 		LimitCount: limit,
 	})
 	if err != nil {
@@ -799,7 +808,7 @@ func (r *Repository) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, 
 	return runs, nil
 }
 
-func (r *Repository) GetTeamleadCurrentRun(ctx context.Context, teamID int64, direction string, runID int64) (Run, error) {
+func (r *Repository) GetTeamleadCurrentRun(ctx context.Context, teamID int64, actorID int64, direction string, runID int64) (Run, error) {
 	if r.db == nil {
 		return Run{}, ErrRepositoryNotConfigured
 	}
@@ -816,9 +825,10 @@ func (r *Repository) GetTeamleadCurrentRun(ctx context.Context, teamID int64, di
 	}()
 
 	run, err := db.New(tx).GetTeamleadCurrentReconciliationRun(ctx, db.GetTeamleadCurrentReconciliationRunParams{
-		RunID:     runID,
-		TeamID:    teamID,
-		Direction: direction,
+		RunID:      runID,
+		TeamID:     teamID,
+		Direction:  direction,
+		UploadedBy: actorID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, ErrRunNotFound
@@ -1095,6 +1105,7 @@ func (r *Repository) AcceptTeamleadCurrent(ctx context.Context, record AcceptTea
 	run, err := db.New(tx).AcceptTeamleadCurrentReconciliationRun(ctx, db.AcceptTeamleadCurrentReconciliationRunParams{
 		RunID:       record.RunID,
 		TeamID:      record.TeamID,
+		ActorID:     record.ActorID,
 		ConfirmedBy: int8Value(&record.ActorID),
 		Comment:     textValue(&record.Comment),
 	})

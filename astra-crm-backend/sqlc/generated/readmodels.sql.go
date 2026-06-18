@@ -447,18 +447,25 @@ WHERE team_id = $1
   AND scope_type = 'teamlead_period'
   AND accounting_period_id IS NULL
   AND direction = $2
+  AND uploaded_by = $3
 ORDER BY created_at DESC, id DESC
-LIMIT $3
+LIMIT $4
 `
 
 type TeamleadRecentImportsParams struct {
 	TeamID     int64
 	Direction  string
+	UploadedBy int64
 	LimitCount int32
 }
 
 func (q *Queries) TeamleadRecentImports(ctx context.Context, arg TeamleadRecentImportsParams) ([]ImportBatch, error) {
-	rows, err := q.db.Query(ctx, teamleadRecentImports, arg.TeamID, arg.Direction, arg.LimitCount)
+	rows, err := q.db.Query(ctx, teamleadRecentImports,
+		arg.TeamID,
+		arg.Direction,
+		arg.UploadedBy,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}

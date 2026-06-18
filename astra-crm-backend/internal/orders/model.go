@@ -44,6 +44,7 @@ type Filters struct {
 type Scope struct {
 	TeamID    int64
 	TraderID  *int64
+	ActorID   *int64
 	Direction string
 }
 

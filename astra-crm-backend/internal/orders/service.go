@@ -63,13 +63,14 @@ func (s *Service) TraderDashboard(ctx context.Context, teamID int64, traderID in
 	return dashboard, err
 }
 
-func (s *Service) TeamleadDashboard(ctx context.Context, teamID int64, direction string, filters Filters) (Dashboard, error) {
-	if teamID <= 0 || !validDirection(direction) {
+func (s *Service) TeamleadDashboard(ctx context.Context, teamID int64, actorID int64, direction string, filters Filters) (Dashboard, error) {
+	if teamID <= 0 || actorID <= 0 || !validDirection(direction) {
 		return Dashboard{}, ErrInvalidInput
 	}
 
 	return s.store.TeamleadDashboard(ctx, Scope{
 		TeamID:    teamID,
+		ActorID:   &actorID,
 		Direction: direction,
 	}, normalizeFilters(filters))
 }

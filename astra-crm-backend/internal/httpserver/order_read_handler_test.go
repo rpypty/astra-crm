@@ -196,6 +196,7 @@ type fakeOrderReadService struct {
 	traderDashboardFilters   orders.Filters
 
 	teamleadDashboardTeamID    int64
+	teamleadDashboardActorID   int64
 	teamleadDashboardDirection string
 	teamleadDashboardFilters   orders.Filters
 }
@@ -233,8 +234,9 @@ func (s *fakeOrderReadService) TraderDashboard(ctx context.Context, teamID int64
 	return s.dashboard, nil
 }
 
-func (s *fakeOrderReadService) TeamleadDashboard(ctx context.Context, teamID int64, direction string, filters orders.Filters) (orders.Dashboard, error) {
+func (s *fakeOrderReadService) TeamleadDashboard(ctx context.Context, teamID int64, actorID int64, direction string, filters orders.Filters) (orders.Dashboard, error) {
 	s.teamleadDashboardTeamID = teamID
+	s.teamleadDashboardActorID = actorID
 	s.teamleadDashboardDirection = direction
 	s.teamleadDashboardFilters = filters
 	if s.err != nil {

@@ -81,6 +81,7 @@ type RecalculateTeamleadPeriodOutboundRecord struct {
 
 type RecalculateTeamleadCurrentRecord struct {
 	TeamID        int64
+	ActorID       int64
 	Direction     string
 	ImportBatchID *int64
 }

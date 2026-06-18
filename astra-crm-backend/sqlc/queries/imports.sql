@@ -169,14 +169,20 @@ RETURNING id;
 UPDATE order_scope_items
 SET is_active = FALSE,
     deactivated_at = now()
-WHERE team_id = sqlc.arg(team_id)
-  AND scope_type = 'teamlead_period'
-  AND (
-      accounting_period_id = sqlc.narg(accounting_period_id)
-      OR (sqlc.narg(accounting_period_id)::bigint IS NULL AND accounting_period_id IS NULL)
+WHERE order_scope_items.team_id = sqlc.arg(team_id)
+  AND order_scope_items.scope_type = 'teamlead_period'
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = order_scope_items.import_batch_id
+        AND ib.uploaded_by = sqlc.arg(uploaded_by)
   )
-  AND direction = sqlc.arg(direction)
-  AND is_active = TRUE
+  AND (
+      order_scope_items.accounting_period_id = sqlc.narg(accounting_period_id)
+      OR (sqlc.narg(accounting_period_id)::bigint IS NULL AND order_scope_items.accounting_period_id IS NULL)
+  )
+  AND order_scope_items.direction = sqlc.arg(direction)
+  AND order_scope_items.is_active = TRUE
 RETURNING id;
 
 -- name: SupersedeTraderShiftImportBatches :many
@@ -198,6 +204,7 @@ SET status = 'superseded',
     superseded_by_batch_id = sqlc.arg(new_batch_id)
 WHERE team_id = sqlc.arg(team_id)
   AND scope_type = 'teamlead_period'
+  AND uploaded_by = sqlc.arg(uploaded_by)
   AND (
       accounting_period_id = sqlc.narg(accounting_period_id)
       OR (sqlc.narg(accounting_period_id)::bigint IS NULL AND accounting_period_id IS NULL)

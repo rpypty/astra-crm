@@ -1,0 +1,134 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - prod
+      ref:
+        description: Git ref, tag, or SHA to deploy
+        required: true
+        default: origin/main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+    env:
+      DEPLOY_ENV: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'dev' }}
+      DEPLOY_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.workflow_run.head_sha }}
+      ASTRA_SSH_HOST: ${{ secrets.ASTRA_SSH_HOST }}
+      ASTRA_SSH_USER: ${{ secrets.ASTRA_SSH_USER }}
+      ASTRA_SSH_PRIVATE_KEY: ${{ secrets.ASTRA_SSH_PRIVATE_KEY }}
+      ASTRA_SSH_PORT: ${{ vars.ASTRA_SSH_PORT || '22' }}
+    steps:
+      - name: Validate secrets
+        run: |
+          : "${ASTRA_SSH_HOST:?Missing ASTRA_SSH_HOST secret}"
+          : "${ASTRA_SSH_USER:?Missing ASTRA_SSH_USER secret}"
+          : "${ASTRA_SSH_PRIVATE_KEY:?Missing ASTRA_SSH_PRIVATE_KEY secret}"
+          : "${ASTRA_SSH_PORT:?Missing ASTRA_SSH_PORT variable}"
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$ASTRA_SSH_PRIVATE_KEY" > ~/.ssh/astra_deploy_key
+          chmod 600 ~/.ssh/astra_deploy_key
+          ssh-keyscan -p "$ASTRA_SSH_PORT" -H "$ASTRA_SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy on VPS
+        run: |
+          ssh -i ~/.ssh/astra_deploy_key \
+            -p "$ASTRA_SSH_PORT" \
+            -o BatchMode=yes \
+            "$ASTRA_SSH_USER@$ASTRA_SSH_HOST" \
+            "ENV='$DEPLOY_ENV' REF='$DEPLOY_REF' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          case "$ENV" in
+            dev)
+              ENV_DIR=/srv/astra-crm/dev
+              DOMAIN=dev.paycrm.space
+              ;;
+            prod)
+              ENV_DIR=/srv/astra-crm/prod
+              DOMAIN=astra.paycrm.space
+              ;;
+            *)
+              echo "Unsupported environment: $ENV" >&2
+              exit 1
+              ;;
+          esac
+
+          cd /srv/astra-crm/source
+          git fetch --all --tags --prune
+          git checkout --detach "$REF"
+          SHA=$(git rev-parse --short=12 HEAD)
+
+          BACKEND_IMAGE="astra-crm-backend:${ENV}-${SHA}"
+          FRONTEND_IMAGE="astra-crm-frontend:${ENV}-${SHA}"
+
+          docker build -t "$BACKEND_IMAGE" ./astra-crm-backend
+          docker build \
+            -f deploy/Dockerfile.frontend \
+            --build-arg VITE_API_BASE_URL=/api/v1 \
+            -t "$FRONTEND_IMAGE" \
+            .
+
+          sed -i "s|^BACKEND_IMAGE=.*|BACKEND_IMAGE=${BACKEND_IMAGE}|" "$ENV_DIR/.env"
+          sed -i "s|^FRONTEND_IMAGE=.*|FRONTEND_IMAGE=${FRONTEND_IMAGE}|" "$ENV_DIR/.env"
+
+          docker compose --project-directory "$ENV_DIR" --env-file "$ENV_DIR/.env" -f "$ENV_DIR/compose.yml" config --quiet
+          docker compose --project-directory "$ENV_DIR" --env-file "$ENV_DIR/.env" -f "$ENV_DIR/compose.yml" up -d --remove-orphans
+          docker compose --project-directory "$ENV_DIR" --env-file "$ENV_DIR/.env" -f "$ENV_DIR/compose.yml" ps
+
+          set -a
+          . "$ENV_DIR/.env"
+          set +a
+
+          curl -fsS "http://127.0.0.1:${HOST_BACKEND_PORT}/health"
+          curl -fsS "http://127.0.0.1:${HOST_BACKEND_PORT}/ready"
+
+          FRONTEND_CODE=$(curl -sS -o /dev/null -w "%{http_code}" "https://${DOMAIN}/")
+          SPA_CODE=$(curl -sS -o /dev/null -w "%{http_code}" "https://${DOMAIN}/some/spa/path")
+          API_CODE=$(curl -sS -o /dev/null -w "%{http_code}" "https://${DOMAIN}/api/v1/auth/me")
+
+          if [ "$FRONTEND_CODE" != "200" ]; then
+            echo "Frontend check failed: HTTP ${FRONTEND_CODE}" >&2
+            exit 1
+          fi
+          if [ "$SPA_CODE" != "200" ]; then
+            echo "SPA fallback check failed: HTTP ${SPA_CODE}" >&2
+            exit 1
+          fi
+          if [ "$API_CODE" != "401" ] && [ "$API_CODE" != "200" ]; then
+            echo "API route check failed: HTTP ${API_CODE}" >&2
+            exit 1
+          fi
+
+          echo "Deployed ${ENV} at ${SHA}"
+          REMOTE

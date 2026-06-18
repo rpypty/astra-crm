@@ -216,6 +216,7 @@ func deactivateScopeItems(ctx context.Context, queries *db.Queries, record Apply
 	case ScopeTypeTeamleadPeriod:
 		return queries.DeactivateTeamleadPeriodScopeItems(ctx, db.DeactivateTeamleadPeriodScopeItemsParams{
 			TeamID:             record.TeamID,
+			UploadedBy:         record.UploadedBy,
 			AccountingPeriodID: int8Value(record.Scope.AccountingPeriodID),
 			Direction:          record.Scope.Direction,
 		})
@@ -238,6 +239,7 @@ func supersedeImportBatches(ctx context.Context, queries *db.Queries, record App
 		return queries.SupersedeTeamleadPeriodImportBatches(ctx, db.SupersedeTeamleadPeriodImportBatchesParams{
 			NewBatchID:         newBatchID,
 			TeamID:             record.TeamID,
+			UploadedBy:         record.UploadedBy,
 			AccountingPeriodID: int8Value(record.Scope.AccountingPeriodID),
 			Direction:          record.Scope.Direction,
 		})
