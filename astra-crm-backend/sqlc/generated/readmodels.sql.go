@@ -444,30 +444,21 @@ const teamleadRecentImports = `-- name: TeamleadRecentImports :many
 SELECT id, team_id, uploaded_by, scope_type, direction, shift_id, accounting_period_id, trader_id, file_name, file_hash, rows_count, status, superseded_by_batch_id, error_message, created_at, applied_at
 FROM import_batches
 WHERE team_id = $1
-  AND scope_type = 'trader_shift'
+  AND scope_type = 'teamlead_period'
+  AND accounting_period_id IS NULL
   AND direction = $2
-  AND ($3::bigint IS NULL OR trader_id = $3::bigint)
-  AND (COALESCE(cardinality($4::bigint[]), 0) = 0 OR trader_id = ANY($4::bigint[]))
 ORDER BY created_at DESC, id DESC
-LIMIT $5
+LIMIT $3
 `
 
 type TeamleadRecentImportsParams struct {
 	TeamID     int64
 	Direction  string
-	TraderID   pgtype.Int8
-	TraderIds  []int64
 	LimitCount int32
 }
 
 func (q *Queries) TeamleadRecentImports(ctx context.Context, arg TeamleadRecentImportsParams) ([]ImportBatch, error) {
-	rows, err := q.db.Query(ctx, teamleadRecentImports,
-		arg.TeamID,
-		arg.Direction,
-		arg.TraderID,
-		arg.TraderIds,
-		arg.LimitCount,
-	)
+	rows, err := q.db.Query(ctx, teamleadRecentImports, arg.TeamID, arg.Direction, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}

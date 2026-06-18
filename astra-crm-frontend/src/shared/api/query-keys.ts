@@ -27,6 +27,9 @@ export const queryKeys = {
       ["teamlead", direction, "dashboard", params] as const,
     orders: (direction: "inbound" | "outbound", params?: Record<string, unknown>) =>
       ["teamlead", direction, "orders", params] as const,
+    reconciliation: (direction: "inbound" | "outbound") => ["teamlead", direction, "reconciliation"] as const,
+    reconciliationItems: (direction: "inbound" | "outbound") =>
+      ["teamlead", direction, "reconciliation", "items"] as const,
     audit: (params?: Record<string, unknown>) => ["teamlead", "audit", params] as const,
   },
   trader: {

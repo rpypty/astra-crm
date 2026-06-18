@@ -1725,6 +1725,88 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ReconciliationResponse" }
         default: { $ref: "#/components/responses/Error" }
+  /teamlead/inbound/reconciliation/start:
+    post:
+      responses:
+        "201":
+          description: Teamlead inbound reconciliation started for latest uploaded CSV
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/outbound/reconciliation/start:
+    post:
+      responses:
+        "201":
+          description: Teamlead outbound reconciliation started for latest uploaded CSV
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/inbound/reconciliation/items:
+    get:
+      responses:
+        "200":
+          description: Latest teamlead inbound reconciliation items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationItemsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/outbound/reconciliation/items:
+    get:
+      responses:
+        "200":
+          description: Latest teamlead outbound reconciliation items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationItemsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/inbound/reconciliation/{runId}/accept:
+    post:
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [comment]
+              properties:
+                comment: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Teamlead inbound mismatch accepted with required comment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/outbound/reconciliation/{runId}/accept:
+    post:
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [comment]
+              properties:
+                comment: { type: string, minLength: 1 }
+      responses:
+        "200":
+          description: Teamlead outbound mismatch accepted with required comment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
   /teamlead/periods:
     get:
       responses:

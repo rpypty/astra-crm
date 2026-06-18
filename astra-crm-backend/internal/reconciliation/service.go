@@ -24,10 +24,12 @@ type Store interface {
 	AcceptTraderOutbound(ctx context.Context, record AcceptTraderOutboundRecord) (Run, error)
 	RecalculateTeamleadPeriodInbound(ctx context.Context, record RecalculateTeamleadPeriodInboundRecord) (Run, error)
 	RecalculateTeamleadPeriodOutbound(ctx context.Context, record RecalculateTeamleadPeriodOutboundRecord) (Run, error)
+	RecalculateTeamleadCurrent(ctx context.Context, record RecalculateTeamleadCurrentRecord) (Run, error)
 	LatestTeamleadPeriodInbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error)
 	LatestTeamleadPeriodOutbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error)
 	LatestTeamleadInbound(ctx context.Context, teamID int64) (Run, error)
 	LatestTeamleadOutbound(ctx context.Context, teamID int64) (Run, error)
+	AcceptTeamleadCurrent(ctx context.Context, record AcceptTeamleadCurrentRecord) (Run, error)
 	ListItems(ctx context.Context, runID int64) ([]Item, error)
 	ListActiveTeamleadInboundPeriodScopes(ctx context.Context, teamID int64) ([]TeamleadInboundPeriodScope, error)
 	ListActiveTeamleadOutboundPeriodScopes(ctx context.Context, teamID int64) ([]TeamleadOutboundPeriodScope, error)
@@ -75,6 +77,11 @@ type RecalculateTeamleadPeriodOutboundParams struct {
 	ImportBatchID      *int64
 }
 
+type RecalculateTeamleadCurrentParams struct {
+	TeamID    int64
+	Direction string
+}
+
 type AcceptTraderInboundParams struct {
 	ActorID  int64
 	TeamID   int64
@@ -89,6 +96,14 @@ type AcceptTraderOutboundParams struct {
 	TraderID int64
 	RunID    int64
 	Comment  string
+}
+
+type AcceptTeamleadCurrentParams struct {
+	ActorID   int64
+	TeamID    int64
+	Direction string
+	RunID     int64
+	Comment   string
 }
 
 func (s *Service) RecalculateTraderInbound(ctx context.Context, params RecalculateTraderInboundParams) (Run, error) {
@@ -138,6 +153,17 @@ func (s *Service) RecalculateTeamleadPeriodOutbound(ctx context.Context, params 
 		TeamID:             params.TeamID,
 		AccountingPeriodID: params.AccountingPeriodID,
 		ImportBatchID:      params.ImportBatchID,
+	})
+}
+
+func (s *Service) RecalculateTeamleadCurrent(ctx context.Context, params RecalculateTeamleadCurrentParams) (Run, error) {
+	if params.TeamID <= 0 || !isSupportedDirection(params.Direction) {
+		return Run{}, ErrInvalidInput
+	}
+
+	return s.store.RecalculateTeamleadCurrent(ctx, RecalculateTeamleadCurrentRecord{
+		TeamID:    params.TeamID,
+		Direction: params.Direction,
 	})
 }
 
@@ -203,6 +229,24 @@ func (s *Service) LatestTeamleadOutbound(ctx context.Context, teamID int64) (Run
 	}
 
 	return s.store.LatestTeamleadOutbound(ctx, teamID)
+}
+
+func (s *Service) ListTeamleadInboundItems(ctx context.Context, teamID int64) ([]Item, error) {
+	run, err := s.LatestTeamleadInbound(ctx, teamID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.store.ListItems(ctx, run.ID)
+}
+
+func (s *Service) ListTeamleadOutboundItems(ctx context.Context, teamID int64) ([]Item, error) {
+	run, err := s.LatestTeamleadOutbound(ctx, teamID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.store.ListItems(ctx, run.ID)
 }
 
 func (s *Service) ListTeamleadPeriodInboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]Item, error) {
@@ -323,6 +367,37 @@ func (s *Service) AcceptTraderOutbound(ctx context.Context, params AcceptTraderO
 	return run, nil
 }
 
+func (s *Service) AcceptTeamleadCurrent(ctx context.Context, params AcceptTeamleadCurrentParams) (Run, error) {
+	comment := strings.TrimSpace(params.Comment)
+	if params.ActorID <= 0 || params.TeamID <= 0 || params.RunID <= 0 || !isSupportedDirection(params.Direction) || comment == "" {
+		return Run{}, ErrInvalidInput
+	}
+
+	run, err := s.store.AcceptTeamleadCurrent(ctx, AcceptTeamleadCurrentRecord{
+		RunID:   params.RunID,
+		TeamID:  params.TeamID,
+		ActorID: params.ActorID,
+		Comment: comment,
+	})
+	if err != nil {
+		return Run{}, err
+	}
+
+	if err := s.writeAudit(ctx, audit.Event{
+		TeamID:     params.TeamID,
+		ActorID:    params.ActorID,
+		Action:     audit.ActionReconciliationAcceptedWithComment,
+		EntityType: "reconciliation_run",
+		EntityID:   strconv.FormatInt(run.ID, 10),
+		After:      PublicRunFromDomain(run),
+		Comment:    &comment,
+	}); err != nil {
+		return Run{}, err
+	}
+
+	return run, nil
+}
+
 func (s *Service) AfterImportApplied(ctx context.Context, result imports.ApplyResult) error {
 	switch result.Batch.ScopeType {
 	case imports.ScopeTypeTraderShift:
@@ -392,6 +467,10 @@ func (s *Service) afterTeamleadPeriodImportApplied(ctx context.Context, result i
 	default:
 		return nil
 	}
+}
+
+func isSupportedDirection(direction string) bool {
+	return direction == imports.DirectionInbound || direction == imports.DirectionOutbound
 }
 
 func (s *Service) recalculateActiveTeamleadInboundPeriods(ctx context.Context, teamID int64) error {

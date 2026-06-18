@@ -171,7 +171,10 @@ SET is_active = FALSE,
     deactivated_at = now()
 WHERE team_id = sqlc.arg(team_id)
   AND scope_type = 'teamlead_period'
-  AND accounting_period_id = sqlc.arg(accounting_period_id)
+  AND (
+      accounting_period_id = sqlc.narg(accounting_period_id)
+      OR (sqlc.narg(accounting_period_id)::bigint IS NULL AND accounting_period_id IS NULL)
+  )
   AND direction = sqlc.arg(direction)
   AND is_active = TRUE
 RETURNING id;
@@ -195,7 +198,10 @@ SET status = 'superseded',
     superseded_by_batch_id = sqlc.arg(new_batch_id)
 WHERE team_id = sqlc.arg(team_id)
   AND scope_type = 'teamlead_period'
-  AND accounting_period_id = sqlc.arg(accounting_period_id)
+  AND (
+      accounting_period_id = sqlc.narg(accounting_period_id)
+      OR (sqlc.narg(accounting_period_id)::bigint IS NULL AND accounting_period_id IS NULL)
+  )
   AND direction = sqlc.arg(direction)
   AND id <> sqlc.arg(new_batch_id)
   AND superseded_by_batch_id IS NULL
@@ -284,7 +290,7 @@ SELECT
     'teamlead_period',
     sqlc.arg(direction),
     NULL,
-    sqlc.arg(accounting_period_id),
+    sqlc.narg(accounting_period_id),
     sqlc.arg(import_batch_id),
     sqlc.arg(import_row_id),
     sqlc.arg(external_order_id),

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/ashpak/astra-crm-backend/internal/reconciliation"
 	"github.com/go-chi/chi/v5"
@@ -12,6 +13,10 @@ import (
 type TeamleadReconciliationService interface {
 	LatestTeamleadInbound(ctx context.Context, teamID int64) (reconciliation.Run, error)
 	LatestTeamleadOutbound(ctx context.Context, teamID int64) (reconciliation.Run, error)
+	RecalculateTeamleadCurrent(ctx context.Context, params reconciliation.RecalculateTeamleadCurrentParams) (reconciliation.Run, error)
+	ListTeamleadInboundItems(ctx context.Context, teamID int64) ([]reconciliation.Item, error)
+	ListTeamleadOutboundItems(ctx context.Context, teamID int64) ([]reconciliation.Item, error)
+	AcceptTeamleadCurrent(ctx context.Context, params reconciliation.AcceptTeamleadCurrentParams) (reconciliation.Run, error)
 	LatestTraderInboundByShift(ctx context.Context, teamID int64, shiftID int64) (reconciliation.Run, error)
 	LatestTraderOutboundByShift(ctx context.Context, teamID int64, shiftID int64) (reconciliation.Run, error)
 	ListTraderInboundItemsByShift(ctx context.Context, teamID int64, shiftID int64) ([]reconciliation.Item, error)
@@ -42,6 +47,30 @@ func (h *TeamleadReconciliationHandler) LatestOutbound(w http.ResponseWriter, r 
 	h.latest(w, r, "outbound")
 }
 
+func (h *TeamleadReconciliationHandler) StartInbound(w http.ResponseWriter, r *http.Request) {
+	h.start(w, r, "inbound")
+}
+
+func (h *TeamleadReconciliationHandler) StartOutbound(w http.ResponseWriter, r *http.Request) {
+	h.start(w, r, "outbound")
+}
+
+func (h *TeamleadReconciliationHandler) InboundItems(w http.ResponseWriter, r *http.Request) {
+	h.currentItems(w, r, "inbound")
+}
+
+func (h *TeamleadReconciliationHandler) OutboundItems(w http.ResponseWriter, r *http.Request) {
+	h.currentItems(w, r, "outbound")
+}
+
+func (h *TeamleadReconciliationHandler) AcceptInbound(w http.ResponseWriter, r *http.Request) {
+	h.accept(w, r, "inbound")
+}
+
+func (h *TeamleadReconciliationHandler) AcceptOutbound(w http.ResponseWriter, r *http.Request) {
+	h.accept(w, r, "outbound")
+}
+
 func (h *TeamleadReconciliationHandler) latest(w http.ResponseWriter, r *http.Request, direction string) {
 	actor, ok := CurrentUser(r.Context())
 	if !ok {
@@ -66,6 +95,109 @@ func (h *TeamleadReconciliationHandler) latest(w http.ResponseWriter, r *http.Re
 		RespondError(w, NotFoundError())
 		return
 	}
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, reconciliationRunResponse{
+		Run: reconciliation.PublicRunFromDomain(run),
+	})
+}
+
+func (h *TeamleadReconciliationHandler) start(w http.ResponseWriter, r *http.Request, direction string) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	run, err := h.service.RecalculateTeamleadCurrent(r.Context(), reconciliation.RecalculateTeamleadCurrentParams{
+		TeamID:    actor.TeamID,
+		Direction: direction,
+	})
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusCreated, reconciliationRunResponse{
+		Run: reconciliation.PublicRunFromDomain(run),
+	})
+}
+
+func (h *TeamleadReconciliationHandler) currentItems(w http.ResponseWriter, r *http.Request, direction string) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	var (
+		items []reconciliation.Item
+		err   error
+	)
+	switch direction {
+	case "inbound":
+		items, err = h.service.ListTeamleadInboundItems(r.Context(), actor.TeamID)
+	case "outbound":
+		items, err = h.service.ListTeamleadOutboundItems(r.Context(), actor.TeamID)
+	default:
+		RespondError(w, NotFoundError())
+		return
+	}
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, reconciliationItemsResponse{
+		Items: reconciliation.PublicItemsFromDomain(items),
+	})
+}
+
+func (h *TeamleadReconciliationHandler) accept(w http.ResponseWriter, r *http.Request, direction string) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	runID, ok := reconciliationRunIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var request acceptReconciliationRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	if strings.TrimSpace(request.Comment) == "" {
+		RespondError(w, ValidationError(map[string]string{
+			"comment": "Комментарий обязателен при подтверждении расхождения",
+		}))
+		return
+	}
+
+	run, err := h.service.AcceptTeamleadCurrent(r.Context(), reconciliation.AcceptTeamleadCurrentParams{
+		ActorID:   actor.ID,
+		TeamID:    actor.TeamID,
+		Direction: direction,
+		RunID:     runID,
+		Comment:   request.Comment,
+	})
 	if err != nil {
 		RespondError(w, mapReconciliationError(err))
 		return

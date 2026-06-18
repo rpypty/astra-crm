@@ -79,6 +79,12 @@ type RecalculateTeamleadPeriodOutboundRecord struct {
 	ImportBatchID      *int64
 }
 
+type RecalculateTeamleadCurrentRecord struct {
+	TeamID        int64
+	Direction     string
+	ImportBatchID *int64
+}
+
 type AcceptTraderInboundRecord struct {
 	RunID    int64
 	TeamID   int64
@@ -93,6 +99,13 @@ type AcceptTraderOutboundRecord struct {
 	TraderID int64
 	ActorID  int64
 	Comment  string
+}
+
+type AcceptTeamleadCurrentRecord struct {
+	RunID   int64
+	TeamID  int64
+	ActorID int64
+	Comment string
 }
 
 type TeamleadInboundPeriodScope struct {

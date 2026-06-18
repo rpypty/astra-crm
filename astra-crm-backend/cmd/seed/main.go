@@ -128,8 +128,8 @@ func upsertUser(ctx context.Context, tx pgx.Tx, teamID int64, role string, login
 	if err := tx.QueryRow(ctx, `
 INSERT INTO users(team_id, role, login, password_hash, status)
 VALUES ($1, $2, $3, $4, 'active')
-ON CONFLICT (team_id, login)
-DO UPDATE SET role = EXCLUDED.role, password_hash = EXCLUDED.password_hash, status = 'active', updated_at = now(), deleted_at = NULL
+ON CONFLICT (login)
+DO UPDATE SET team_id = EXCLUDED.team_id, role = EXCLUDED.role, password_hash = EXCLUDED.password_hash, status = 'active', updated_at = now(), deleted_at = NULL
 RETURNING id`, teamID, role, login, passwordHash).Scan(&id); err != nil {
 		return 0, fmt.Errorf("upsert user %s: %w", login, err)
 	}
@@ -155,9 +155,10 @@ DO UPDATE SET salary_rate_bps = EXCLUDED.salary_rate_bps, external_worker_name =
 func upsertRequisite(ctx context.Context, tx pgx.Tx, teamID int64, createdBy int64, phone string, methodType string, proxy string) (int64, error) {
 	var id int64
 	err := tx.QueryRow(ctx, `
-INSERT INTO requisites(team_id, phone, method_type, proxy, status, created_by)
-SELECT $1, $2, $3, $4, 'active', $5
+INSERT INTO requisites(team_id, phone, method_type, bank_code, proxy, status, created_by)
+SELECT $1, $2, $3, 'sber', $4, 'active', $5
 WHERE NOT EXISTS (SELECT 1 FROM requisites WHERE team_id = $1 AND phone = $2)
+  AND NOT EXISTS (SELECT 1 FROM requisites WHERE proxy = $4 AND deleted_at IS NULL)
 RETURNING id`, teamID, phone, methodType, proxy, createdBy).Scan(&id)
 	if err == nil {
 		return id, nil
@@ -167,9 +168,20 @@ RETURNING id`, teamID, phone, methodType, proxy, createdBy).Scan(&id)
 	}
 	if err := tx.QueryRow(ctx, `
 UPDATE requisites
-SET method_type = $3, proxy = $4, status = 'active', updated_at = now(), deleted_at = NULL
+SET method_type = $3, bank_code = 'sber', proxy = $4, status = 'active', updated_at = now(), deleted_at = NULL
 WHERE team_id = $1 AND phone = $2
 RETURNING id`, teamID, phone, methodType, proxy).Scan(&id); err != nil {
+		if err == pgx.ErrNoRows {
+			if err := tx.QueryRow(ctx, `
+UPDATE requisites
+SET team_id = $1, phone = $2, method_type = $3, bank_code = 'sber', status = 'active', updated_at = now(), deleted_at = NULL
+WHERE proxy = $4 AND deleted_at IS NULL
+RETURNING id`, teamID, phone, methodType, proxy).Scan(&id); err == nil {
+				return id, nil
+			} else {
+				return 0, fmt.Errorf("update requisite by proxy %s: %w", proxy, err)
+			}
+		}
 		return 0, fmt.Errorf("update requisite %s: %w", phone, err)
 	}
 	return id, nil

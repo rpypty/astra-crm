@@ -1,26 +1,14 @@
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
-import { CalendarDays, Copy, Eye, FileText, History, Pencil, Plus, UserRound, X } from "lucide-react";
-import { useCallback, useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
-import { useForm } from "react-hook-form";
-import { Bar, CartesianGrid, Cell, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { z } from "zod";
-import { DateTimeCell } from "@/shared/ui/date-time-cell";
-import { EmptyState } from "@/shared/ui/empty-state";
-import { FormField } from "@/shared/ui/form-field";
-import { AcceptMismatchDialog, MismatchAlert } from "@/features/import-csv/ui/import-components";
-import { MoneyCell } from "@/entities/order/ui/money-cell";
-import { OrderDashboard } from "@/widgets/order-dashboard/ui/order-dashboard";
-import { PageHeader } from "@/shared/ui/page-header";
-import { PeriodFilterBar } from "@/features/period-filter/ui/period-filter-bar";
-import { ReportReconciliationDetails } from "@/features/reconciliation/ui/report-reconciliation-details";
-import { RequisiteCell } from "@/entities/requisite/ui/requisite-cell";
+import { AlertTriangle, ArrowDownLeft, ArrowUpRight, CheckCircle2, FileText, RefreshCw, Upload, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AcceptMismatchDialog } from "@/features/import-csv/ui/import-components";
 import { StatusBadge } from "@/entities/status/ui/status-badge";
-import { UserCell } from "@/entities/user/ui/user-cell";
+import { PageHeader } from "@/shared/ui/page-header";
+import { EmptyState } from "@/shared/ui/empty-state";
 import { DataTable } from "@/shared/ui/data-table";
 import { Button } from "@/shared/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
+import { Card, CardContent } from "@/shared/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -28,150 +16,63 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/shared/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/shared/ui/dropdown-menu";
-import { Input } from "@/shared/ui/input";
-import { SearchableSelect, type SearchableSelectOption } from "@/shared/ui/searchable-select";
-import { Select } from "@/shared/ui/select";
-import { Textarea } from "@/shared/ui/textarea";
-import type {
-  AccountingPeriod,
-  AuditLogEntry,
-  Bank,
-  Order,
-  OrderDirection,
-  Requisite,
-  RequisiteAssignmentEvent,
-  RequisiteAssignmentWorkRow,
-  RequisiteReport,
-  RequisiteReportShift,
-  ReconciliationItem,
-  ReconciliationSummary,
-  ShiftReport,
-  ShiftRequisite,
-  Trader,
-} from "@/shared/model/domain";
+import type { OrderDirection, OrderImportHistoryItem, ReconciliationItem, ReconciliationSummary } from "@/shared/model/domain";
 import { api } from "@/shared/api/api";
-import { filterOrdersBySearch } from "@/shared/lib/order-filters";
-import type { PeriodFilter } from "@/shared/lib/period-filter";
-import { usePersistentPeriodFilter } from "@/shared/lib/period-filter";
 import { queryKeys } from "@/shared/api/query-keys";
-import {
-  bpsToPercent,
-  formatCardNumber,
-  formatDateTime,
-  formatMoneyMinor,
-  formatRussianPhone,
-  isValidRussianPhone,
-  normalizeRussianPhone,
-  parseMoneyToMinor,
-  percentToBps,
-} from "@/shared/lib/utils";
-import { MetricCard } from "@/shared/ui/metric-card";
-import { ReadOnlyField } from "@/shared/ui/read-only-field";
+import { cn, formatDateTime, formatMoneyMinor } from "@/shared/lib/utils";
 
-const traderSchema = z
-  .object({
-    id: z.number().optional(),
-    login: z.string().min(1, "Введите логин"),
-    password: z.string().optional(),
-    externalWorkerName: z.string().min(1, "Введите external worker name"),
-    salaryPercent: z.coerce.number().min(0, "Минимум 0").max(100, "Максимум 100"),
-    status: z.enum(["active", "disabled"]),
-  })
-  .superRefine((values, context) => {
-    if (!values.id && !values.password) {
-      context.addIssue({ code: "custom", path: ["password"], message: "Пароль обязателен при создании" });
-    }
-  });
-
-const requisiteSchema = z.object({
-  id: z.number().optional(),
-  phone: z.string().min(1, "Введите телефон").refine(isValidRussianPhone, "Введите телефон в формате +7 (XXX) XXX-XX-XX"),
-  bankCode: z.string().min(1, "Выберите банк"),
-  proxy: z.string().min(1, "Введите proxy"),
-  employeeComment: z.string().optional(),
-  assignedTraderId: z.string(),
-  status: z.enum(["active", "archived"]),
-});
-
-const planSchema = z.object({
-  assignmentId: z.number().optional(),
-  requisiteId: z.string().min(1, "Выберите реквизит"),
-  traderId: z.string().min(1, "Выберите трейдера"),
-  assignedForDate: z.string().min(1, "Выберите дату"),
-  targetTurnover: z.string().min(1, "Введите лимит").refine((value) => parseMoneyToMinor(value) > 0, "Сумма должна быть больше 0"),
-  comment: z.string().optional(),
-});
-
-type TraderForm = z.infer<typeof traderSchema>;
-type RequisiteForm = z.infer<typeof requisiteSchema>;
-type PlanForm = z.infer<typeof planSchema>;
-
-type TeamleadRequisiteTab = "all" | "activity" | "planning";
-type RequisiteReportTarget = {
+type ToastMessage = {
   id: number;
-  phone: string;
-  bankName: string;
+  title: string;
+  message: string;
 };
 
-const TEAMLEAD_PERIOD_FILTER_STORAGE_KEY = "astra-crm:teamlead-period-filter";
+type TeamleadMismatchRow = {
+  id: string;
+  issueType: string;
+  issueLabel: string;
+  requisite: string;
+  trader: string;
+  innerId: string;
+  csvAmountMinor?: number;
+  crmAmountMinor?: number;
+  diffMinor?: number;
+  csvCount?: number;
+  crmCount?: number;
+  csvStatus: string;
+  crmStatus: string;
+  createdAt: string;
+};
 
 export function TeamleadPeriodsPage() {
-  const periodsQuery = useQuery({ queryKey: queryKeys.teamlead.periods, queryFn: api.periods.list });
-  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
-  const [detailsPeriod, setDetailsPeriod] = useState<AccountingPeriod | null>(null);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
-  const [selectedPeriodId, setSelectedPeriodId] = useState<number | undefined>(undefined);
-  const periods = periodsQuery.data ?? [];
-  useEffect(() => {
-    if (!selectedPeriodId && periods.length) {
-      setSelectedPeriodId(periods[0].id);
-    }
-  }, [periods, selectedPeriodId]);
-  const selectedPeriod = periods.find((period) => period.id === selectedPeriodId);
-  const inboundPeriodQuery = useQuery({
-    queryKey: queryKeys.teamlead.periodReconciliation(selectedPeriodId, "inbound"),
-    queryFn: () => api.teamleadReports.periodReconciliation(selectedPeriodId ?? 0, "inbound"),
-    enabled: Boolean(selectedPeriodId),
+  const inboundReconciliationQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliation("inbound"),
+    queryFn: () => api.orders.reconciliation("teamlead", "inbound"),
   });
-  const outboundPeriodQuery = useQuery({
-    queryKey: queryKeys.teamlead.periodReconciliation(selectedPeriodId, "outbound"),
-    queryFn: () => api.teamleadReports.periodReconciliation(selectedPeriodId ?? 0, "outbound"),
-    enabled: Boolean(selectedPeriodId),
+  const outboundReconciliationQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliation("outbound"),
+    queryFn: () => api.orders.reconciliation("teamlead", "outbound"),
   });
   const inboundItemsQuery = useQuery({
-    queryKey: queryKeys.teamlead.periodReconciliationItems(selectedPeriodId, "inbound"),
-    queryFn: () => api.teamleadReports.periodReconciliationItems(selectedPeriodId ?? 0, "inbound"),
-    enabled: Boolean(selectedPeriodId),
+    queryKey: queryKeys.teamlead.reconciliationItems("inbound"),
+    queryFn: () => api.orders.reconciliationItems("teamlead", "inbound"),
   });
   const outboundItemsQuery = useQuery({
-    queryKey: queryKeys.teamlead.periodReconciliationItems(selectedPeriodId, "outbound"),
-    queryFn: () => api.teamleadReports.periodReconciliationItems(selectedPeriodId ?? 0, "outbound"),
-    enabled: Boolean(selectedPeriodId),
+    queryKey: queryKeys.teamlead.reconciliationItems("outbound"),
+    queryFn: () => api.orders.reconciliationItems("teamlead", "outbound"),
   });
-  const periodIssueCount = (inboundItemsQuery.data?.length ?? 0) + (outboundItemsQuery.data?.length ?? 0);
-  const columns = useMemo<ColumnDef<AccountingPeriod>[]>(
-    () => [
-      { accessorKey: "title", header: "Сверка" },
-      { accessorKey: "dateRange", header: "Даты" },
-      { accessorKey: "inboundStatus", header: "Инвойсы", cell: ({ row }) => <StatusBadge status={row.original.inboundStatus} /> },
-      { accessorKey: "outboundStatus", header: "Выплаты", cell: ({ row }) => <StatusBadge status={row.original.outboundStatus} /> },
-      { accessorKey: "status", header: "Статус", cell: ({ row }) => <StatusBadge status={row.original.status} /> },
-    ],
-    [],
-  );
+
+  const hasMismatch =
+    inboundReconciliationQuery.data?.status === "mismatch" ||
+    outboundReconciliationQuery.data?.status === "mismatch";
+  const issueCount = (inboundItemsQuery.data?.length ?? 0) + (outboundItemsQuery.data?.length ?? 0);
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Сверка"
-        description="История месячных сверок CSV тимлида с оборотами CRM."
+        description="CSV тимлида обновляет существующие ордера по innerId и показывает изменения статусов, сумм и назначений."
         actions={
           <Button type="button" onClick={() => setUploadDialogOpen(true)}>
             <FileText className="h-4 w-4" />
@@ -179,441 +80,291 @@ export function TeamleadPeriodsPage() {
           </Button>
         }
       />
+
       <TeamleadReconciliationStatusCard
-        period={selectedPeriod}
-        inbound={inboundPeriodQuery.data}
-        outbound={outboundPeriodQuery.data}
-        issueCount={periodIssueCount}
-        isLoading={periodsQuery.isLoading}
+        inbound={inboundReconciliationQuery.data}
+        outbound={outboundReconciliationQuery.data}
+        issueCount={issueCount}
+        hasMismatch={hasMismatch}
+        isLoading={inboundReconciliationQuery.isLoading || outboundReconciliationQuery.isLoading}
       />
-      <TeamleadReconciliationHistoryCard
-        periods={periods}
-        columns={columns}
-        pagination={pagination}
-        onPaginationChange={setPagination}
-        isLoading={periodsQuery.isLoading}
-        error={periodsQuery.error instanceof Error ? periodsQuery.error.message : null}
-        onOpenPeriod={setDetailsPeriod}
-      />
-      <PeriodDetailsDialog period={detailsPeriod} onClose={() => setDetailsPeriod(null)} />
-      <TeamleadReconciliationUploadDialog
-        open={uploadDialogOpen}
-        onOpenChange={setUploadDialogOpen}
-        periods={periods}
-        selectedPeriod={selectedPeriod}
-        selectedPeriodId={selectedPeriodId}
-        onPeriodChange={setSelectedPeriodId}
-        inbound={inboundPeriodQuery.data}
-        outbound={outboundPeriodQuery.data}
+
+      <TeamleadReconciliationResultsTabs
+        inboundSummary={inboundReconciliationQuery.data}
+        outboundSummary={outboundReconciliationQuery.data}
         inboundItems={inboundItemsQuery.data ?? []}
-        isLoading={periodsQuery.isLoading || inboundPeriodQuery.isLoading || outboundPeriodQuery.isLoading}
-        error={
-          periodsQuery.error instanceof Error
-            ? periodsQuery.error.message
-            : inboundPeriodQuery.error instanceof Error
-              ? inboundPeriodQuery.error.message
-              : outboundPeriodQuery.error instanceof Error
-                ? outboundPeriodQuery.error.message
-                : null
-        }
+        outboundItems={outboundItemsQuery.data ?? []}
+        inboundLoading={inboundReconciliationQuery.isLoading || inboundItemsQuery.isLoading}
+        outboundLoading={outboundReconciliationQuery.isLoading || outboundItemsQuery.isLoading}
       />
+
+      <TeamleadReconciliationUploadDialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen} />
     </div>
   );
 }
 
 function TeamleadReconciliationStatusCard({
-  period,
   inbound,
   outbound,
   issueCount,
+  hasMismatch,
   isLoading,
 }: {
-  period?: AccountingPeriod;
   inbound?: ReconciliationSummary | null;
   outbound?: ReconciliationSummary | null;
   issueCount: number;
+  hasMismatch: boolean;
   isLoading?: boolean;
 }) {
-  if (isLoading) return <EmptyState title="Загружаем сверки" />;
-  if (!period) {
+  if (isLoading) return <EmptyState title="Загружаем сверку" />;
+  if (!inbound && !outbound) {
     return (
       <Card>
         <CardContent className="p-4">
           <EmptyState
-            title="Истории сверок пока нет"
-            description="Создайте accounting period и загрузите CSV тимлида через кнопку «Загрузить сверку»."
+            title="Сверка не запускалась"
+            description="Загрузите CSV входящих или выплат, затем нажмите «Начать сверку»."
           />
         </CardContent>
       </Card>
     );
   }
 
-  const hasMismatch = inbound?.status === "mismatch" || outbound?.status === "mismatch" || issueCount > 0;
-
   return (
-    <Card className={hasMismatch ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}>
+    <Card className={hasMismatch || issueCount > 0 ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}>
       <CardContent className="grid gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold">Последняя сверка: {period.title}</span>
-            <StatusBadge status={period.status} />
-            {hasMismatch ? <span className="text-sm font-medium text-amber-900">есть расхождения</span> : <span className="text-sm font-medium text-emerald-800">актуально</span>}
+            <span className="font-semibold">Текущая сверка тимлида</span>
+            {hasMismatch ? (
+              <span className="inline-flex items-center gap-1 text-sm font-medium text-amber-900">
+                <AlertTriangle className="h-4 w-4" />
+                есть расхождения
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-800">
+                <CheckCircle2 className="h-4 w-4" />
+                без критичных расхождений
+              </span>
+            )}
           </div>
           <div className="text-sm text-muted-foreground">
-            Загрузка CSV тимлида актуализирует транзакции за большой период: статусы по innerId обновляются, затем пересчитывается оборот и расхождения по реквизитам.
+            Импорт обновляет транзакции в базе по `innerId`. Сверка показывает отличия нового CSV от уже сохраненных trader-scope ордеров.
           </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
-          <ChecklistLine ok={inbound?.status === "matched"} label="Инвойсы" detail={periodStatusDetail(inbound)} />
-          <ChecklistLine ok={outbound?.status === "matched"} label="Выплаты" detail={periodStatusDetail(outbound)} />
-          <ChecklistLine ok={issueCount === 0} label="Проблемные реквизиты" detail={issueCount ? `${issueCount} строк` : "нет"} />
+          <StatusLine label="Входящие" summary={inbound} />
+          <StatusLine label="Выплаты" summary={outbound} />
+          <div className={issueCount ? "rounded-md border border-amber-200 bg-white/70 p-3" : "rounded-md border border-emerald-200 bg-white/70 p-3"}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium">Расхождения</span>
+              <span className="text-sm font-semibold">{issueCount}</span>
+            </div>
+          </div>
         </div>
       </CardContent>
     </Card>
   );
 }
 
-function ChecklistLine({ ok, label, detail }: { ok: boolean; label: string; detail?: string }) {
+function StatusLine({ label, summary }: { label: string; summary?: ReconciliationSummary | null }) {
   return (
-    <div className={ok ? "rounded-md border border-emerald-200 bg-white/70 p-3" : "rounded-md border border-amber-200 bg-white/70 p-3"}>
+    <div className={summary?.status === "mismatch" ? "rounded-md border border-amber-200 bg-white/70 p-3" : "rounded-md border border-emerald-200 bg-white/70 p-3"}>
       <div className="flex items-center justify-between gap-2">
-        <span className={ok ? "text-sm font-medium text-emerald-900" : "text-sm font-medium text-amber-950"}>{label}</span>
-        <StatusBadge status={ok ? "matched" : "mismatch"} />
+        <span className="text-sm font-medium">{label}</span>
+        {summary ? <StatusBadge status={summary.status} /> : <span className="text-xs text-muted-foreground">нет запуска</span>}
       </div>
-      {detail ? <div className="mt-1 text-xs text-muted-foreground">{detail}</div> : null}
+      <div className="mt-1 text-xs text-muted-foreground">{summary ? formatMoneyMinor(summary.diffMinor) : "CSV ещё не сверяли"}</div>
     </div>
   );
 }
 
-function periodStatusDetail(summary?: ReconciliationSummary | null) {
-  if (!summary) return "не запускалась";
-  if (summary.status === "matched") return "сошлось";
-  if (summary.status === "accepted_with_comment") return "принято с комментарием";
-  return formatMoneyMinor(summary.diffMinor);
-}
-
-function TeamleadReconciliationHistoryCard({
-  periods,
-  columns,
-  pagination,
-  onPaginationChange,
-  isLoading,
-  error,
-  onOpenPeriod,
+function TeamleadReconciliationResultsTabs({
+  inboundSummary,
+  outboundSummary,
+  inboundItems,
+  outboundItems,
+  inboundLoading,
+  outboundLoading,
 }: {
-  periods: AccountingPeriod[];
-  columns: ColumnDef<AccountingPeriod>[];
-  pagination: PaginationState;
-  onPaginationChange: (pagination: PaginationState) => void;
-  isLoading?: boolean;
-  error?: string | null;
-  onOpenPeriod: (period: AccountingPeriod) => void;
+  inboundSummary?: ReconciliationSummary | null;
+  outboundSummary?: ReconciliationSummary | null;
+  inboundItems: ReconciliationItem[];
+  outboundItems: ReconciliationItem[];
+  inboundLoading?: boolean;
+  outboundLoading?: boolean;
 }) {
+  const [direction, setDirection] = useState<OrderDirection>("inbound");
+  const isInbound = direction === "inbound";
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>История сверок</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <DataTable
-          columns={columns}
-          data={periods}
-          rowCount={periods.length}
-          pagination={pagination}
-          onPaginationChange={onPaginationChange}
-          isLoading={isLoading}
-          error={error}
-          emptyTitle="Сверок пока нет"
-          emptyDescription="Записи появятся после создания accounting period."
-          onRowClick={onOpenPeriod}
-          actions={[{ label: "Детали", onSelect: onOpenPeriod }]}
-        />
-      </CardContent>
-    </Card>
+    <div className="space-y-3">
+      <TeamleadDirectionTabs
+        value={direction}
+        onChange={setDirection}
+        inboundSummary={inboundSummary}
+        outboundSummary={outboundSummary}
+        inboundIssueCount={inboundItems.length}
+        outboundIssueCount={outboundItems.length}
+      />
+      <TeamleadReconciliationResult
+        title={isInbound ? "Входы" : "Выходы"}
+        direction={direction}
+        summary={isInbound ? inboundSummary : outboundSummary}
+        items={isInbound ? inboundItems : outboundItems}
+        isLoading={isInbound ? inboundLoading : outboundLoading}
+      />
+    </div>
   );
 }
 
-function TeamleadReconciliationUploadDialog({
-  open,
-  onOpenChange,
-  periods,
-  selectedPeriod,
-  selectedPeriodId,
-  onPeriodChange,
-  inbound,
-  outbound,
-  inboundItems,
-  isLoading,
-  error,
+function TeamleadDirectionTabs({
+  value,
+  onChange,
+  inboundSummary,
+  outboundSummary,
+  inboundIssueCount,
+  outboundIssueCount,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  periods: AccountingPeriod[];
-  selectedPeriod?: AccountingPeriod;
-  selectedPeriodId?: number;
-  onPeriodChange: (periodId: number | undefined) => void;
-  inbound?: ReconciliationSummary | null;
-  outbound?: ReconciliationSummary | null;
-  inboundItems: ReconciliationItem[];
-  isLoading?: boolean;
-  error?: string | null;
+  value: OrderDirection;
+  onChange: (value: OrderDirection) => void;
+  inboundSummary?: ReconciliationSummary | null;
+  outboundSummary?: ReconciliationSummary | null;
+  inboundIssueCount: number;
+  outboundIssueCount: number;
 }) {
+  const tabs = [
+    { value: "inbound" as const, label: "Входы", icon: ArrowDownLeft, summary: inboundSummary, count: inboundIssueCount },
+    { value: "outbound" as const, label: "Выходы", icon: ArrowUpRight, summary: outboundSummary, count: outboundIssueCount },
+  ];
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[1240px] p-6">
-        <DialogHeader>
-          <DialogTitle className="text-base font-semibold">Загрузить сверку</DialogTitle>
-          <DialogDescription>Выберите период, загрузите CSV тимлида и проверьте расхождения по реквизитам.</DialogDescription>
-        </DialogHeader>
-        <div className="max-h-[76vh] overflow-y-auto pr-2">
-          <TeamleadPeriodReconciliationPanel
-            periods={periods}
-            selectedPeriod={selectedPeriod}
-            selectedPeriodId={selectedPeriodId}
-            onPeriodChange={onPeriodChange}
-            inbound={inbound}
-            outbound={outbound}
-            inboundItems={inboundItems}
-            isLoading={isLoading}
-            error={error}
-          />
-        </div>
-      </DialogContent>
-    </Dialog>
+    <div className="inline-flex rounded-lg border border-border bg-white p-1">
+      {tabs.map((tab) => {
+        const Icon = tab.icon;
+        const isActive = value === tab.value;
+        return (
+          <Button
+            key={tab.value}
+            type="button"
+            variant={isActive ? "default" : "ghost"}
+            size="sm"
+            onClick={() => onChange(tab.value)}
+          >
+            <Icon className="h-4 w-4" />
+            {tab.label}
+            {tab.summary ? (
+              <span className={cn("ml-1 rounded-sm px-1.5 py-0.5 text-xs", isActive ? "bg-white/20" : "bg-slate-100 text-muted-foreground")}>
+                {tab.summary.status === "mismatch" ? tab.count : statusShortLabel(tab.summary.status)}
+              </span>
+            ) : null}
+          </Button>
+        );
+      })}
+    </div>
   );
 }
 
-function TeamleadPeriodReconciliationPanel({
-  periods,
-  selectedPeriod,
-  selectedPeriodId,
-  onPeriodChange,
-  inbound,
-  outbound,
-  inboundItems,
+function TeamleadReconciliationResult({
+  title,
+  direction,
+  summary,
+  items,
   isLoading,
-  error,
 }: {
-  periods: AccountingPeriod[];
-  selectedPeriod?: AccountingPeriod;
-  selectedPeriodId?: number;
-  onPeriodChange: (periodId: number | undefined) => void;
-  inbound?: ReconciliationSummary | null;
-  outbound?: ReconciliationSummary | null;
-  inboundItems: ReconciliationItem[];
+  title: string;
+  direction: OrderDirection;
+  summary?: ReconciliationSummary | null;
+  items: ReconciliationItem[];
   isLoading?: boolean;
-  error?: string | null;
 }) {
-  const hasPeriod = Boolean(selectedPeriodId);
-
-  return (
-    <div className="space-y-5">
-      <Card className="border-blue-200 bg-blue-50">
-        <CardContent className="p-3 text-sm text-blue-950">
-          CSV тимлида нужен не как отдельный отчет ради просмотра, а как переимпорт большого периода: строки обновляют транзакции по innerId, после чего пересчитываются обороты и остаются только реквизиты с расхождением.
+  if (isLoading) {
+    return (
+      <Card>
+        <CardContent className="p-4">
+          <EmptyState title={`${title}: загружаем сверку`} />
         </CardContent>
       </Card>
+    );
+  }
 
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold">1. Период и CSV</h2>
-        <div className="rounded-md border border-border bg-white p-4">
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div className="min-w-64">
-              <div className="mb-2 text-sm font-semibold">Месячный период</div>
-              <Select
-                value={selectedPeriodId ? String(selectedPeriodId) : ""}
-                onChange={(event) => onPeriodChange(event.target.value ? Number(event.target.value) : undefined)}
-                disabled={!periods.length}
-              >
-                {!periods.length ? <option value="">Периодов нет</option> : null}
-                {periods.map((period) => (
-                  <option key={period.id} value={period.id}>
-                    {period.title} · {period.dateRange}
-                  </option>
-                ))}
-              </Select>
-            </div>
+  if (!summary) {
+    return (
+      <Card>
+        <CardContent className="p-4">
+          <EmptyState title={`${title}: сверка не запускалась`} description="Загрузите CSV и нажмите «Начать сверку»." />
+        </CardContent>
+      </Card>
+    );
+  }
 
-            <div className="grid min-w-[520px] flex-1 gap-3 md:grid-cols-2">
-              <InlineTeamleadImportControl
-                label="Входящие"
-                direction="inbound"
-                accountingPeriodId={selectedPeriodId}
-                disabled={!selectedPeriodId}
-              />
-              <InlineTeamleadImportControl
-                label="Выплаты"
-                direction="outbound"
-                accountingPeriodId={selectedPeriodId}
-                disabled={!selectedPeriodId}
-              />
-            </div>
-          </div>
-
-          {selectedPeriod ? (
-            <div className="mt-2 text-sm text-muted-foreground">
-              {selectedPeriod.dateRange}. Повторная загрузка заменит активный CSV этого периода и запустит пересчет.
-            </div>
-          ) : null}
-
-          {error ? <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div> : null}
-          {!isLoading && !hasPeriod ? (
-            <EmptyState title="Нет accounting period" description="Создайте месячный период, чтобы загрузить CSV и запустить сверку." />
-          ) : null}
-        </div>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold">2. Результат сверки</h2>
-        <div className="grid gap-3 xl:grid-cols-2">
-          <div className="space-y-3">
-            {inbound?.status === "mismatch" ? <MismatchAlert summary={inbound} title="Есть расхождение по входящим" /> : null}
-            <ReportReconciliationDetails
-              title="Входящие за месяц"
-              summary={inbound}
-              isLoading={isLoading}
-              csvLabel="CSV тимлида"
-              crmLabel="CRM"
-              diffLabel="Расхождение"
-            />
-            <PeriodRequisiteMismatchTable items={inboundItems} isLoading={isLoading} />
-          </div>
-          <div className="space-y-3">
-            {outbound?.status === "mismatch" ? <MismatchAlert summary={outbound} title="Есть расхождение по выплатам" /> : null}
-            <ReportReconciliationDetails
-              title="Выплаты за месяц"
-              summary={outbound}
-              isLoading={isLoading}
-              csvLabel="CSV тимлида"
-              crmLabel="Выплаты трейдеров"
-              diffLabel="Расхождение"
-            />
-          </div>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function InlineTeamleadImportControl({
-  label,
-  direction,
-  accountingPeriodId,
-  disabled,
-}: {
-  label: string;
-  direction: OrderDirection;
-  accountingPeriodId?: number;
-  disabled?: boolean;
-}) {
-  const queryClient = useQueryClient();
-  const [file, setFile] = useState<File | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const uploadMutation = useMutation({
-    mutationFn: api.imports.upload,
-    onSuccess: async (result) => {
-      setSuccess(`Загружено строк: ${result.importedRows}`);
-      setError(null);
-      setFile(null);
-      await queryClient.invalidateQueries({ queryKey: queryKeys.teamlead.periods });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.teamlead.periodReconciliation(accountingPeriodId, direction) });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.teamlead.periodReconciliationItems(accountingPeriodId, direction) });
-    },
-    onError: (nextError) => {
-      setSuccess(null);
-      setError(nextError instanceof Error ? nextError.message : "Не удалось импортировать CSV");
-    },
-  });
+  const isMismatch = summary.status === "mismatch";
 
   return (
-    <div className="rounded-md border border-border bg-slate-50 p-3">
-      <FormField label={`${label} CSV`} help="CSV с разделителем | из внешней админки.">
-        <Input
-          type="file"
-          accept=".csv,text/csv"
-          disabled={disabled || uploadMutation.isPending}
-          onChange={(event) => {
-            setFile(event.target.files?.[0] ?? null);
-            setError(null);
-            setSuccess(null);
-          }}
-        />
-      </FormField>
-      {error ? <div className="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-800">{error}</div> : null}
-      {success ? <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-xs text-emerald-800">{success}</div> : null}
-      <div className="mt-3 flex justify-end">
-        <Button
-          type="button"
-          size="sm"
-          disabled={!file || disabled || uploadMutation.isPending}
-          onClick={() => {
-            if (!file || !accountingPeriodId) return;
-            uploadMutation.mutate({ file, scope: "teamlead", direction, accountingPeriodId });
-          }}
-        >
-          Загрузить и пересчитать
-        </Button>
-      </div>
+    <Card className={isMismatch ? "border-red-200" : summary.status === "accepted_with_comment" ? "border-amber-200" : "border-emerald-200"}>
+      <CardContent className="space-y-4 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="font-semibold">{title}</div>
+              <StatusBadge status={summary.status} />
+            </div>
+            <div className="text-sm text-muted-foreground">CSV тимлида против сохраненных ордеров CRM</div>
+          </div>
+          {isMismatch && summary.runId ? (
+            <AcceptMismatchDialog scope="teamlead" direction={direction} runId={summary.runId} />
+          ) : null}
+        </div>
+        <div className="grid gap-2 text-sm sm:grid-cols-3">
+          <ReconciliationAmountBox label="CSV тимлида" value={summary.expectedMinor} />
+          <ReconciliationAmountBox label="CRM" value={summary.actualMinor} />
+          <ReconciliationAmountBox label="Расхождение" value={summary.diffMinor} warning={summary.status !== "matched"} />
+        </div>
+        {summary.comment ? <div className="rounded-md border border-border/70 p-3 text-sm">Комментарий: {summary.comment}</div> : null}
+        {summary.status === "matched" ? (
+          <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-900">
+            Расхождений нет.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="text-sm font-medium">Реквизиты с расхождением</div>
+            <TeamleadMismatchTable
+              items={items}
+              isLoading={isLoading}
+              resetKey={`${direction}-${summary.runId ?? summary.status}`}
+            />
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ReconciliationAmountBox({ label, value, warning }: { label: string; value: number; warning?: boolean }) {
+  return (
+    <div className={warning ? "min-w-0 rounded-md border border-amber-200 bg-amber-50 px-3 py-2" : "min-w-0 rounded-md border border-border/70 bg-slate-50 px-3 py-2"}>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 break-words text-sm font-semibold tabular-nums">{formatMoneyMinor(value)}</div>
     </div>
   );
 }
 
-type PeriodRequisiteMismatchRow = {
-  id: number;
-  requisite: string;
-  trader: string;
-  csvAmountMinor: number;
-  crmAmountMinor: number;
-  diffMinor: number;
-  csvCount: number;
-  crmCount: number;
-  amountMismatch: boolean;
-  countMismatch: boolean;
-};
-
-function PeriodRequisiteMismatchTable({ items, isLoading }: { items: ReconciliationItem[]; isLoading?: boolean }) {
+function TeamleadMismatchTable({
+  items,
+  isLoading,
+  resetKey,
+}: {
+  items: ReconciliationItem[];
+  isLoading?: boolean;
+  resetKey?: string | number;
+}) {
+  const columns = useTeamleadMismatchColumns();
+  const rows = useMemo(() => buildMismatchRows(items), [items]);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
-  const rows = useMemo(() => periodRequisiteMismatchRows(items), [items]);
-  const columns = useMemo<ColumnDef<PeriodRequisiteMismatchRow>[]>(
-    () => [
-      {
-        accessorKey: "requisite",
-        header: "Реквизит",
-        cell: ({ row }) => <span className="font-medium">{row.original.requisite}</span>,
-      },
-      {
-        accessorKey: "trader",
-        header: "Трейдер",
-        cell: ({ row }) => <span className="text-muted-foreground">{row.original.trader}</span>,
-      },
-      {
-        accessorKey: "csvAmountMinor",
-        header: () => <div className="text-right">CSV тимлида</div>,
-        cell: ({ row }) => <MismatchMoneyCell value={row.original.csvAmountMinor} warning={row.original.amountMismatch} />,
-      },
-      {
-        accessorKey: "crmAmountMinor",
-        header: () => <div className="text-right">CRM</div>,
-        cell: ({ row }) => <MismatchMoneyCell value={row.original.crmAmountMinor} warning={row.original.amountMismatch} />,
-      },
-      {
-        accessorKey: "diffMinor",
-        header: () => <div className="text-right">Расхождение</div>,
-        cell: ({ row }) => <MismatchMoneyCell value={row.original.diffMinor} warning />,
-      },
-      {
-        id: "count",
-        header: () => <div className="text-right">Кол-во</div>,
-        cell: ({ row }) => (
-          <div className={row.original.countMismatch ? "text-right font-semibold text-red-700" : "text-right text-muted-foreground"}>
-            {row.original.csvCount} / {row.original.crmCount}
-          </div>
-        ),
-      },
-    ],
-    [],
-  );
+
+  useEffect(() => {
+    setPagination({ pageIndex: 0, pageSize: 8 });
+  }, [resetKey]);
 
   return (
     <DataTable
@@ -624,134 +375,365 @@ function PeriodRequisiteMismatchTable({ items, isLoading }: { items: Reconciliat
       onPaginationChange={setPagination}
       isLoading={isLoading}
       emptyTitle="Расхождений по реквизитам нет"
-      emptyDescription="В таблице показываются только реквизиты, где CSV тимлида отличается от CRM."
-      getRowClassName={() => "bg-red-50/50"}
+      emptyDescription="Итоговая сверка расходится, но подробных строк по реквизитам не найдено."
+      pageSizeOptions={[8, 15, 25, 50]}
+      getRowClassName={(row) => (row.diffMinor && row.diffMinor !== 0 ? "bg-red-50 text-red-950 hover:bg-red-100" : undefined)}
     />
   );
 }
 
-function MismatchMoneyCell({ value, warning }: { value: number; warning?: boolean }) {
+function useTeamleadMismatchColumns() {
+  return useMemo<ColumnDef<TeamleadMismatchRow>[]>(
+    () => [
+      {
+        accessorKey: "issueLabel",
+        header: "Тип",
+        cell: ({ row }) => (
+          <div>
+            <div className="font-medium">{row.original.issueLabel}</div>
+            <div className="text-xs text-muted-foreground">{row.original.innerId}</div>
+          </div>
+        ),
+      },
+      {
+        accessorKey: "requisite",
+        header: "Реквизит",
+        cell: ({ row }) => <span className="font-medium">{row.original.requisite}</span>,
+      },
+      {
+        accessorKey: "trader",
+        header: "Трейдер",
+        cell: ({ row }) => row.original.trader,
+      },
+      {
+        accessorKey: "csvAmountMinor",
+        header: "CSV тимлида",
+        cell: ({ row }) => <MismatchAmountCell amount={row.original.csvAmountMinor} count={row.original.csvCount} status={row.original.csvStatus} />,
+      },
+      {
+        accessorKey: "crmAmountMinor",
+        header: "CRM",
+        cell: ({ row }) => <MismatchAmountCell amount={row.original.crmAmountMinor} count={row.original.crmCount} status={row.original.crmStatus} />,
+      },
+      {
+        accessorKey: "diffMinor",
+        header: "Расхождение",
+        cell: ({ row }) => (
+          <div className="text-right font-semibold tabular-nums">
+            {row.original.diffMinor === undefined ? "—" : formatMoneyMinor(row.original.diffMinor)}
+          </div>
+        ),
+      },
+      {
+        accessorKey: "createdAt",
+        header: "Дата",
+        cell: ({ row }) => row.original.createdAt,
+      },
+    ],
+    [],
+  );
+}
+
+function MismatchAmountCell({ amount, count, status }: { amount?: number; count?: number; status?: string }) {
   return (
-    <div className={warning ? "text-right font-semibold text-red-700 tabular-nums" : "text-right tabular-nums"}>
-      {formatMoneyMinor(value)}
+    <div className="min-w-[120px] text-right">
+      <div className="font-medium tabular-nums">{amount === undefined ? "—" : formatMoneyMinor(amount)}</div>
+      <div className="text-xs text-muted-foreground">
+        {count !== undefined ? `${count} шт.` : status || "—"}
+      </div>
     </div>
   );
 }
 
-function periodRequisiteMismatchRows(items: ReconciliationItem[]): PeriodRequisiteMismatchRow[] {
-  return items
-    .filter((item) => item.issueType === "requisite_amount_mismatch")
-    .map((item) => {
-      const csv = item.teamleadValue ?? {};
-      const crm = item.traderValue ?? {};
-      const csvAmountMinor = numberValue(csv.successAmountMinor);
-      const crmAmountMinor = numberValue(crm.successAmountMinor);
-      const csvCount = numberValue(csv.successCount);
-      const crmCount = numberValue(crm.successCount);
-      const requisite = stringValue(csv.requisitePhone) || stringValue(crm.requisitePhone) || "Без реквизита";
-      const trader = stringValue(crm.traderLogin) || stringValue(crm.traderId) || "Не найден";
+function TeamleadReconciliationUploadDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const queryClient = useQueryClient();
+  const [inboundFile, setInboundFile] = useState<File | null>(null);
+  const [outboundFile, setOutboundFile] = useState<File | null>(null);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const showErrorToast = (title: string, message: string) => setToast({ id: Date.now(), title, message });
 
-      return {
-        id: item.id,
-        requisite,
-        trader,
-        csvAmountMinor,
-        crmAmountMinor,
-        diffMinor: crmAmountMinor - csvAmountMinor,
-        csvCount,
-        crmCount,
-        amountMismatch: csvAmountMinor !== crmAmountMinor,
-        countMismatch: csvCount !== crmCount,
-      };
-    })
-    .sort((left, right) => Math.abs(right.diffMinor) - Math.abs(left.diffMinor));
-}
-
-function numberValue(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function stringValue(value: unknown) {
-  if (typeof value === "string") return value;
-  if (typeof value === "number") return String(value);
-  return "";
-}
-
-function PeriodDetailsDialog({ period, onClose }: { period: AccountingPeriod | null; onClose: () => void }) {
-  const inboundQuery = useQuery({
-    queryKey: queryKeys.teamlead.periodReconciliation(period?.id, "inbound"),
-    queryFn: () => api.teamleadReports.periodReconciliation(period?.id ?? 0, "inbound"),
-    enabled: Boolean(period?.id),
+  const inboundDashboardQuery = useQuery({
+    queryKey: queryKeys.teamlead.dashboard("inbound", { reconciliationDialog: true }),
+    queryFn: () => api.orders.dashboard("teamlead", "inbound"),
+    enabled: open,
   });
-  const outboundQuery = useQuery({
-    queryKey: queryKeys.teamlead.periodReconciliation(period?.id, "outbound"),
-    queryFn: () => api.teamleadReports.periodReconciliation(period?.id ?? 0, "outbound"),
-    enabled: Boolean(period?.id),
+  const outboundDashboardQuery = useQuery({
+    queryKey: queryKeys.teamlead.dashboard("outbound", { reconciliationDialog: true }),
+    queryFn: () => api.orders.dashboard("teamlead", "outbound"),
+    enabled: open,
+  });
+  const inboundReconciliationQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliation("inbound"),
+    queryFn: () => api.orders.reconciliation("teamlead", "inbound"),
+    enabled: open,
+  });
+  const outboundReconciliationQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliation("outbound"),
+    queryFn: () => api.orders.reconciliation("teamlead", "outbound"),
+    enabled: open,
   });
   const inboundItemsQuery = useQuery({
-    queryKey: queryKeys.teamlead.periodReconciliationItems(period?.id, "inbound"),
-    queryFn: () => api.teamleadReports.periodReconciliationItems(period?.id ?? 0, "inbound"),
-    enabled: Boolean(period?.id),
+    queryKey: queryKeys.teamlead.reconciliationItems("inbound"),
+    queryFn: () => api.orders.reconciliationItems("teamlead", "inbound"),
+    enabled: open,
+  });
+  const outboundItemsQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliationItems("outbound"),
+    queryFn: () => api.orders.reconciliationItems("teamlead", "outbound"),
+    enabled: open,
+  });
+
+  const latestInboundImport = latestSavedImport(inboundDashboardQuery.data?.recentImports);
+  const latestOutboundImport = latestSavedImport(outboundDashboardQuery.data?.recentImports);
+  const hasFilesToUpload = Boolean(inboundFile || outboundFile);
+  const hasUploadedCSV = Boolean(latestInboundImport || latestOutboundImport);
+
+  const invalidateTeamleadReconciliation = async () => {
+    await queryClient.invalidateQueries({ queryKey: ["teamlead"] });
+  };
+
+  const uploadMutation = useMutation({
+    mutationFn: async () => {
+      if (!inboundFile && !outboundFile) {
+        throw new Error("Выберите CSV входящих или выплат");
+      }
+      if (inboundFile) {
+        await api.imports.upload({ file: inboundFile, scope: "teamlead", direction: "inbound" });
+      }
+      if (outboundFile) {
+        await api.imports.upload({ file: outboundFile, scope: "teamlead", direction: "outbound" });
+      }
+    },
+    onSuccess: async () => {
+      setToast(null);
+      setInboundFile(null);
+      setOutboundFile(null);
+      await invalidateTeamleadReconciliation();
+    },
+    onError: (error) => showErrorToast("Не удалось загрузить CSV", error instanceof Error ? error.message : "Не удалось загрузить CSV"),
+  });
+
+  const startMutation = useMutation({
+    mutationFn: async () => {
+      const directions: OrderDirection[] = [];
+      if (latestInboundImport) directions.push("inbound");
+      if (latestOutboundImport) directions.push("outbound");
+      if (!directions.length) {
+        throw new Error("Сначала загрузите CSV входящих или выплат");
+      }
+      for (const direction of directions) {
+        await api.teamleadReports.startReconciliation(direction);
+      }
+    },
+    onSuccess: async () => {
+      setToast(null);
+      await invalidateTeamleadReconciliation();
+    },
+    onError: (error) => showErrorToast("Не удалось запустить сверку", error instanceof Error ? error.message : "Не удалось запустить сверку"),
   });
 
   return (
-    <Dialog open={Boolean(period)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-[1240px] p-6">
-        <DialogHeader>
-          <DialogTitle className="text-base font-semibold">{period?.title}</DialogTitle>
-          <DialogDescription>Детали сверки по учетному периоду и реквизиты с расхождением.</DialogDescription>
-        </DialogHeader>
-        {period ? (
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-[1200px] p-6">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold">Загрузить сверку</DialogTitle>
+            <DialogDescription>Загрузите CSV входящих, выплат или оба файла, затем запустите сверку.</DialogDescription>
+          </DialogHeader>
+
           <div className="max-h-[76vh] space-y-5 overflow-y-auto pr-2">
-            <div className="grid gap-3 md:grid-cols-2">
-              <ReadOnlyField label="Даты" value={period.dateRange} />
-              <div className="rounded-md border border-border p-3">
-                <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">Статус периода</div>
-                <StatusBadge status={period.status} />
-              </div>
-              <div className="rounded-md border border-border p-3">
-                <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">Инвойсы</div>
-                <StatusBadge status={period.inboundStatus} />
-              </div>
-              <div className="rounded-md border border-border p-3">
-                <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">Выплаты</div>
-                <StatusBadge status={period.outboundStatus} />
-              </div>
-            </div>
+            <Card className="border-blue-200 bg-blue-50">
+              <CardContent className="p-3 text-sm text-blue-950">
+                CSV тимлида обновляет существующие ордера по innerId. Если через апелляцию изменился статус или сумма, сверка покажет отличие от сохраненного trader-scope.
+              </CardContent>
+            </Card>
 
             <section className="space-y-3">
-              <h2 className="text-sm font-semibold">Инвойсы</h2>
-              {inboundQuery.data?.status === "mismatch" ? (
-                <MismatchAlert summary={inboundQuery.data} title="Есть расхождение по входящим" />
+              <h2 className="text-sm font-semibold">1. Загрузка CSV</h2>
+              <div className="grid gap-4 md:grid-cols-2">
+                <ReportFileDropzone
+                  label="Входы CSV"
+                  help="Файл входящих ордеров из внешней админки."
+                  selectedFile={inboundFile}
+                  savedImport={latestInboundImport}
+                  isLoading={inboundDashboardQuery.isLoading}
+                  onFileChange={setInboundFile}
+                />
+                <ReportFileDropzone
+                  label="Выходы CSV"
+                  help="Файл выплат/выходов из внешней админки."
+                  selectedFile={outboundFile}
+                  savedImport={latestOutboundImport}
+                  isLoading={outboundDashboardQuery.isLoading}
+                  onFileChange={setOutboundFile}
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" disabled={!hasFilesToUpload || uploadMutation.isPending} onClick={() => uploadMutation.mutate()}>
+                  {uploadMutation.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  Загрузить CSV
+                </Button>
+                <Button type="button" disabled={!hasUploadedCSV || hasFilesToUpload || startMutation.isPending} onClick={() => startMutation.mutate()}>
+                  {startMutation.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Начать сверку
+                </Button>
+              </div>
+              {hasFilesToUpload ? (
+                <div className="text-sm text-muted-foreground">Сначала загрузите выбранные файлы, затем станет доступен запуск сверки.</div>
               ) : null}
-              <ReportReconciliationDetails
-                title="Входящие за месяц"
-                summary={inboundQuery.data}
-                isLoading={inboundQuery.isLoading}
-                csvLabel="CSV тимлида"
-                crmLabel="CRM"
-                diffLabel="Расхождение"
-              />
-              <PeriodRequisiteMismatchTable items={inboundItemsQuery.data ?? []} isLoading={inboundItemsQuery.isLoading} />
             </section>
 
             <section className="space-y-3">
-              <h2 className="text-sm font-semibold">Выплаты</h2>
-              {outboundQuery.data?.status === "mismatch" ? (
-                <MismatchAlert summary={outboundQuery.data} title="Есть расхождение по выплатам" />
-              ) : null}
-              <ReportReconciliationDetails
-                title="Выплаты за месяц"
-                summary={outboundQuery.data}
-                isLoading={outboundQuery.isLoading}
-                csvLabel="CSV тимлида"
-                crmLabel="Выплаты трейдеров"
-                diffLabel="Расхождение"
+              <h2 className="text-sm font-semibold">2. Результат сверки</h2>
+              <TeamleadReconciliationResultsTabs
+                inboundSummary={inboundReconciliationQuery.data}
+                outboundSummary={outboundReconciliationQuery.data}
+                inboundItems={inboundItemsQuery.data ?? []}
+                outboundItems={outboundItemsQuery.data ?? []}
+                inboundLoading={inboundReconciliationQuery.isLoading || inboundItemsQuery.isLoading}
+                outboundLoading={outboundReconciliationQuery.isLoading || outboundItemsQuery.isLoading}
               />
             </section>
           </div>
-        ) : null}
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+      <ErrorToast toast={toast} onClose={() => setToast(null)} />
+    </>
   );
+}
+
+function ErrorToast({ toast, onClose }: { toast: ToastMessage | null; onClose: () => void }) {
+  useEffect(() => {
+    if (!toast) return;
+    const timeoutID = window.setTimeout(onClose, 10_000);
+    return () => window.clearTimeout(timeoutID);
+  }, [toast, onClose]);
+
+  if (!toast) return null;
+
+  return (
+    <div
+      role="alert"
+      className="fixed right-5 top-5 z-[100] flex w-[min(420px,calc(100vw-40px))] items-start gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 shadow-lg"
+    >
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+      <div className="min-w-0 flex-1">
+        <div className="font-semibold">{toast.title}</div>
+        <div className="mt-1 break-words text-red-800">{toast.message}</div>
+      </div>
+      <button
+        type="button"
+        className="rounded-sm p-0.5 text-red-700 hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+        aria-label="Закрыть уведомление"
+        onClick={onClose}
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function ReportFileDropzone({
+  label,
+  help,
+  selectedFile,
+  savedImport,
+  isLoading,
+  onFileChange,
+}: {
+  label: string;
+  help: string;
+  selectedFile: File | null;
+  savedImport?: OrderImportHistoryItem;
+  isLoading?: boolean;
+  onFileChange: (file: File | null) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileName = selectedFile?.name ?? savedImport?.fileName;
+  const statusText = selectedFile
+    ? "Будет загружен перед запуском сверки"
+    : savedImport
+      ? `Загружен ${formatDateTime(savedImport.appliedAt ?? savedImport.createdAt)} · строк: ${savedImport.rowsCount}`
+      : "Файл еще не загружен";
+
+  const handleFile = (file?: File) => {
+    if (!file) return;
+    onFileChange(file);
+  };
+
+  const clearSelectedFile = () => {
+    onFileChange(null);
+    if (inputRef.current) {
+      inputRef.current.value = "";
+    }
+  };
+
+  return (
+    <div
+      onClick={() => inputRef.current?.click()}
+      onDragOver={(event) => {
+        event.preventDefault();
+        setIsDragging(true);
+      }}
+      onDragLeave={() => setIsDragging(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setIsDragging(false);
+        handleFile(event.dataTransfer.files?.[0]);
+      }}
+      className={cn(
+        "flex min-h-[142px] w-full items-center justify-between gap-4 rounded-md border border-dashed border-border bg-white p-4 text-left transition hover:border-primary hover:bg-primary/5",
+        isDragging ? "border-primary bg-primary/10" : undefined,
+      )}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".csv,text/csv"
+        className="sr-only"
+        onChange={(event) => handleFile(event.target.files?.[0])}
+      />
+      <span className="min-w-0 space-y-1">
+        <span className="block text-sm font-medium">{label}</span>
+        <span className="block text-xs text-muted-foreground">{help}</span>
+        <span className="flex min-w-0 items-center gap-2 pt-2 text-sm font-semibold">
+          <FileText className="h-4 w-4 text-primary" />
+          <span className="min-w-0 truncate">{isLoading ? "Проверяем сохраненный файл" : fileName || "Перетащите CSV сюда"}</span>
+          {selectedFile ? (
+            <button
+              type="button"
+              className="shrink-0 rounded-sm p-0.5 text-muted-foreground hover:bg-red-50 hover:text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+              aria-label="Убрать выбранный файл"
+              title="Убрать выбранный файл"
+              onClick={(event) => {
+                event.stopPropagation();
+                clearSelectedFile();
+              }}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          ) : null}
+        </span>
+        <span className="block text-xs text-muted-foreground">
+          {fileName ? statusText : "Можно выбрать файл кнопкой или перетащить его в эту область."}
+        </span>
+      </span>
+      <button
+        type="button"
+        className="inline-flex shrink-0 items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground"
+        onClick={(event) => {
+          event.stopPropagation();
+          inputRef.current?.click();
+        }}
+      >
+        <Upload className="h-4 w-4" />
+        {savedImport || selectedFile ? "Заменить" : "Выбрать"}
+      </button>
+    </div>
+  );
+}
+
+function latestSavedImport(items?: OrderImportHistoryItem[]) {
+  return items?.find((item) => item.status === "applied" || item.status === "reconciled") ?? items?.[0];
 }

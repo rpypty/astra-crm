@@ -117,13 +117,15 @@ async function toApiError(response: Response) {
   }
 
   const errorMessage = typeof payload.error === "object" ? payload.error.message : payload.error;
-  const fieldMessages = typeof payload.error === "object" ? Object.values(payload.error.fields ?? {}) : [];
+  const fieldEntries = typeof payload.error === "object" ? Object.entries(payload.error.fields ?? {}) : [];
+  const fieldMessages = fieldEntries.map(([field, message]) => (field === "body" ? message : `${field}: ${message}`));
   const details = typeof payload.error === "object" ? payload.error.details ?? [] : [];
+  const validationDetail = details[0] ?? fieldMessages[0];
   const message =
     payload.message ??
+    (errorMessage && validationDetail ? `${errorMessage}: ${validationDetail}` : undefined) ??
     errorMessage ??
-    fieldMessages[0] ??
-    details[0] ??
+    validationDetail ??
     (response.status >= 500 ? "Сервис временно недоступен. Попробуйте позже." : "Не удалось выполнить действие.");
 
   return new ApiError(message, response.status, payload.requestId);

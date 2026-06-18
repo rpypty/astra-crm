@@ -442,6 +442,10 @@ export const api = {
         throw error;
       }
     },
+    async startReconciliation(direction: OrderDirection): Promise<ReconciliationSummary> {
+      const response = await apiClient.post<ReconciliationResponse>(`/teamlead/${direction}/reconciliation/start`);
+      return toReconciliation(response.run);
+    },
   },
 
   payouts: {
@@ -521,19 +525,19 @@ export const api = {
         formData.set("accountingPeriodId", String(input.accountingPeriodId));
       }
 
-      const periodId = input.accountingPeriodId ?? Number(import.meta.env.VITE_DEMO_ACCOUNTING_PERIOD_ID ?? 1);
       const path =
         input.scope === "teamlead"
-          ? `/teamlead/${input.direction}/import?accountingPeriodId=${periodId}`
+          ? `/teamlead/${input.direction}/import`
           : `/trader/${input.direction}/import`;
       const response = await apiClient.upload<ImportResponse>(path, formData);
       return toImportResult(response.result);
     },
     async acceptMismatch(input: { scope: "teamlead" | "trader"; direction: OrderDirection; runId: number; comment: string }) {
-      if (input.scope !== "trader") {
-        throw new Error("Подтверждение расхождения периода тимлида пока не реализовано в backend.");
-      }
-      await apiClient.post<ReconciliationResponse>(`/trader/${input.direction}/reconciliation/${input.runId}/accept`, {
+      const path =
+        input.scope === "teamlead"
+          ? `/teamlead/${input.direction}/reconciliation/${input.runId}/accept`
+          : `/trader/${input.direction}/reconciliation/${input.runId}/accept`;
+      await apiClient.post<ReconciliationResponse>(path, {
         comment: input.comment,
       });
     },
@@ -569,7 +573,7 @@ export const api = {
         throw error;
       }
     },
-    async reconciliationItems(scope: "trader", direction: OrderDirection): Promise<ReconciliationItem[]> {
+    async reconciliationItems(scope: "teamlead" | "trader", direction: OrderDirection): Promise<ReconciliationItem[]> {
       try {
         const response = await apiClient.get<ReconciliationItemsResponse>(`/${scope}/${direction}/reconciliation/items`);
         return response.items.map(toReconciliationItem);

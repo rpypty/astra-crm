@@ -786,6 +786,7 @@ SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id,
 FROM reconciliation_runs
 WHERE team_id = sqlc.arg(team_id)
   AND type = 'teamlead_period_inbound'
+  AND accounting_period_id IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
 
@@ -1051,8 +1052,279 @@ SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id,
 FROM reconciliation_runs
 WHERE team_id = sqlc.arg(team_id)
   AND type = 'teamlead_period_outbound'
+  AND accounting_period_id IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
+
+-- name: LatestActiveTeamleadCurrentImportBatch :one
+SELECT id, team_id, uploaded_by, scope_type, direction, shift_id, accounting_period_id, trader_id, file_name, file_hash, rows_count, status, superseded_by_batch_id, error_message, created_at, applied_at
+FROM import_batches
+WHERE team_id = sqlc.arg(team_id)
+  AND scope_type = 'teamlead_period'
+  AND accounting_period_id IS NULL
+  AND direction = sqlc.arg(direction)
+  AND status IN ('applied', 'reconciled')
+  AND superseded_by_batch_id IS NULL
+ORDER BY applied_at DESC NULLS LAST, id DESC
+LIMIT 1;
+
+-- name: CalculateTeamleadCurrentSummary :one
+WITH latest_import AS (
+    SELECT ib.id
+    FROM import_batches ib
+    WHERE ib.team_id = sqlc.arg(team_id)
+      AND ib.scope_type = 'teamlead_period'
+      AND ib.accounting_period_id IS NULL
+      AND ib.direction = sqlc.arg(direction)
+      AND ib.status IN ('applied', 'reconciled')
+      AND ib.superseded_by_batch_id IS NULL
+    ORDER BY ib.applied_at DESC NULLS LAST, ib.id DESC
+    LIMIT 1
+),
+teamlead_orders AS (
+    SELECT DISTINCT ON (osi.external_inner_id)
+        osi.external_inner_id,
+        osi.amount_minor,
+        osi.normalized_status
+    FROM order_scope_items osi
+    WHERE osi.team_id = sqlc.arg(team_id)
+      AND osi.scope_type = 'teamlead_period'
+      AND osi.accounting_period_id IS NULL
+      AND osi.direction = sqlc.arg(direction)
+      AND osi.is_active = TRUE
+      AND osi.import_batch_id = (SELECT id FROM latest_import)
+    ORDER BY osi.external_inner_id, osi.created_at DESC, osi.id DESC
+),
+trader_orders AS (
+    SELECT DISTINCT ON (osi.external_inner_id)
+        osi.external_inner_id,
+        osi.amount_minor,
+        osi.normalized_status
+    FROM order_scope_items osi
+    JOIN teamlead_orders tl ON tl.external_inner_id = osi.external_inner_id
+    WHERE osi.team_id = sqlc.arg(team_id)
+      AND osi.scope_type = 'trader_shift'
+      AND osi.direction = sqlc.arg(direction)
+      AND osi.is_active = TRUE
+    ORDER BY osi.external_inner_id, osi.created_at DESC, osi.id DESC
+)
+SELECT
+    (SELECT id FROM latest_import)::bigint AS import_batch_id,
+    COALESCE((SELECT sum(amount_minor) FROM teamlead_orders WHERE normalized_status IN ('success', 'corrected')), 0)::bigint AS expected_amount_minor,
+    COALESCE((SELECT count(*) FROM teamlead_orders WHERE normalized_status IN ('success', 'corrected')), 0)::bigint AS expected_success_count,
+    COALESCE((SELECT sum(amount_minor) FROM teamlead_orders WHERE normalized_status IN ('failed', 'cancelled')), 0)::bigint AS failed_amount_minor,
+    COALESCE((SELECT count(*) FROM teamlead_orders WHERE normalized_status IN ('failed', 'cancelled')), 0)::bigint AS failed_count,
+    COALESCE((SELECT sum(amount_minor) FROM teamlead_orders), 0)::bigint AS total_amount_minor,
+    COALESCE((SELECT count(*) FROM teamlead_orders), 0)::bigint AS total_count,
+    COALESCE((SELECT sum(amount_minor) FROM trader_orders WHERE normalized_status IN ('success', 'corrected')), 0)::bigint AS actual_amount_minor,
+    COALESCE((SELECT count(*) FROM trader_orders WHERE normalized_status IN ('success', 'corrected')), 0)::bigint AS actual_success_count;
+
+-- name: CreateTeamleadCurrentReconciliationRun :one
+INSERT INTO reconciliation_runs (
+    team_id,
+    type,
+    scope_type,
+    shift_id,
+    accounting_period_id,
+    trader_id,
+    import_batch_id,
+    expected_amount_minor,
+    actual_amount_minor,
+    diff_amount_minor,
+    success_amount_minor,
+    success_count,
+    failed_amount_minor,
+    failed_count,
+    total_amount_minor,
+    total_count,
+    status
+)
+VALUES (
+    sqlc.arg(team_id),
+    sqlc.arg(type),
+    'teamlead_period',
+    NULL,
+    NULL,
+    NULL,
+    sqlc.arg(import_batch_id),
+    sqlc.arg(expected_amount_minor),
+    sqlc.arg(actual_amount_minor),
+    sqlc.arg(diff_amount_minor),
+    sqlc.arg(success_amount_minor),
+    sqlc.arg(success_count),
+    sqlc.arg(failed_amount_minor),
+    sqlc.arg(failed_count),
+    sqlc.arg(total_amount_minor),
+    sqlc.arg(total_count),
+    sqlc.arg(status)
+)
+RETURNING id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at;
+
+-- name: CreateTeamleadCurrentReconciliationItems :many
+WITH teamlead_orders AS (
+    SELECT DISTINCT ON (osi.external_inner_id)
+        osi.external_order_id,
+        osi.external_inner_id,
+        osi.worker_name,
+        osi.trader_id,
+        osi.requisite_raw,
+        osi.requisite_phone,
+        osi.amount_minor,
+        osi.normalized_status,
+        osi.raw_status,
+        osi.created_at_external
+    FROM order_scope_items osi
+    WHERE osi.team_id = sqlc.arg(team_id)
+      AND osi.scope_type = 'teamlead_period'
+      AND osi.accounting_period_id IS NULL
+      AND osi.direction = sqlc.arg(direction)
+      AND osi.is_active = TRUE
+      AND osi.import_batch_id = sqlc.arg(import_batch_id)
+    ORDER BY osi.external_inner_id, osi.created_at DESC, osi.id DESC
+),
+trader_orders AS (
+    SELECT DISTINCT ON (osi.external_inner_id)
+        osi.external_order_id,
+        osi.external_inner_id,
+        osi.worker_name,
+        osi.trader_id,
+        u.login AS trader_login,
+        osi.requisite_raw,
+        osi.requisite_phone,
+        osi.amount_minor,
+        osi.normalized_status,
+        osi.raw_status,
+        osi.created_at_external
+    FROM order_scope_items osi
+    LEFT JOIN users u ON u.id = osi.trader_id
+    JOIN teamlead_orders tl ON tl.external_inner_id = osi.external_inner_id
+    WHERE osi.team_id = sqlc.arg(team_id)
+      AND osi.scope_type = 'trader_shift'
+      AND osi.direction = sqlc.arg(direction)
+      AND osi.is_active = TRUE
+    ORDER BY osi.external_inner_id, osi.created_at DESC, osi.id DESC
+),
+teamlead_success_total AS (
+    SELECT
+        COALESCE(sum(amount_minor), 0)::bigint AS amount_minor,
+        count(*)::bigint AS count
+    FROM teamlead_orders
+    WHERE normalized_status IN ('success', 'corrected')
+),
+trader_success_total AS (
+    SELECT
+        COALESCE(sum(amount_minor), 0)::bigint AS amount_minor,
+        count(*)::bigint AS count
+    FROM trader_orders
+    WHERE normalized_status IN ('success', 'corrected')
+),
+total_items AS (
+    SELECT
+        'total_amount_mismatch'::text AS issue_type,
+        NULL::bigint AS external_order_id,
+        NULL::text AS external_inner_id,
+        jsonb_build_object(
+            'successAmountMinor', tl.amount_minor,
+            'successCount', tl.count
+        ) AS teamlead_value_json,
+        jsonb_build_object(
+            'successAmountMinor', tr.amount_minor,
+            'successCount', tr.count
+        ) AS trader_value_json,
+        'Teamlead CSV total differs from existing CRM order snapshots'::text AS message
+    FROM teamlead_success_total tl
+    CROSS JOIN trader_success_total tr
+    WHERE tl.amount_minor <> tr.amount_minor
+       OR tl.count <> tr.count
+),
+order_items AS (
+    SELECT
+        CASE
+            WHEN tr.external_inner_id IS NULL THEN 'missing_in_trader_import'
+            WHEN tl.amount_minor <> tr.amount_minor THEN 'amount_mismatch'
+            WHEN tl.normalized_status <> tr.normalized_status THEN 'status_mismatch'
+            WHEN COALESCE(tl.worker_name, '') <> COALESCE(tr.worker_name, '') THEN 'worker_mismatch'
+        END AS issue_type,
+        tl.external_order_id,
+        tl.external_inner_id,
+        jsonb_build_object(
+            'workerName', tl.worker_name,
+            'traderId', tl.trader_id,
+            'requisitePhone', tl.requisite_phone,
+            'requisite', tl.requisite_raw,
+            'amountMinor', tl.amount_minor,
+            'rawStatus', tl.raw_status,
+            'normalizedStatus', tl.normalized_status,
+            'createdAtExternal', tl.created_at_external
+        ) AS teamlead_value_json,
+        CASE
+            WHEN tr.external_inner_id IS NULL THEN NULL::jsonb
+            ELSE jsonb_build_object(
+                'workerName', tr.worker_name,
+                'traderId', tr.trader_id,
+                'traderLogin', tr.trader_login,
+                'requisitePhone', tr.requisite_phone,
+                'requisite', tr.requisite_raw,
+                'amountMinor', tr.amount_minor,
+                'rawStatus', tr.raw_status,
+                'normalizedStatus', tr.normalized_status,
+                'createdAtExternal', tr.created_at_external
+            )
+        END AS trader_value_json,
+        CASE
+            WHEN tr.external_inner_id IS NULL THEN 'Order from teamlead CSV was not found in trader imports'
+            WHEN tl.amount_minor <> tr.amount_minor THEN 'Order amount changed in teamlead CSV'
+            WHEN tl.normalized_status <> tr.normalized_status THEN 'Order status changed in teamlead CSV'
+            WHEN COALESCE(tl.worker_name, '') <> COALESCE(tr.worker_name, '') THEN 'Order worker changed in teamlead CSV'
+        END AS message
+    FROM teamlead_orders tl
+    LEFT JOIN trader_orders tr ON tr.external_inner_id = tl.external_inner_id
+    WHERE tr.external_inner_id IS NULL
+       OR tl.amount_minor <> tr.amount_minor
+       OR tl.normalized_status <> tr.normalized_status
+       OR COALESCE(tl.worker_name, '') <> COALESCE(tr.worker_name, '')
+),
+items AS (
+    SELECT issue_type, external_order_id, external_inner_id, teamlead_value_json, trader_value_json, message
+    FROM total_items
+    UNION ALL
+    SELECT issue_type, external_order_id, external_inner_id, teamlead_value_json, trader_value_json, message
+    FROM order_items
+    WHERE issue_type IS NOT NULL
+)
+INSERT INTO reconciliation_items (
+    reconciliation_run_id,
+    issue_type,
+    external_order_id,
+    external_inner_id,
+    teamlead_value_json,
+    trader_value_json,
+    message
+)
+SELECT
+    sqlc.arg(run_id),
+    issue_type,
+    external_order_id,
+    external_inner_id,
+    teamlead_value_json,
+    trader_value_json,
+    message
+FROM items
+RETURNING id;
+
+-- name: AcceptTeamleadCurrentReconciliationRun :one
+UPDATE reconciliation_runs
+SET status = 'accepted_with_comment',
+    comment = sqlc.arg(comment),
+    confirmed_by = sqlc.arg(confirmed_by),
+    confirmed_at = now()
+WHERE id = sqlc.arg(run_id)
+  AND team_id = sqlc.arg(team_id)
+  AND type IN ('teamlead_period_inbound', 'teamlead_period_outbound')
+  AND accounting_period_id IS NULL
+  AND status = 'mismatch'
+  AND btrim(sqlc.arg(comment)) <> ''
+RETURNING id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at;
 
 -- name: ListReconciliationItemsForRun :many
 SELECT id, reconciliation_run_id, issue_type, external_order_id, external_inner_id, teamlead_value_json, trader_value_json, message, created_at

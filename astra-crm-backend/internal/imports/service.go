@@ -128,7 +128,7 @@ func validScope(scope Scope) bool {
 	case ScopeTypeTraderShift:
 		return scope.ShiftID != nil && *scope.ShiftID > 0 && scope.AccountingPeriodID == nil
 	case ScopeTypeTeamleadPeriod:
-		return scope.AccountingPeriodID != nil && *scope.AccountingPeriodID > 0 && scope.ShiftID == nil
+		return scope.ShiftID == nil && (scope.AccountingPeriodID == nil || *scope.AccountingPeriodID > 0)
 	default:
 		return false
 	}

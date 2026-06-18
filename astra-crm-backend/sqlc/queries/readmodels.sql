@@ -252,9 +252,8 @@ LIMIT sqlc.arg(limit_count);
 SELECT id, team_id, uploaded_by, scope_type, direction, shift_id, accounting_period_id, trader_id, file_name, file_hash, rows_count, status, superseded_by_batch_id, error_message, created_at, applied_at
 FROM import_batches
 WHERE team_id = sqlc.arg(team_id)
-  AND scope_type = 'trader_shift'
+  AND scope_type = 'teamlead_period'
+  AND accounting_period_id IS NULL
   AND direction = sqlc.arg(direction)
-  AND (sqlc.narg(trader_id)::bigint IS NULL OR trader_id = sqlc.narg(trader_id)::bigint)
-  AND (COALESCE(cardinality(sqlc.arg(trader_ids)::bigint[]), 0) = 0 OR trader_id = ANY(sqlc.arg(trader_ids)::bigint[]))
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg(limit_count);

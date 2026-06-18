@@ -96,11 +96,23 @@ func TestImportHandlerTraderImportRequiresCurrentShift(t *testing.T) {
 	}
 }
 
-func TestImportHandlerTeamleadImportRequiresPeriodID(t *testing.T) {
-	handler := NewImportHandler(&fakeImportService{}, nil)
+func TestImportHandlerTeamleadInboundUsesCurrentTeamScope(t *testing.T) {
+	importService := &fakeImportService{
+		result: imports.ApplyResult{
+			Batch: imports.ImportBatch{
+				ID:        100,
+				Status:    imports.BatchStatusApplied,
+				CreatedAt: time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+			},
+			RowsCount:        1,
+			UpdatedOrders:    1,
+			ActiveScopeItems: 1,
+		},
+	}
+	handler := NewImportHandler(importService, nil)
 
 	response := httptest.NewRecorder()
-	request := multipartRequest(t, "/api/v1/teamlead/inbound/import", nil, "orders.csv", "id|innerId|amount|currency|status|createdAt|workerName\n")
+	request := multipartRequest(t, "/api/v1/teamlead/inbound/import", nil, "orders.csv", "id|innerId|amount|currency|status|createdAt|workerName\n1|in-1|10.0|RUB|hand_success|28.05.2026 11:21:35|Bliss_OP2")
 	request = request.WithContext(ContextWithCurrentUser(request.Context(), users.User{
 		ID:     1,
 		TeamID: 2,
@@ -110,11 +122,17 @@ func TestImportHandlerTeamleadImportRequiresPeriodID(t *testing.T) {
 
 	handler.TeamleadInbound(response, request)
 
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusCreated, response.Body.String())
 	}
-	if !strings.Contains(response.Body.String(), "accountingPeriodId") {
-		t.Fatalf("response does not mention accountingPeriodId: %s", response.Body.String())
+	if importService.params.Scope.Type != imports.ScopeTypeTeamleadPeriod {
+		t.Fatalf("scope type = %q, want teamlead_period", importService.params.Scope.Type)
+	}
+	if importService.params.Scope.Direction != imports.DirectionInbound {
+		t.Fatalf("direction = %q, want inbound", importService.params.Scope.Direction)
+	}
+	if importService.params.Scope.AccountingPeriodID != nil {
+		t.Fatalf("period id = %v, want nil", importService.params.Scope.AccountingPeriodID)
 	}
 }
 
@@ -148,9 +166,7 @@ func TestImportHandlerTeamleadOutboundUsesPeriodScope(t *testing.T) {
 	handler := NewImportHandler(importService, nil)
 
 	response := httptest.NewRecorder()
-	request := multipartRequest(t, "/api/v1/teamlead/outbound/import", map[string]string{
-		"accountingPeriodId": "55",
-	}, "orders.csv", "id|innerId|amount|currency|status|createdAt|workerName\n1|in-1|10.0|RUB|manual_review|28.05.2026 11:21:35|Bliss_OP2")
+	request := multipartRequest(t, "/api/v1/teamlead/outbound/import", nil, "orders.csv", "id|innerId|amount|currency|status|createdAt|workerName\n1|in-1|10.0|RUB|manual_review|28.05.2026 11:21:35|Bliss_OP2")
 	request = request.WithContext(ContextWithCurrentUser(request.Context(), users.User{
 		ID:     1,
 		TeamID: 2,
@@ -169,8 +185,8 @@ func TestImportHandlerTeamleadOutboundUsesPeriodScope(t *testing.T) {
 	if importService.params.Scope.Direction != imports.DirectionOutbound {
 		t.Fatalf("direction = %q, want outbound", importService.params.Scope.Direction)
 	}
-	if importService.params.Scope.AccountingPeriodID == nil || *importService.params.Scope.AccountingPeriodID != 55 {
-		t.Fatalf("period id = %v, want 55", importService.params.Scope.AccountingPeriodID)
+	if importService.params.Scope.AccountingPeriodID != nil {
+		t.Fatalf("period id = %v, want nil", importService.params.Scope.AccountingPeriodID)
 	}
 	if !strings.Contains(response.Body.String(), `"unknownStatuses":["manual_review"]`) {
 		t.Fatalf("response does not include unknown status: %s", response.Body.String())

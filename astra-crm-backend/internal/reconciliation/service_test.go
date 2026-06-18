@@ -400,6 +400,7 @@ type fakeStore struct {
 	outboundRecalculateRecord                RecalculateTraderOutboundRecord
 	teamleadPeriodRecalculateRecords         []RecalculateTeamleadPeriodInboundRecord
 	teamleadPeriodOutboundRecalculateRecords []RecalculateTeamleadPeriodOutboundRecord
+	teamleadCurrentRecalculateRecord         RecalculateTeamleadCurrentRecord
 	latestCalled                             bool
 	latestRun                                Run
 	latestErr                                error
@@ -410,6 +411,8 @@ type fakeStore struct {
 	acceptedRun                              Run
 	acceptOutboundRecord                     AcceptTraderOutboundRecord
 	acceptedOutboundRun                      Run
+	acceptTeamleadCurrentRecord              AcceptTeamleadCurrentRecord
+	acceptedTeamleadCurrentRun               Run
 	activeTeamleadScopes                     []TeamleadInboundPeriodScope
 	activeTeamleadOutboundScopes             []TeamleadOutboundPeriodScope
 	items                                    []Item
@@ -470,6 +473,22 @@ func (s *fakeStore) RecalculateTeamleadPeriodOutbound(ctx context.Context, recor
 		ImportBatchID:      record.ImportBatchID,
 		Status:             StatusMatched,
 		CreatedAt:          time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+	}, nil
+}
+
+func (s *fakeStore) RecalculateTeamleadCurrent(ctx context.Context, record RecalculateTeamleadCurrentRecord) (Run, error) {
+	s.teamleadCurrentRecalculateRecord = record
+	runType := TypeTeamleadPeriodInbound
+	if record.Direction == imports.DirectionOutbound {
+		runType = TypeTeamleadPeriodOutbound
+	}
+	return Run{
+		ID:        91,
+		TeamID:    record.TeamID,
+		Type:      runType,
+		ScopeType: imports.ScopeTypeTeamleadPeriod,
+		Status:    StatusMatched,
+		CreatedAt: time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
 	}, nil
 }
 
@@ -571,6 +590,11 @@ func (s *fakeStore) AcceptTraderInbound(ctx context.Context, record AcceptTrader
 func (s *fakeStore) AcceptTraderOutbound(ctx context.Context, record AcceptTraderOutboundRecord) (Run, error) {
 	s.acceptOutboundRecord = record
 	return s.acceptedOutboundRun, nil
+}
+
+func (s *fakeStore) AcceptTeamleadCurrent(ctx context.Context, record AcceptTeamleadCurrentRecord) (Run, error) {
+	s.acceptTeamleadCurrentRecord = record
+	return s.acceptedTeamleadCurrentRun, nil
 }
 
 type fakeAuditService struct {

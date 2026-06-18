@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/ashpak/astra-crm-backend/internal/imports"
@@ -139,19 +138,13 @@ func (h *ImportHandler) applyTeamleadImport(w http.ResponseWriter, r *http.Reque
 	}
 	defer reader.Close()
 
-	accountingPeriodID, ok := accountingPeriodIDFromRequest(w, r)
-	if !ok {
-		return
-	}
-
 	result, err := h.importService.ApplyCSV(r.Context(), imports.ApplyCSVParams{
 		ActorID:  actor.ID,
 		TeamID:   actor.TeamID,
 		FileName: fileName,
 		Scope: imports.Scope{
-			Type:               imports.ScopeTypeTeamleadPeriod,
-			Direction:          direction,
-			AccountingPeriodID: &accountingPeriodID,
+			Type:      imports.ScopeTypeTeamleadPeriod,
+			Direction: direction,
 		},
 		Reader: reader,
 		ParseOptions: imports.ParseOptions{
@@ -193,25 +186,6 @@ func uploadFileFromRequest(w http.ResponseWriter, r *http.Request) (string, mult
 	return fileName, file, true
 }
 
-func accountingPeriodIDFromRequest(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	raw := strings.TrimSpace(r.URL.Query().Get("accountingPeriodId"))
-	if raw == "" {
-		if err := r.ParseMultipartForm(maxImportFileSize); err == nil {
-			raw = strings.TrimSpace(r.FormValue("accountingPeriodId"))
-		}
-	}
-
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || id <= 0 {
-		RespondError(w, ValidationError(map[string]string{
-			"accountingPeriodId": "Некорректный ID периода",
-		}))
-		return 0, false
-	}
-
-	return id, true
-}
-
 func publicImportResultFromDomain(result imports.ApplyResult) publicImportResult {
 	return publicImportResult{
 		ImportBatchID:          result.Batch.ID,
@@ -245,9 +219,12 @@ func unknownStatuses(parse imports.ParseResult) []string {
 func mapImportError(err error, parse imports.ParseResult) error {
 	switch {
 	case errors.Is(err, imports.ErrInvalidInput):
-		return ValidationError(map[string]string{
-			"body": "Некоторые поля заполнены неверно",
-		})
+		return &APIError{
+			Status:  http.StatusBadRequest,
+			Code:    CodeValidation,
+			Message: "Некорректные параметры импорта CSV",
+			Details: []string{"Проверьте роль, направление импорта, файл и scope. Для сверки тимлида месячный период не нужен."},
+		}
 	case errors.Is(err, imports.ErrRepositoryNotConfigured):
 		return ServiceUnavailableError()
 	case errors.Is(err, imports.ErrValidation):

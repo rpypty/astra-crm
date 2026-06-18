@@ -392,6 +392,99 @@ func (r *Repository) RecalculateTeamleadPeriodOutbound(ctx context.Context, reco
 	return fromDBRun(run), nil
 }
 
+func (r *Repository) RecalculateTeamleadCurrent(ctx context.Context, record RecalculateTeamleadCurrentRecord) (Run, error) {
+	if r.db == nil {
+		return Run{}, ErrRepositoryNotConfigured
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Run{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	queries := db.New(tx)
+	latestImport, err := queries.LatestActiveTeamleadCurrentImportBatch(ctx, db.LatestActiveTeamleadCurrentImportBatchParams{
+		TeamID:    record.TeamID,
+		Direction: record.Direction,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, ErrRunNotFound
+	}
+	if err != nil {
+		return Run{}, err
+	}
+
+	summary, err := queries.CalculateTeamleadCurrentSummary(ctx, db.CalculateTeamleadCurrentSummaryParams{
+		TeamID:    record.TeamID,
+		Direction: record.Direction,
+	})
+	if err != nil {
+		return Run{}, err
+	}
+
+	diff := summary.ActualAmountMinor - summary.ExpectedAmountMinor
+	runType := TypeTeamleadPeriodInbound
+	if record.Direction == "outbound" {
+		runType = TypeTeamleadPeriodOutbound
+	}
+
+	run, err := queries.CreateTeamleadCurrentReconciliationRun(ctx, db.CreateTeamleadCurrentReconciliationRunParams{
+		TeamID:              record.TeamID,
+		Type:                runType,
+		ImportBatchID:       int8Value(&latestImport.ID),
+		ExpectedAmountMinor: summary.ExpectedAmountMinor,
+		ActualAmountMinor:   summary.ActualAmountMinor,
+		DiffAmountMinor:     diff,
+		SuccessAmountMinor:  summary.ExpectedAmountMinor,
+		SuccessCount:        summary.ExpectedSuccessCount,
+		FailedAmountMinor:   summary.FailedAmountMinor,
+		FailedCount:         summary.FailedCount,
+		TotalAmountMinor:    summary.TotalAmountMinor,
+		TotalCount:          summary.TotalCount,
+		Status:              StatusMismatch,
+	})
+	if err != nil {
+		return Run{}, err
+	}
+
+	itemIDs, err := queries.CreateTeamleadCurrentReconciliationItems(ctx, db.CreateTeamleadCurrentReconciliationItemsParams{
+		RunID:         run.ID,
+		TeamID:        record.TeamID,
+		Direction:     record.Direction,
+		ImportBatchID: latestImport.ID,
+	})
+	if err != nil {
+		return Run{}, err
+	}
+
+	status := StatusMismatch
+	if diff == 0 && summary.ExpectedSuccessCount == summary.ActualSuccessCount && len(itemIDs) == 0 {
+		status = StatusMatched
+	}
+
+	run, err = queries.UpdateReconciliationRunStatus(ctx, db.UpdateReconciliationRunStatusParams{
+		Status: status,
+		RunID:  run.ID,
+		TeamID: record.TeamID,
+	})
+	if err != nil {
+		return Run{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Run{}, err
+	}
+	committed = true
+
+	return fromDBRun(run), nil
+}
+
 func (r *Repository) LatestTraderInbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (Run, error) {
 	if r.db == nil {
 		return Run{}, ErrRepositoryNotConfigured
@@ -898,6 +991,43 @@ func (r *Repository) AcceptTraderOutbound(ctx context.Context, record AcceptTrad
 		TeamID:   record.TeamID,
 		TraderID: record.TraderID,
 	}); err != nil {
+		return Run{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Run{}, err
+	}
+	committed = true
+
+	return fromDBRun(run), nil
+}
+
+func (r *Repository) AcceptTeamleadCurrent(ctx context.Context, record AcceptTeamleadCurrentRecord) (Run, error) {
+	if r.db == nil {
+		return Run{}, ErrRepositoryNotConfigured
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Run{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	run, err := db.New(tx).AcceptTeamleadCurrentReconciliationRun(ctx, db.AcceptTeamleadCurrentReconciliationRunParams{
+		RunID:       record.RunID,
+		TeamID:      record.TeamID,
+		ConfirmedBy: int8Value(&record.ActorID),
+		Comment:     textValue(&record.Comment),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, ErrRunNotFound
+	}
+	if err != nil {
 		return Run{}, err
 	}
 

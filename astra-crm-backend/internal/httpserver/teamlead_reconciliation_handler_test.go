@@ -200,6 +200,13 @@ type fakeTeamleadReconciliationService struct {
 	latestOutboundTeamID int64
 	latestOutboundRun    reconciliation.Run
 	latestOutboundErr    error
+	startTeamID          int64
+	startDirection       string
+	startRun             reconciliation.Run
+	startErr             error
+	acceptRecord         reconciliation.AcceptTeamleadCurrentParams
+	acceptedRun          reconciliation.Run
+	acceptErr            error
 
 	periodTeamID         int64
 	periodID             int64
@@ -247,6 +254,39 @@ func (s *fakeTeamleadReconciliationService) LatestTeamleadOutbound(ctx context.C
 		return reconciliation.Run{}, s.latestOutboundErr
 	}
 	return s.latestOutboundRun, nil
+}
+
+func (s *fakeTeamleadReconciliationService) RecalculateTeamleadCurrent(ctx context.Context, params reconciliation.RecalculateTeamleadCurrentParams) (reconciliation.Run, error) {
+	s.startTeamID = params.TeamID
+	s.startDirection = params.Direction
+	if s.startErr != nil {
+		return reconciliation.Run{}, s.startErr
+	}
+	return s.startRun, nil
+}
+
+func (s *fakeTeamleadReconciliationService) ListTeamleadInboundItems(ctx context.Context, teamID int64) ([]reconciliation.Item, error) {
+	s.itemsTeamID = teamID
+	if s.itemsErr != nil {
+		return nil, s.itemsErr
+	}
+	return s.items, nil
+}
+
+func (s *fakeTeamleadReconciliationService) ListTeamleadOutboundItems(ctx context.Context, teamID int64) ([]reconciliation.Item, error) {
+	s.outboundItemsTeamID = teamID
+	if s.itemsErr != nil {
+		return nil, s.itemsErr
+	}
+	return s.items, nil
+}
+
+func (s *fakeTeamleadReconciliationService) AcceptTeamleadCurrent(ctx context.Context, params reconciliation.AcceptTeamleadCurrentParams) (reconciliation.Run, error) {
+	s.acceptRecord = params
+	if s.acceptErr != nil {
+		return reconciliation.Run{}, s.acceptErr
+	}
+	return s.acceptedRun, nil
 }
 
 func (s *fakeTeamleadReconciliationService) LatestTeamleadPeriodInbound(ctx context.Context, teamID int64, accountingPeriodID int64) (reconciliation.Run, error) {

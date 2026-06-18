@@ -355,7 +355,10 @@ SET is_active = FALSE,
     deactivated_at = now()
 WHERE team_id = $1
   AND scope_type = 'teamlead_period'
-  AND accounting_period_id = $2
+  AND (
+      accounting_period_id = $2
+      OR ($2::bigint IS NULL AND accounting_period_id IS NULL)
+  )
   AND direction = $3
   AND is_active = TRUE
 RETURNING id
@@ -516,7 +519,10 @@ SET status = 'superseded',
     superseded_by_batch_id = $1
 WHERE team_id = $2
   AND scope_type = 'teamlead_period'
-  AND accounting_period_id = $3
+  AND (
+      accounting_period_id = $3
+      OR ($3::bigint IS NULL AND accounting_period_id IS NULL)
+  )
   AND direction = $4
   AND id <> $1
   AND superseded_by_batch_id IS NULL
