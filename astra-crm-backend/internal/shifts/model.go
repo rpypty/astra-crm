@@ -51,6 +51,7 @@ type AssignedRequisite struct {
 	HolderName            *string
 	ShiftRequisiteStatus  *string
 	TakenAt               *time.Time
+	ReleasedAt            *time.Time
 	InboundTurnoverMinor  int64
 	OutboundTurnoverMinor int64
 	ClosingBalanceMinor   int64

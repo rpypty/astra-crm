@@ -171,6 +171,8 @@ export type ShiftRequisite = {
   closingBalanceMinor: number;
   assignmentStatus: RequisiteAssignmentStatus;
   assignedForDate: string;
+  takenAt?: string;
+  releasedAt?: string;
   targetTurnoverMinor: number;
   status: "assigned" | "in_work" | "worked" | "worked_pending_review" | "worked_verified" | "worked_discrepancy" | "correction" | "blocked";
 };

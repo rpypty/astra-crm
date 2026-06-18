@@ -258,6 +258,7 @@ export type components = {
   holderName?: string;
   shiftRequisiteStatus?: "active" | "worked" | "worked_pending_review" | "worked_verified" | "worked_discrepancy" | "correction" | "released" | "blocked";
   takenAt?: string;
+  releasedAt?: string;
   inboundTurnoverMinor: number;
   outboundTurnoverMinor: number;
   closingBalanceMinor: number;
@@ -317,6 +318,7 @@ export type components = {
   inboundTurnoverMinor: number;
   outboundTurnoverMinor: number;
   closingBalanceMinor: number;
+  releasedAt?: string;
   blocked: boolean;
   comment?: string;
 };

@@ -364,7 +364,7 @@ func (s *Service) Report(ctx context.Context, teamID int64, requisiteID int64) (
 }
 
 func (s *Service) CreatePlan(ctx context.Context, params PlanParams) (Assignment, error) {
-	if err := s.validatePlanParams(ctx, params, false); err != nil {
+	if err := s.validatePlanParams(ctx, params); err != nil {
 		return Assignment{}, err
 	}
 
@@ -393,7 +393,7 @@ func (s *Service) UpdatePlan(ctx context.Context, params PlanParams) (Assignment
 	if params.AssignmentID <= 0 {
 		return Assignment{}, ErrInvalidInput
 	}
-	if err := s.validatePlanParams(ctx, params, true); err != nil {
+	if err := s.validatePlanParams(ctx, params); err != nil {
 		return Assignment{}, err
 	}
 
@@ -460,14 +460,13 @@ func (s *Service) writeAudit(ctx context.Context, event audit.Event) error {
 	return s.audit.Write(ctx, event)
 }
 
-func (s *Service) validatePlanParams(ctx context.Context, params PlanParams, allowToday bool) error {
+func (s *Service) validatePlanParams(ctx context.Context, params PlanParams) error {
 	if params.ActorID <= 0 || params.TeamID <= 0 || params.RequisiteID <= 0 || params.TraderID <= 0 || params.TargetTurnoverMinor <= 0 || params.AssignedForDate.IsZero() {
 		return ErrInvalidInput
 	}
 
 	planDate := normalizeDate(params.AssignedForDate)
-	today := normalizeDate(time.Now())
-	if planDate.Before(today) || (!allowToday && planDate.Before(today)) {
+	if planDate.IsZero() {
 		return ErrInvalidInput
 	}
 

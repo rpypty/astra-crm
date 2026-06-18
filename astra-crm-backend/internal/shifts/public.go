@@ -36,6 +36,7 @@ type PublicAssignedRequisite struct {
 	HolderName            *string    `json:"holderName,omitempty"`
 	ShiftRequisiteStatus  *string    `json:"shiftRequisiteStatus,omitempty"`
 	TakenAt               *time.Time `json:"takenAt,omitempty"`
+	ReleasedAt            *time.Time `json:"releasedAt,omitempty"`
 	InboundTurnoverMinor  int64      `json:"inboundTurnoverMinor"`
 	OutboundTurnoverMinor int64      `json:"outboundTurnoverMinor"`
 	ClosingBalanceMinor   int64      `json:"closingBalanceMinor"`
@@ -175,6 +176,7 @@ func PublicAssignedRequisiteFromDomain(item AssignedRequisite) PublicAssignedReq
 		HolderName:            item.HolderName,
 		ShiftRequisiteStatus:  item.ShiftRequisiteStatus,
 		TakenAt:               item.TakenAt,
+		ReleasedAt:            item.ReleasedAt,
 		InboundTurnoverMinor:  item.InboundTurnoverMinor,
 		OutboundTurnoverMinor: item.OutboundTurnoverMinor,
 		ClosingBalanceMinor:   item.ClosingBalanceMinor,

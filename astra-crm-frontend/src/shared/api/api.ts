@@ -345,6 +345,7 @@ export const api = {
       inboundTurnoverMinor: number;
       outboundTurnoverMinor: number;
       closingBalanceMinor: number;
+      releasedAt?: string;
       blocked: boolean;
       comment?: string;
     }) {
@@ -352,6 +353,7 @@ export const api = {
         inboundTurnoverMinor: input.inboundTurnoverMinor,
         outboundTurnoverMinor: input.outboundTurnoverMinor,
         closingBalanceMinor: input.closingBalanceMinor,
+        releasedAt: input.releasedAt,
         blocked: input.blocked,
         comment: input.comment,
       });
@@ -786,6 +788,8 @@ function toShiftRequisite(item: BackendAssignedRequisite, latestTurnovers: Map<n
     closingBalanceMinor: item.closingBalanceMinor ?? 0,
     assignmentStatus: item.assignmentStatus,
     assignedForDate: item.assignedForDate,
+    takenAt: item.takenAt,
+    releasedAt: item.releasedAt,
     targetTurnoverMinor: item.targetTurnoverMinor,
     latestTurnoverMinor: (item.inboundTurnoverMinor ?? 0) || latestTurnovers.get(shiftRequisiteId) || 0,
     status: toShiftRequisiteStatus(item),

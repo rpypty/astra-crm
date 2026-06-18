@@ -380,6 +380,7 @@ func (r *Repository) CloseShiftRequisite(ctx context.Context, params CloseShiftR
 		ClosingBalanceMinor:   params.ClosingBalanceMinor,
 		Blocked:               params.Blocked,
 		CreatedBy:             params.CreatedBy,
+		ReleasedAt:            timePtrValue(params.ReleasedAt),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ShiftRequisite{}, ErrShiftRequisiteNotFound
@@ -391,6 +392,7 @@ func (r *Repository) CloseShiftRequisite(ctx context.Context, params CloseShiftR
 		TeamID:           params.TeamID,
 		ShiftRequisiteID: pgtype.Int8{Int64: row.ID, Valid: true},
 		Blocked:          params.Blocked,
+		CompletedAt:      timePtrValue(params.ReleasedAt),
 	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return ShiftRequisite{}, err
 	}
@@ -565,6 +567,7 @@ type CloseShiftRequisiteRecord struct {
 	ClosingBalanceMinor   int64
 	Blocked               bool
 	CreatedBy             int64
+	ReleasedAt            *time.Time
 }
 
 type CorrectShiftRequisiteTurnoversRecord struct {
@@ -630,6 +633,7 @@ func fromAssignedRow(row db.ListAssignedRequisitesForTraderRow) AssignedRequisit
 		HolderName:            stringPtr(row.HolderName),
 		ShiftRequisiteStatus:  stringPtr(row.ShiftRequisiteStatus),
 		TakenAt:               timePtr(row.TakenAt),
+		ReleasedAt:            timePtr(row.ReleasedAt),
 		InboundTurnoverMinor:  row.InboundTurnoverMinor,
 		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
 		ClosingBalanceMinor:   row.ClosingBalanceMinor,
@@ -656,6 +660,7 @@ func fromFutureAssignedRow(row db.ListFutureAssignedRequisitesForTraderRow) Assi
 		HolderName:            stringPtr(row.HolderName),
 		ShiftRequisiteStatus:  stringPtr(row.ShiftRequisiteStatus),
 		TakenAt:               timePtr(row.TakenAt),
+		ReleasedAt:            timePtr(row.ReleasedAt),
 		InboundTurnoverMinor:  row.InboundTurnoverMinor,
 		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
 		ClosingBalanceMinor:   row.ClosingBalanceMinor,
@@ -682,6 +687,7 @@ func fromHistoricalAssignedRow(row db.ListHistoricalAssignedRequisitesForTraderR
 		HolderName:            stringPtr(row.HolderName),
 		ShiftRequisiteStatus:  stringPtr(row.ShiftRequisiteStatus),
 		TakenAt:               timePtr(row.TakenAt),
+		ReleasedAt:            timePtr(row.ReleasedAt),
 		InboundTurnoverMinor:  row.InboundTurnoverMinor,
 		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
 		ClosingBalanceMinor:   row.ClosingBalanceMinor,
@@ -708,6 +714,7 @@ func fromAssignedShiftRow(row db.ListAssignedRequisitesForShiftRow) AssignedRequ
 		HolderName:            stringPtr(row.HolderName),
 		ShiftRequisiteStatus:  stringPtr(row.ShiftRequisiteStatus),
 		TakenAt:               timePtr(row.TakenAt),
+		ReleasedAt:            timePtr(row.ReleasedAt),
 		InboundTurnoverMinor:  row.InboundTurnoverMinor,
 		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
 		ClosingBalanceMinor:   row.ClosingBalanceMinor,
@@ -734,6 +741,7 @@ func fromAssignedTeamShiftRow(row db.ListAssignedRequisitesForTeamShiftRow) Assi
 		HolderName:            stringPtr(row.HolderName),
 		ShiftRequisiteStatus:  stringPtr(row.ShiftRequisiteStatus),
 		TakenAt:               timePtr(row.TakenAt),
+		ReleasedAt:            timePtr(row.ReleasedAt),
 		InboundTurnoverMinor:  row.InboundTurnoverMinor,
 		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
 		ClosingBalanceMinor:   row.ClosingBalanceMinor,
@@ -952,4 +960,12 @@ func timePtr(value pgtype.Timestamptz) *time.Time {
 	}
 
 	return &value.Time
+}
+
+func timePtrValue(value *time.Time) pgtype.Timestamptz {
+	if value == nil {
+		return pgtype.Timestamptz{}
+	}
+
+	return pgtype.Timestamptz{Time: *value, Valid: true}
 }

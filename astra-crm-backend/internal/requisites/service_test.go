@@ -101,10 +101,38 @@ func TestServiceAssignAuditsReassignAction(t *testing.T) {
 	}
 }
 
+func TestServiceCreatePlanAllowsPastDateForTestBackfill(t *testing.T) {
+	store := &fakeStore{}
+	service := NewService(store, &fakeTraderReader{
+		trader: users.Trader{
+			ID:     30,
+			TeamID: 2,
+			Status: users.StatusActive,
+		},
+	}, nil)
+
+	pastDate := time.Now().AddDate(0, 0, -3)
+	_, err := service.CreatePlan(context.Background(), PlanParams{
+		ActorID:             1,
+		TeamID:              2,
+		RequisiteID:         10,
+		TraderID:            30,
+		AssignedForDate:     pastDate,
+		TargetTurnoverMinor: 100000,
+	})
+	if err != nil {
+		t.Fatalf("CreatePlan() error = %v", err)
+	}
+	if !store.createdPlan.AssignedForDate.Equal(normalizeDate(pastDate)) {
+		t.Fatalf("assigned for date = %v, want %v", store.createdPlan.AssignedForDate, normalizeDate(pastDate))
+	}
+}
+
 type fakeStore struct {
 	created           CreateRecord
 	updated           UpdateRecord
 	assigned          AssignRecord
+	createdPlan       CreatePlanRecord
 	details           RequisiteDetails
 	assignWasReassign bool
 }
@@ -176,7 +204,18 @@ func (s *fakeStore) AssignmentHistory(ctx context.Context, teamID int64, requisi
 }
 
 func (s *fakeStore) CreatePlan(ctx context.Context, params CreatePlanRecord) (Assignment, error) {
-	return Assignment{}, nil
+	s.createdPlan = params
+	return Assignment{
+		ID:                  200,
+		TeamID:              params.TeamID,
+		RequisiteID:         params.RequisiteID,
+		TraderID:            params.TraderID,
+		AssignedBy:          params.AssignedBy,
+		AssignedForDate:     params.AssignedForDate,
+		TargetTurnoverMinor: params.TargetTurnoverMinor,
+		AssignedAt:          time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+		Status:              AssignmentStatusPlanned,
+	}, nil
 }
 
 func (s *fakeStore) ListPlans(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {

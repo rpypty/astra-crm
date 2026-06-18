@@ -345,8 +345,9 @@ func TestTraderShiftHandlerCloseShiftRequisitePassesClosingBalance(t *testing.T)
 	service := &fakeTraderShiftService{}
 	handler := NewTraderShiftHandler(service)
 
+	releasedAt := "2026-06-07T15:30:00Z"
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/trader/shift-requisites/20/close", strings.NewReader(`{"inboundTurnoverMinor":150000,"outboundTurnoverMinor":25000,"closingBalanceMinor":7500,"blocked":false}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/trader/shift-requisites/20/close", strings.NewReader(`{"inboundTurnoverMinor":150000,"outboundTurnoverMinor":25000,"closingBalanceMinor":7500,"releasedAt":"`+releasedAt+`","blocked":false}`))
 	request = request.WithContext(withShiftRouteParam(ContextWithCurrentUser(request.Context(), users.User{
 		ID:     3,
 		TeamID: 2,
@@ -361,6 +362,9 @@ func TestTraderShiftHandlerCloseShiftRequisitePassesClosingBalance(t *testing.T)
 	}
 	if service.closeRequisiteParams.ClosingBalanceMinor != 7500 {
 		t.Fatalf("closing balance = %d, want 7500", service.closeRequisiteParams.ClosingBalanceMinor)
+	}
+	if service.closeRequisiteParams.ReleasedAt == nil || !service.closeRequisiteParams.ReleasedAt.Equal(time.Date(2026, 6, 7, 15, 30, 0, 0, time.UTC)) {
+		t.Fatalf("released at = %v, want %s", service.closeRequisiteParams.ReleasedAt, releasedAt)
 	}
 }
 

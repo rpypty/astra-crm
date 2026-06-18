@@ -86,6 +86,7 @@ SELECT
     COALESCE(sr.holder_name, r.holder_name, '') AS holder_name,
     COALESCE(sr.status, '') AS shift_requisite_status,
     sr.taken_at,
+    sr.released_at,
     COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
     COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
     COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
@@ -130,6 +131,7 @@ SELECT
     COALESCE(r.holder_name, '') AS holder_name,
     ''::text AS shift_requisite_status,
     NULL::timestamptz AS taken_at,
+    NULL::timestamptz AS released_at,
     0::bigint AS inbound_turnover_minor,
     0::bigint AS outbound_turnover_minor,
     0::bigint AS closing_balance_minor
@@ -165,6 +167,7 @@ SELECT
     COALESCE(sr.holder_name, r.holder_name, '') AS holder_name,
     COALESCE(sr.status, ra.status) AS shift_requisite_status,
     sr.taken_at,
+    sr.released_at,
     COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
     COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
     COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
@@ -209,6 +212,7 @@ SELECT
     sr.holder_name,
     sr.status AS shift_requisite_status,
     sr.taken_at,
+    sr.released_at,
     COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
     COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
     COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
@@ -244,6 +248,7 @@ SELECT
     sr.holder_name,
     sr.status AS shift_requisite_status,
     sr.taken_at,
+    sr.released_at,
     COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
     COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
     COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
@@ -434,7 +439,7 @@ updated_sr AS (
         inbound_turnover_minor = sqlc.arg(inbound_turnover_minor),
         outbound_turnover_minor = sqlc.arg(outbound_turnover_minor),
         closing_balance_minor = sqlc.arg(closing_balance_minor),
-        released_at = COALESCE(sr.released_at, now()),
+        released_at = COALESCE(sr.released_at, COALESCE(sqlc.narg(released_at), now())),
         status = CASE WHEN sqlc.arg(blocked)::boolean THEN 'blocked' ELSE 'worked_pending_review' END,
         updated_at = now()
     FROM target
@@ -468,7 +473,8 @@ final_turnover_entry AS (
         trader_id,
         amount_minor,
         created_by,
-        comment
+        comment,
+        created_at
     )
     SELECT
         updated_sr.team_id,
@@ -478,7 +484,8 @@ final_turnover_entry AS (
         updated_sr.trader_id,
         updated_sr.inbound_turnover_minor,
         sqlc.arg(created_by),
-        'Финальный оборот при закрытии реквизита'
+        'Финальный оборот при закрытии реквизита',
+        COALESCE(sqlc.narg(released_at), now())
     FROM updated_sr
     RETURNING id
 ),

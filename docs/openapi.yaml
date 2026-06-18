@@ -425,6 +425,7 @@ components:
         holderName: { type: string }
         shiftRequisiteStatus: { type: string, enum: [active, worked, worked_pending_review, worked_verified, worked_discrepancy, correction, released, blocked] }
         takenAt: { type: string, format: date-time }
+        releasedAt: { type: string, format: date-time }
         inboundTurnoverMinor: { type: integer, format: int64 }
         outboundTurnoverMinor: { type: integer, format: int64 }
         closingBalanceMinor: { type: integer, format: int64, minimum: 0 }
@@ -508,6 +509,7 @@ components:
         inboundTurnoverMinor: { type: integer, format: int64, minimum: 0 }
         outboundTurnoverMinor: { type: integer, format: int64, minimum: 0 }
         closingBalanceMinor: { type: integer, format: int64, minimum: 0 }
+        releasedAt: { type: string, format: date-time }
         blocked: { type: boolean }
         comment: { type: string }
     CorrectShiftRequisiteRequest:

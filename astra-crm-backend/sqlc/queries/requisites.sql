@@ -232,8 +232,8 @@ RETURNING id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassi
 -- name: CompleteRequisiteAssignmentWork :one
 UPDATE requisite_assignments
 SET status = CASE WHEN sqlc.arg(blocked)::boolean THEN 'blocked' ELSE 'worked' END,
-    completed_at = COALESCE(completed_at, now()),
-    unassigned_at = COALESCE(unassigned_at, now()),
+    completed_at = COALESCE(completed_at, COALESCE(sqlc.narg(completed_at), now())),
+    unassigned_at = COALESCE(unassigned_at, COALESCE(sqlc.narg(completed_at), now())),
     updated_at = now()
 WHERE team_id = sqlc.arg(team_id)
   AND shift_requisite_id = sqlc.arg(shift_requisite_id)

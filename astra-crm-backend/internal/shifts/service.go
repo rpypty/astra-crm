@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
 )
@@ -111,6 +112,7 @@ type CloseShiftRequisiteParams struct {
 	ClosingBalanceMinor   int64
 	Blocked               bool
 	Comment               *string
+	ReleasedAt            *time.Time
 }
 
 type CorrectShiftRequisiteParams struct {
@@ -385,6 +387,7 @@ func (s *Service) CloseShiftRequisite(ctx context.Context, params CloseShiftRequ
 		ClosingBalanceMinor:   params.ClosingBalanceMinor,
 		Blocked:               params.Blocked,
 		CreatedBy:             params.ActorID,
+		ReleasedAt:            params.ReleasedAt,
 	})
 	if err != nil {
 		return ShiftRequisite{}, err

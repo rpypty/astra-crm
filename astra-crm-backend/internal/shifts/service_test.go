@@ -135,6 +135,7 @@ func TestServiceCloseShiftRequisiteStoresFinalTurnoversAndAudits(t *testing.T) {
 	service := NewService(store, auditService)
 
 	comment := "карта отработала"
+	releasedAt := time.Date(2026, 6, 7, 15, 30, 0, 0, time.UTC)
 	item, err := service.CloseShiftRequisite(context.Background(), CloseShiftRequisiteParams{
 		ActorID:               1,
 		TeamID:                2,
@@ -145,6 +146,7 @@ func TestServiceCloseShiftRequisiteStoresFinalTurnoversAndAudits(t *testing.T) {
 		ClosingBalanceMinor:   7500,
 		Blocked:               true,
 		Comment:               &comment,
+		ReleasedAt:            &releasedAt,
 	})
 	if err != nil {
 		t.Fatalf("CloseShiftRequisite() error = %v", err)
@@ -161,6 +163,9 @@ func TestServiceCloseShiftRequisiteStoresFinalTurnoversAndAudits(t *testing.T) {
 	}
 	if !store.closedShiftRequisite.Blocked {
 		t.Fatal("blocked flag was not passed to store")
+	}
+	if store.closedShiftRequisite.ReleasedAt == nil || !store.closedShiftRequisite.ReleasedAt.Equal(releasedAt) {
+		t.Fatalf("released at = %v, want %v", store.closedShiftRequisite.ReleasedAt, releasedAt)
 	}
 	if len(auditService.events) != 1 {
 		t.Fatalf("audit events count = %d, want 1", len(auditService.events))

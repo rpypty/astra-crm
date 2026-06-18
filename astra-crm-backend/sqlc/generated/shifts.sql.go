@@ -100,8 +100,8 @@ updated_sr AS (
         inbound_turnover_minor = $4,
         outbound_turnover_minor = $5,
         closing_balance_minor = $6,
-        released_at = COALESCE(sr.released_at, now()),
-        status = CASE WHEN $7::boolean THEN 'blocked' ELSE 'worked_pending_review' END,
+        released_at = COALESCE(sr.released_at, COALESCE($7, now())),
+        status = CASE WHEN $8::boolean THEN 'blocked' ELSE 'worked_pending_review' END,
         updated_at = now()
     FROM target
     WHERE sr.id = target.id
@@ -134,7 +134,8 @@ final_turnover_entry AS (
         trader_id,
         amount_minor,
         created_by,
-        comment
+        comment,
+        created_at
     )
     SELECT
         updated_sr.team_id,
@@ -143,8 +144,9 @@ final_turnover_entry AS (
         updated_sr.requisite_id,
         updated_sr.trader_id,
         updated_sr.inbound_turnover_minor,
-        $8,
-        'Финальный оборот при закрытии реквизита'
+        $9,
+        'Финальный оборот при закрытии реквизита',
+        COALESCE($7, now())
     FROM updated_sr
     RETURNING id
 ),
@@ -174,6 +176,7 @@ type CloseShiftRequisiteParams struct {
 	InboundTurnoverMinor  int64
 	OutboundTurnoverMinor int64
 	ClosingBalanceMinor   int64
+	ReleasedAt            pgtype.Timestamptz
 	Blocked               bool
 	CreatedBy             int64
 }
@@ -205,6 +208,7 @@ func (q *Queries) CloseShiftRequisite(ctx context.Context, arg CloseShiftRequisi
 		arg.InboundTurnoverMinor,
 		arg.OutboundTurnoverMinor,
 		arg.ClosingBalanceMinor,
+		arg.ReleasedAt,
 		arg.Blocked,
 		arg.CreatedBy,
 	)
@@ -884,6 +888,7 @@ SELECT
     sr.holder_name,
     sr.status AS shift_requisite_status,
     sr.taken_at,
+    sr.released_at,
     COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
     COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
     COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
@@ -925,6 +930,7 @@ type ListAssignedRequisitesForShiftRow struct {
 	HolderName            string
 	ShiftRequisiteStatus  string
 	TakenAt               pgtype.Timestamptz
+	ReleasedAt            pgtype.Timestamptz
 	InboundTurnoverMinor  int64
 	OutboundTurnoverMinor int64
 	ClosingBalanceMinor   int64
@@ -958,6 +964,7 @@ func (q *Queries) ListAssignedRequisitesForShift(ctx context.Context, arg ListAs
 			&i.HolderName,
 			&i.ShiftRequisiteStatus,
 			&i.TakenAt,
+			&i.ReleasedAt,
 			&i.InboundTurnoverMinor,
 			&i.OutboundTurnoverMinor,
 			&i.ClosingBalanceMinor,
@@ -992,6 +999,7 @@ SELECT
     sr.holder_name,
     sr.status AS shift_requisite_status,
     sr.taken_at,
+    sr.released_at,
     COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
     COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
     COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
@@ -1030,6 +1038,7 @@ type ListAssignedRequisitesForTeamShiftRow struct {
 	HolderName            string
 	ShiftRequisiteStatus  string
 	TakenAt               pgtype.Timestamptz
+	ReleasedAt            pgtype.Timestamptz
 	InboundTurnoverMinor  int64
 	OutboundTurnoverMinor int64
 	ClosingBalanceMinor   int64
@@ -1063,6 +1072,7 @@ func (q *Queries) ListAssignedRequisitesForTeamShift(ctx context.Context, arg Li
 			&i.HolderName,
 			&i.ShiftRequisiteStatus,
 			&i.TakenAt,
+			&i.ReleasedAt,
 			&i.InboundTurnoverMinor,
 			&i.OutboundTurnoverMinor,
 			&i.ClosingBalanceMinor,
@@ -1106,6 +1116,7 @@ SELECT
     COALESCE(sr.holder_name, r.holder_name, '') AS holder_name,
     COALESCE(sr.status, '') AS shift_requisite_status,
     sr.taken_at,
+    sr.released_at,
     COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
     COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
     COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
@@ -1156,6 +1167,7 @@ type ListAssignedRequisitesForTraderRow struct {
 	HolderName            string
 	ShiftRequisiteStatus  string
 	TakenAt               pgtype.Timestamptz
+	ReleasedAt            pgtype.Timestamptz
 	InboundTurnoverMinor  int64
 	OutboundTurnoverMinor int64
 	ClosingBalanceMinor   int64
@@ -1189,6 +1201,7 @@ func (q *Queries) ListAssignedRequisitesForTrader(ctx context.Context, arg ListA
 			&i.HolderName,
 			&i.ShiftRequisiteStatus,
 			&i.TakenAt,
+			&i.ReleasedAt,
 			&i.InboundTurnoverMinor,
 			&i.OutboundTurnoverMinor,
 			&i.ClosingBalanceMinor,
@@ -1223,6 +1236,7 @@ SELECT
     COALESCE(r.holder_name, '') AS holder_name,
     ''::text AS shift_requisite_status,
     NULL::timestamptz AS taken_at,
+    NULL::timestamptz AS released_at,
     0::bigint AS inbound_turnover_minor,
     0::bigint AS outbound_turnover_minor,
     0::bigint AS closing_balance_minor
@@ -1264,6 +1278,7 @@ type ListFutureAssignedRequisitesForTraderRow struct {
 	HolderName            string
 	ShiftRequisiteStatus  string
 	TakenAt               pgtype.Timestamptz
+	ReleasedAt            pgtype.Timestamptz
 	InboundTurnoverMinor  int64
 	OutboundTurnoverMinor int64
 	ClosingBalanceMinor   int64
@@ -1297,6 +1312,7 @@ func (q *Queries) ListFutureAssignedRequisitesForTrader(ctx context.Context, arg
 			&i.HolderName,
 			&i.ShiftRequisiteStatus,
 			&i.TakenAt,
+			&i.ReleasedAt,
 			&i.InboundTurnoverMinor,
 			&i.OutboundTurnoverMinor,
 			&i.ClosingBalanceMinor,
@@ -1331,6 +1347,7 @@ SELECT
     COALESCE(sr.holder_name, r.holder_name, '') AS holder_name,
     COALESCE(sr.status, ra.status) AS shift_requisite_status,
     sr.taken_at,
+    sr.released_at,
     COALESCE(sr.inbound_turnover_minor, 0) AS inbound_turnover_minor,
     COALESCE(sr.outbound_turnover_minor, 0) AS outbound_turnover_minor,
     COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
@@ -1381,6 +1398,7 @@ type ListHistoricalAssignedRequisitesForTraderRow struct {
 	HolderName            string
 	ShiftRequisiteStatus  string
 	TakenAt               pgtype.Timestamptz
+	ReleasedAt            pgtype.Timestamptz
 	InboundTurnoverMinor  int64
 	OutboundTurnoverMinor int64
 	ClosingBalanceMinor   int64
@@ -1414,6 +1432,7 @@ func (q *Queries) ListHistoricalAssignedRequisitesForTrader(ctx context.Context,
 			&i.HolderName,
 			&i.ShiftRequisiteStatus,
 			&i.TakenAt,
+			&i.ReleasedAt,
 			&i.InboundTurnoverMinor,
 			&i.OutboundTurnoverMinor,
 			&i.ClosingBalanceMinor,

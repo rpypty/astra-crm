@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ashpak/astra-crm-backend/internal/shifts"
 	"github.com/go-chi/chi/v5"
@@ -111,6 +112,7 @@ type closeShiftRequisiteRequest struct {
 	ClosingBalanceMinor   int64   `json:"closingBalanceMinor"`
 	Blocked               bool    `json:"blocked"`
 	Comment               *string `json:"comment"`
+	ReleasedAt            *string `json:"releasedAt"`
 }
 
 type correctShiftRequisiteRequest struct {
@@ -499,7 +501,8 @@ func (h *TraderShiftHandler) CloseShiftRequisite(w http.ResponseWriter, r *http.
 	if !decodeJSON(w, r, &request) {
 		return
 	}
-	if fields := validateCloseShiftRequisiteRequest(request); len(fields) > 0 {
+	releasedAt, fields := validateCloseShiftRequisiteRequest(request)
+	if len(fields) > 0 {
 		RespondError(w, ValidationError(fields))
 		return
 	}
@@ -514,6 +517,7 @@ func (h *TraderShiftHandler) CloseShiftRequisite(w http.ResponseWriter, r *http.
 		ClosingBalanceMinor:   request.ClosingBalanceMinor,
 		Blocked:               request.Blocked,
 		Comment:               request.Comment,
+		ReleasedAt:            releasedAt,
 	})
 	if err != nil {
 		RespondError(w, mapShiftError(err))
@@ -794,7 +798,7 @@ func validateCreateTurnoverRequest(request createTurnoverRequest) map[string]str
 	return fields
 }
 
-func validateCloseShiftRequisiteRequest(request closeShiftRequisiteRequest) map[string]string {
+func validateCloseShiftRequisiteRequest(request closeShiftRequisiteRequest) (*time.Time, map[string]string) {
 	fields := map[string]string{}
 	if request.InboundTurnoverMinor < 0 {
 		fields["inboundTurnoverMinor"] = "Оборот по оплатам не может быть отрицательным"
@@ -806,7 +810,29 @@ func validateCloseShiftRequisiteRequest(request closeShiftRequisiteRequest) map[
 		fields["closingBalanceMinor"] = "Остаток не может быть отрицательным"
 	}
 
-	return fields
+	releasedAt := parseOptionalRequestTime(request.ReleasedAt, "releasedAt", fields)
+	if releasedAt != nil && releasedAt.After(time.Now().Add(5*time.Minute)) {
+		fields["releasedAt"] = "Дата закрытия не может быть в будущем"
+	}
+
+	return releasedAt, fields
+}
+
+func parseOptionalRequestTime(raw *string, field string, fields map[string]string) *time.Time {
+	if raw == nil || strings.TrimSpace(*raw) == "" {
+		return nil
+	}
+
+	value := strings.TrimSpace(*raw)
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return &parsed
+	}
+	if parsed, err := time.ParseInLocation("2006-01-02", value, time.Local); err == nil {
+		return &parsed
+	}
+
+	fields[field] = "Дата должна быть в формате RFC3339 или YYYY-MM-DD"
+	return nil
 }
 
 func validateCorrectShiftRequisiteRequest(request correctShiftRequisiteRequest) map[string]string {

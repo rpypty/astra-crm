@@ -109,23 +109,29 @@ func (q *Queries) CloseActiveRequisiteAssignment(ctx context.Context, arg CloseA
 const completeRequisiteAssignmentWork = `-- name: CompleteRequisiteAssignmentWork :one
 UPDATE requisite_assignments
 SET status = CASE WHEN $1::boolean THEN 'blocked' ELSE 'worked' END,
-    completed_at = COALESCE(completed_at, now()),
-    unassigned_at = COALESCE(unassigned_at, now()),
+    completed_at = COALESCE(completed_at, COALESCE($2, now())),
+    unassigned_at = COALESCE(unassigned_at, COALESCE($2, now())),
     updated_at = now()
-WHERE team_id = $2
-  AND shift_requisite_id = $3
+WHERE team_id = $3
+  AND shift_requisite_id = $4
   AND status = 'in_work'
 RETURNING id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment, status, assigned_for_date, target_turnover_minor, started_at, completed_at, cancelled_at, shift_requisite_id, updated_at
 `
 
 type CompleteRequisiteAssignmentWorkParams struct {
 	Blocked          bool
+	CompletedAt      pgtype.Timestamptz
 	TeamID           int64
 	ShiftRequisiteID pgtype.Int8
 }
 
 func (q *Queries) CompleteRequisiteAssignmentWork(ctx context.Context, arg CompleteRequisiteAssignmentWorkParams) (RequisiteAssignment, error) {
-	row := q.db.QueryRow(ctx, completeRequisiteAssignmentWork, arg.Blocked, arg.TeamID, arg.ShiftRequisiteID)
+	row := q.db.QueryRow(ctx, completeRequisiteAssignmentWork,
+		arg.Blocked,
+		arg.CompletedAt,
+		arg.TeamID,
+		arg.ShiftRequisiteID,
+	)
 	var i RequisiteAssignment
 	err := row.Scan(
 		&i.ID,

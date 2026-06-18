@@ -58,6 +58,7 @@ const closeRequisiteSchema = z.object({
   inboundTurnover: z.string().min(1, "Введите оборот по оплатам").refine((value) => parseMoneyToMinor(value) >= 0, "Некорректная сумма"),
   outboundTurnover: z.string().min(1, "Введите оборот по выплатам").refine((value) => parseMoneyToMinor(value) >= 0, "Некорректная сумма"),
   closingBalance: z.string().min(1, "Введите остаток").refine((value) => parseMoneyToMinor(value) >= 0, "Некорректная сумма"),
+  releasedAt: z.string().min(1, "Выберите дату закрытия").refine((value) => value <= todayDateInputValue(), "Дата закрытия не может быть в будущем"),
   blocked: z.boolean(),
   comment: z.string().optional(),
 });
@@ -202,9 +203,9 @@ export function TraderRequisitesPage() {
   const historyColumns = useMemo<ColumnDef<ShiftRequisite>[]>(
     () => [
       {
-        accessorKey: "assignedForDate",
+        accessorKey: "releasedAt",
         header: "Дата",
-        cell: ({ row }) => formatDateOnly(row.original.assignedForDate),
+        cell: ({ row }) => formatDateOnly(row.original.releasedAt ?? row.original.assignedForDate),
       },
       {
         accessorKey: "phone",
@@ -335,6 +336,18 @@ function formatDateOnly(value: string | null | undefined) {
 
 function moneyInputValue(valueMinor: number) {
   return (valueMinor / 100).toFixed(2).replace(".", ",");
+}
+
+function todayDateInputValue() {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
+}
+
+function dateInputToCurrentTimeISO(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  const now = new Date();
+  return new Date(year, month - 1, day, now.getHours(), now.getMinutes(), now.getSeconds()).toISOString();
 }
 
 function canCorrectTurnovers(item: ShiftRequisite) {
@@ -498,7 +511,7 @@ function CloseRequisiteDialog({ item }: { item: ShiftRequisite }) {
   const [open, setOpen] = useState(false);
   const form = useForm<z.infer<typeof closeRequisiteSchema>>({
     resolver: zodResolver(closeRequisiteSchema),
-    defaultValues: { inboundTurnover: "", outboundTurnover: "", closingBalance: "", blocked: false, comment: "" },
+    defaultValues: { inboundTurnover: "", outboundTurnover: "", closingBalance: "", releasedAt: todayDateInputValue(), blocked: false, comment: "" },
   });
   const mutation = useMutation({
     mutationFn: api.traderShift.closeRequisite,
@@ -528,6 +541,7 @@ function CloseRequisiteDialog({ item }: { item: ShiftRequisite }) {
               inboundTurnoverMinor: parseMoneyToMinor(values.inboundTurnover),
               outboundTurnoverMinor: parseMoneyToMinor(values.outboundTurnover),
               closingBalanceMinor: parseMoneyToMinor(values.closingBalance),
+              releasedAt: dateInputToCurrentTimeISO(values.releasedAt),
               blocked: values.blocked,
               comment: values.comment,
             }),
@@ -541,6 +555,9 @@ function CloseRequisiteDialog({ item }: { item: ShiftRequisite }) {
           </FormField>
           <FormField label="Остаток" error={form.formState.errors.closingBalance?.message}>
             <Input {...form.register("closingBalance")} />
+          </FormField>
+          <FormField label="Дата закрытия" error={form.formState.errors.releasedAt?.message}>
+            <Input type="date" max={todayDateInputValue()} {...form.register("releasedAt")} />
           </FormField>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" className="h-4 w-4 rounded border-border" {...form.register("blocked")} />
