@@ -42,7 +42,6 @@ export function LoginPage() {
         <CardHeader>
           <div className="text-sm font-semibold uppercase tracking-normal text-primary">Astra CRM</div>
           <CardTitle className="text-xl">Вход в CRM</CardTitle>
-          <p className="text-sm text-muted-foreground">Демо: teamlead/demo123 или trader_ivan/demo123</p>
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
