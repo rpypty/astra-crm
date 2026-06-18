@@ -102,13 +102,23 @@ jobs:
           sed -i "s|^BACKEND_IMAGE=.*|BACKEND_IMAGE=${BACKEND_IMAGE}|" "$ENV_DIR/.env"
           sed -i "s|^FRONTEND_IMAGE=.*|FRONTEND_IMAGE=${FRONTEND_IMAGE}|" "$ENV_DIR/.env"
 
-          docker compose --project-directory "$ENV_DIR" --env-file "$ENV_DIR/.env" -f "$ENV_DIR/compose.yml" config --quiet
-          docker compose --project-directory "$ENV_DIR" --env-file "$ENV_DIR/.env" -f "$ENV_DIR/compose.yml" up -d --remove-orphans
-          docker compose --project-directory "$ENV_DIR" --env-file "$ENV_DIR/.env" -f "$ENV_DIR/compose.yml" ps
-
           set -a
           . "$ENV_DIR/.env"
           set +a
+
+          if [ -n "${COMPOSE_PROJECT_NAME:-}" ]; then
+            COMPOSE_NETWORK="${COMPOSE_PROJECT_NAME}_network"
+            if docker network inspect "$COMPOSE_NETWORK" >/dev/null 2>&1; then
+              COMPOSE_NETWORK_LABEL="$(docker network inspect "$COMPOSE_NETWORK" --format '{{ index .Labels "com.docker.compose.network" }}' 2>/dev/null || true)"
+              if [ -z "${COMPOSE_NETWORK_LABEL}" ] || [ "$COMPOSE_NETWORK_LABEL" != "app" ]; then
+                docker network rm "$COMPOSE_NETWORK"
+              fi
+            fi
+          fi
+
+          docker compose --project-directory "$ENV_DIR" --env-file "$ENV_DIR/.env" -f "$ENV_DIR/compose.yml" config --quiet
+          docker compose --project-directory "$ENV_DIR" --env-file "$ENV_DIR/.env" -f "$ENV_DIR/compose.yml" up -d --remove-orphans
+          docker compose --project-directory "$ENV_DIR" --env-file "$ENV_DIR/.env" -f "$ENV_DIR/compose.yml" ps
 
           curl -fsS "http://127.0.0.1:${HOST_BACKEND_PORT}/health"
           curl -fsS "http://127.0.0.1:${HOST_BACKEND_PORT}/ready"
