@@ -479,6 +479,9 @@ export type components = {
     ReconciliationResponse: {
   run: components["schemas"]["ReconciliationRun"];
 };
+    ReconciliationRunsResponse: {
+  runs: components["schemas"]["ReconciliationRun"][];
+};
     ReconciliationItem: {
   id: number;
   reconciliationRunId: number;

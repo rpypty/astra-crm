@@ -349,6 +349,9 @@ export type ReconciliationSummary = {
   diffMinor: number;
   comment?: string;
   runId?: number;
+  importBatchId?: number;
+  confirmedAt?: string;
+  createdAt?: string;
 };
 
 export type ReconciliationItem = {

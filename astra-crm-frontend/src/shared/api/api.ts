@@ -61,6 +61,7 @@ type TransferResponse = ApiSchema<"TransferResponse">;
 type ImportResponse = ApiSchema<"ImportResponse">;
 type ReconciliationResponse = ApiSchema<"ReconciliationResponse">;
 type ReconciliationItemsResponse = ApiSchema<"ReconciliationItemsResponse">;
+type ReconciliationRunsResponse = { runs: BackendReconciliationRun[] };
 type DashboardResponse = ApiSchema<"DashboardResponse">;
 type OrdersListResponse = ApiSchema<"OrdersListResponse">;
 type AccountingPeriodsResponse = ApiSchema<"AccountingPeriodsResponse">;
@@ -584,6 +585,18 @@ export const api = {
         throw error;
       }
     },
+    async reconciliationHistory(scope: "teamlead" | "trader", direction: OrderDirection): Promise<ReconciliationSummary[]> {
+      const response = await apiClient.get<ReconciliationRunsResponse>(`/${scope}/${direction}/reconciliation/history`);
+      return response.runs.map(toReconciliation);
+    },
+    async reconciliationRun(scope: "teamlead" | "trader", direction: OrderDirection, runId: number): Promise<ReconciliationSummary> {
+      const response = await apiClient.get<ReconciliationResponse>(`/${scope}/${direction}/reconciliation/${runId}`);
+      return toReconciliation(response.run);
+    },
+    async reconciliationRunItems(scope: "teamlead" | "trader", direction: OrderDirection, runId: number): Promise<ReconciliationItem[]> {
+      const response = await apiClient.get<ReconciliationItemsResponse>(`/${scope}/${direction}/reconciliation/${runId}/items`);
+      return response.items.map(toReconciliationItem);
+    },
   },
 
   periods: {
@@ -945,6 +958,9 @@ function toReconciliation(run: BackendReconciliationRun): ReconciliationSummary 
     diffMinor: run.diffAmountMinor,
     comment: run.comment,
     runId: run.id,
+    importBatchId: run.importBatchId,
+    confirmedAt: run.confirmedAt,
+    createdAt: run.createdAt,
   };
 }
 

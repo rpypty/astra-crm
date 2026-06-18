@@ -761,6 +761,80 @@ func (r *Repository) LatestTeamleadOutbound(ctx context.Context, teamID int64) (
 	return fromDBRun(run), nil
 }
 
+func (r *Repository) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, direction string, limit int32) ([]Run, error) {
+	if r.db == nil {
+		return nil, ErrRepositoryNotConfigured
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	rows, err := db.New(tx).ListTeamleadCurrentReconciliationRuns(ctx, db.ListTeamleadCurrentReconciliationRunsParams{
+		TeamID:     teamID,
+		Direction:  direction,
+		LimitCount: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	runs := make([]Run, 0, len(rows))
+	for _, row := range rows {
+		runs = append(runs, fromDBRun(row))
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	committed = true
+
+	return runs, nil
+}
+
+func (r *Repository) GetTeamleadCurrentRun(ctx context.Context, teamID int64, direction string, runID int64) (Run, error) {
+	if r.db == nil {
+		return Run{}, ErrRepositoryNotConfigured
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Run{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	run, err := db.New(tx).GetTeamleadCurrentReconciliationRun(ctx, db.GetTeamleadCurrentReconciliationRunParams{
+		RunID:     runID,
+		TeamID:    teamID,
+		Direction: direction,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, ErrRunNotFound
+	}
+	if err != nil {
+		return Run{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Run{}, err
+	}
+	committed = true
+
+	return fromDBRun(run), nil
+}
+
 func (r *Repository) ListItems(ctx context.Context, runID int64) ([]Item, error) {
 	if r.db == nil {
 		return nil, ErrRepositoryNotConfigured

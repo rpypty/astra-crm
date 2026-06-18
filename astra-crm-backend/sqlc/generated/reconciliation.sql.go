@@ -1986,6 +1986,55 @@ func (q *Queries) CreateTraderOutboundReconciliationRun(ctx context.Context, arg
 	return i, err
 }
 
+const getTeamleadCurrentReconciliationRun = `-- name: GetTeamleadCurrentReconciliationRun :one
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE id = $1
+  AND team_id = $2
+  AND type = CASE
+      WHEN $3::text = 'inbound' THEN 'teamlead_period_inbound'
+      ELSE 'teamlead_period_outbound'
+  END
+  AND accounting_period_id IS NULL
+LIMIT 1
+`
+
+type GetTeamleadCurrentReconciliationRunParams struct {
+	RunID     int64
+	TeamID    int64
+	Direction string
+}
+
+func (q *Queries) GetTeamleadCurrentReconciliationRun(ctx context.Context, arg GetTeamleadCurrentReconciliationRunParams) (ReconciliationRun, error) {
+	row := q.db.QueryRow(ctx, getTeamleadCurrentReconciliationRun, arg.RunID, arg.TeamID, arg.Direction)
+	var i ReconciliationRun
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.Type,
+		&i.ScopeType,
+		&i.ShiftID,
+		&i.AccountingPeriodID,
+		&i.TraderID,
+		&i.ImportBatchID,
+		&i.ExpectedAmountMinor,
+		&i.ActualAmountMinor,
+		&i.DiffAmountMinor,
+		&i.SuccessAmountMinor,
+		&i.SuccessCount,
+		&i.FailedAmountMinor,
+		&i.FailedCount,
+		&i.TotalAmountMinor,
+		&i.TotalCount,
+		&i.Status,
+		&i.Comment,
+		&i.ConfirmedBy,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const latestActiveTeamleadCurrentImportBatch = `-- name: LatestActiveTeamleadCurrentImportBatch :one
 SELECT id, team_id, uploaded_by, scope_type, direction, shift_id, accounting_period_id, trader_id, file_name, file_hash, rows_count, status, superseded_by_batch_id, error_message, created_at, applied_at
 FROM import_batches
@@ -2485,6 +2534,68 @@ func (q *Queries) ListReconciliationItemsForRun(ctx context.Context, runID int64
 			&i.TeamleadValueJson,
 			&i.TraderValueJson,
 			&i.Message,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTeamleadCurrentReconciliationRuns = `-- name: ListTeamleadCurrentReconciliationRuns :many
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE team_id = $1
+  AND type = CASE
+      WHEN $2::text = 'inbound' THEN 'teamlead_period_inbound'
+      ELSE 'teamlead_period_outbound'
+  END
+  AND accounting_period_id IS NULL
+ORDER BY created_at DESC, id DESC
+LIMIT $3
+`
+
+type ListTeamleadCurrentReconciliationRunsParams struct {
+	TeamID     int64
+	Direction  string
+	LimitCount int32
+}
+
+func (q *Queries) ListTeamleadCurrentReconciliationRuns(ctx context.Context, arg ListTeamleadCurrentReconciliationRunsParams) ([]ReconciliationRun, error) {
+	rows, err := q.db.Query(ctx, listTeamleadCurrentReconciliationRuns, arg.TeamID, arg.Direction, arg.LimitCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReconciliationRun
+	for rows.Next() {
+		var i ReconciliationRun
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.Type,
+			&i.ScopeType,
+			&i.ShiftID,
+			&i.AccountingPeriodID,
+			&i.TraderID,
+			&i.ImportBatchID,
+			&i.ExpectedAmountMinor,
+			&i.ActualAmountMinor,
+			&i.DiffAmountMinor,
+			&i.SuccessAmountMinor,
+			&i.SuccessCount,
+			&i.FailedAmountMinor,
+			&i.FailedCount,
+			&i.TotalAmountMinor,
+			&i.TotalCount,
+			&i.Status,
+			&i.Comment,
+			&i.ConfirmedBy,
+			&i.ConfirmedAt,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

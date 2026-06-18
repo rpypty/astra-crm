@@ -57,6 +57,15 @@ func PublicRunFromDomain(run Run) PublicRun {
 	}
 }
 
+func PublicRunsFromDomain(runs []Run) []PublicRun {
+	publicRuns := make([]PublicRun, 0, len(runs))
+	for _, run := range runs {
+		publicRuns = append(publicRuns, PublicRunFromDomain(run))
+	}
+
+	return publicRuns
+}
+
 type PublicItem struct {
 	ID                  int64           `json:"id"`
 	ReconciliationRunID int64           `json:"reconciliationRunId"`

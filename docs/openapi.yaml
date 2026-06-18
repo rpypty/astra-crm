@@ -717,6 +717,13 @@ components:
       required: [run]
       properties:
         run: { $ref: "#/components/schemas/ReconciliationRun" }
+    ReconciliationRunsResponse:
+      type: object
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          items: { $ref: "#/components/schemas/ReconciliationRun" }
     ReconciliationItem:
       type: object
       required: [id, reconciliationRunId, issueType, createdAt]
@@ -1757,6 +1764,88 @@ paths:
       responses:
         "200":
           description: Latest teamlead outbound reconciliation items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationItemsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/inbound/reconciliation/history:
+    get:
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: Teamlead inbound reconciliation run history
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationRunsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/outbound/reconciliation/history:
+    get:
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: Teamlead outbound reconciliation run history
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationRunsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/inbound/reconciliation/{runId}:
+    get:
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Historical teamlead inbound reconciliation run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/outbound/reconciliation/{runId}:
+    get:
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Historical teamlead outbound reconciliation run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/inbound/reconciliation/{runId}/items:
+    get:
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Historical teamlead inbound reconciliation items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationItemsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/outbound/reconciliation/{runId}/items:
+    get:
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Historical teamlead outbound reconciliation items
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReconciliationItemsResponse" }

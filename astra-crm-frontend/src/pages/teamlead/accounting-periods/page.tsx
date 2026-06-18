@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
-import { AlertTriangle, ArrowDownLeft, ArrowUpRight, CheckCircle2, FileText, RefreshCw, Upload, X } from "lucide-react";
+import { AlertTriangle, ArrowDownLeft, ArrowUpRight, CheckCircle2, Eye, FileText, RefreshCw, Upload, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AcceptMismatchDialog } from "@/features/import-csv/ui/import-components";
 import { StatusBadge } from "@/entities/status/ui/status-badge";
@@ -44,8 +44,21 @@ type TeamleadMismatchRow = {
   createdAt: string;
 };
 
+type TeamleadReconciliationHistoryRow = {
+  id: number;
+  direction: OrderDirection;
+  directionLabel: string;
+  summary: ReconciliationSummary;
+};
+
+type SelectedHistoryRun = {
+  direction: OrderDirection;
+  summary: ReconciliationSummary;
+};
+
 export function TeamleadPeriodsPage() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [selectedHistoryRun, setSelectedHistoryRun] = useState<SelectedHistoryRun | null>(null);
   const inboundReconciliationQuery = useQuery({
     queryKey: queryKeys.teamlead.reconciliation("inbound"),
     queryFn: () => api.orders.reconciliation("teamlead", "inbound"),
@@ -62,11 +75,23 @@ export function TeamleadPeriodsPage() {
     queryKey: queryKeys.teamlead.reconciliationItems("outbound"),
     queryFn: () => api.orders.reconciliationItems("teamlead", "outbound"),
   });
+  const inboundHistoryQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliationHistory("inbound"),
+    queryFn: () => api.orders.reconciliationHistory("teamlead", "inbound"),
+  });
+  const outboundHistoryQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliationHistory("outbound"),
+    queryFn: () => api.orders.reconciliationHistory("teamlead", "outbound"),
+  });
 
   const hasMismatch =
     inboundReconciliationQuery.data?.status === "mismatch" ||
     outboundReconciliationQuery.data?.status === "mismatch";
   const issueCount = (inboundItemsQuery.data?.length ?? 0) + (outboundItemsQuery.data?.length ?? 0);
+  const historyRows = useMemo(
+    () => buildHistoryRows(inboundHistoryQuery.data ?? [], outboundHistoryQuery.data ?? []),
+    [inboundHistoryQuery.data, outboundHistoryQuery.data],
+  );
 
   return (
     <div className="space-y-6">
@@ -98,7 +123,17 @@ export function TeamleadPeriodsPage() {
         outboundLoading={outboundReconciliationQuery.isLoading || outboundItemsQuery.isLoading}
       />
 
+      <TeamleadReconciliationHistoryCard
+        rows={historyRows}
+        isLoading={inboundHistoryQuery.isLoading || outboundHistoryQuery.isLoading}
+        onOpen={(row) => setSelectedHistoryRun({ direction: row.direction, summary: row.summary })}
+      />
+
       <TeamleadReconciliationUploadDialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen} />
+      <TeamleadReconciliationHistoryDialog
+        selected={selectedHistoryRun}
+        onClose={() => setSelectedHistoryRun(null)}
+      />
     </div>
   );
 }
@@ -445,6 +480,149 @@ function MismatchAmountCell({ amount, count, status }: { amount?: number; count?
   );
 }
 
+function TeamleadReconciliationHistoryCard({
+  rows,
+  isLoading,
+  onOpen,
+}: {
+  rows: TeamleadReconciliationHistoryRow[];
+  isLoading?: boolean;
+  onOpen: (row: TeamleadReconciliationHistoryRow) => void;
+}) {
+  const columns = useTeamleadHistoryColumns();
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
+
+  return (
+    <Card>
+      <CardContent className="space-y-3 p-4">
+        <div>
+          <div className="font-semibold">История сверок</div>
+          <div className="text-sm text-muted-foreground">Каждый запуск сверки сохраняется отдельно вместе с результатом и комментарием.</div>
+        </div>
+        <DataTable
+          columns={columns}
+          data={rows}
+          rowCount={rows.length}
+          pagination={pagination}
+          onPaginationChange={setPagination}
+          isLoading={isLoading}
+          emptyTitle="Истории сверок пока нет"
+          emptyDescription="После запуска сверки запись появится здесь."
+          pageSizeOptions={[8, 15, 25, 50]}
+          onRowClick={onOpen}
+          actions={[{ label: "Открыть", onSelect: onOpen }]}
+          getRowClassName={(row) => (row.summary.status === "mismatch" ? "bg-red-50 text-red-950 hover:bg-red-100" : undefined)}
+        />
+      </CardContent>
+    </Card>
+  );
+}
+
+function useTeamleadHistoryColumns() {
+  return useMemo<ColumnDef<TeamleadReconciliationHistoryRow>[]>(
+    () => [
+      {
+        accessorKey: "id",
+        header: "Сверка",
+        cell: ({ row }) => (
+          <span className="inline-flex items-center gap-2 font-medium">
+            <Eye className="h-4 w-4 text-muted-foreground" />
+            #{row.original.id}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "directionLabel",
+        header: "Тип",
+        cell: ({ row }) => row.original.directionLabel,
+      },
+      {
+        accessorKey: "createdAt",
+        header: "Запуск",
+        cell: ({ row }) => formatDateTime(row.original.summary.createdAt),
+      },
+      {
+        accessorKey: "status",
+        header: "Статус",
+        cell: ({ row }) => <StatusBadge status={row.original.summary.status} />,
+      },
+      {
+        accessorKey: "expectedMinor",
+        header: "CSV",
+        cell: ({ row }) => <div className="text-right tabular-nums">{formatMoneyMinor(row.original.summary.expectedMinor)}</div>,
+      },
+      {
+        accessorKey: "actualMinor",
+        header: "CRM",
+        cell: ({ row }) => <div className="text-right tabular-nums">{formatMoneyMinor(row.original.summary.actualMinor)}</div>,
+      },
+      {
+        accessorKey: "diffMinor",
+        header: "Расхождение",
+        cell: ({ row }) => <div className="text-right font-semibold tabular-nums">{formatMoneyMinor(row.original.summary.diffMinor)}</div>,
+      },
+      {
+        accessorKey: "comment",
+        header: "Комментарий",
+        cell: ({ row }) => (
+          <span className="block max-w-[260px] truncate text-muted-foreground" title={row.original.summary.comment ?? ""}>
+            {row.original.summary.comment || "—"}
+          </span>
+        ),
+      },
+    ],
+    [],
+  );
+}
+
+function TeamleadReconciliationHistoryDialog({
+  selected,
+  onClose,
+}: {
+  selected: SelectedHistoryRun | null;
+  onClose: () => void;
+}) {
+  const runID = selected?.summary.runId;
+  const direction = selected?.direction ?? "inbound";
+  const runQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliationRun(direction, runID),
+    queryFn: () => api.orders.reconciliationRun("teamlead", direction, runID ?? 0),
+    enabled: Boolean(runID),
+  });
+  const itemsQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliationRunItems(direction, runID),
+    queryFn: () => api.orders.reconciliationRunItems("teamlead", direction, runID ?? 0),
+    enabled: Boolean(runID),
+  });
+  const summary = runQuery.data ?? selected?.summary;
+
+  return (
+    <Dialog open={Boolean(selected)} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-[1200px] p-6">
+        <DialogHeader>
+          <DialogTitle className="text-base font-semibold">
+            Сверка #{runID ?? ""}: {directionLabel(direction)}
+          </DialogTitle>
+          <DialogDescription>
+            {summary?.createdAt ? `Запущена ${formatDateTime(summary.createdAt)}` : "Сохраненный результат сверки."}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="max-h-[76vh] overflow-y-auto pr-2">
+          {selected ? (
+            <TeamleadReconciliationResult
+              title={directionLabel(direction)}
+              direction={direction}
+              summary={summary}
+              items={itemsQuery.data ?? []}
+              isLoading={runQuery.isLoading || itemsQuery.isLoading}
+            />
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function TeamleadReconciliationUploadDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const queryClient = useQueryClient();
   const [inboundFile, setInboundFile] = useState<File | null>(null);
@@ -732,6 +910,137 @@ function ReportFileDropzone({
       </button>
     </div>
   );
+}
+
+function buildMismatchRows(items: ReconciliationItem[]): TeamleadMismatchRow[] {
+  return items.map((item) => {
+    const teamleadValue = item.teamleadValue ?? {};
+    const traderValue = item.traderValue ?? {};
+    const csvAmountMinor = firstNumber(teamleadValue, ["successAmountMinor", "amountMinor", "transferAmountMinor", "paidAmountMinor"]);
+    const crmAmountMinor = firstNumber(traderValue, ["successAmountMinor", "amountMinor", "transferAmountMinor", "paidAmountMinor"]);
+    const csvCount = firstNumber(teamleadValue, ["successCount", "count"]);
+    const crmCount = firstNumber(traderValue, ["successCount", "count"]);
+    const diffMinor = csvAmountMinor === undefined && crmAmountMinor === undefined
+      ? undefined
+      : (crmAmountMinor ?? 0) - (csvAmountMinor ?? 0);
+
+    return {
+      id: String(item.id),
+      issueType: item.issueType,
+      issueLabel: issueTypeLabel(item.issueType),
+      requisite: firstString(
+        teamleadValue,
+        traderValue,
+        ["requisitePhone", "phone", "requisite", "destinationRequisite", "bankCode"],
+      ) ?? "Итог",
+      trader: firstString(teamleadValue, traderValue, ["workerName", "traderLogin", "traderId"]) ?? "—",
+      innerId: item.externalInnerId ? `innerId: ${item.externalInnerId}` : "—",
+      csvAmountMinor,
+      crmAmountMinor,
+      diffMinor,
+      csvCount,
+      crmCount,
+      csvStatus: firstString(teamleadValue, {}, ["rawStatus", "normalizedStatus"]) ?? "—",
+      crmStatus: firstString(traderValue, {}, ["rawStatus", "normalizedStatus"]) ?? "—",
+      createdAt: firstDate(teamleadValue, traderValue, ["createdAtExternal"]) ?? formatDateTime(item.createdAt),
+    };
+  });
+}
+
+function firstNumber(value: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const raw = value[key];
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  }
+
+  return undefined;
+}
+
+function firstString(
+  primary: Record<string, unknown>,
+  secondary: Record<string, unknown>,
+  keys: string[],
+) {
+  for (const source of [primary, secondary]) {
+    for (const key of keys) {
+      const raw = source[key];
+      if (raw === undefined || raw === null || raw === "") continue;
+      return String(raw);
+    }
+  }
+
+  return undefined;
+}
+
+function firstDate(
+  primary: Record<string, unknown>,
+  secondary: Record<string, unknown>,
+  keys: string[],
+) {
+  for (const source of [primary, secondary]) {
+    for (const key of keys) {
+      const raw = source[key];
+      if (typeof raw === "string" && raw.trim()) return formatDateTime(raw);
+    }
+  }
+
+  return undefined;
+}
+
+function issueTypeLabel(issueType: string) {
+  const labels: Record<string, string> = {
+    total_mismatch: "Итог не сходится",
+    total_amount_mismatch: "Итог не сходится",
+    worker_amount_mismatch: "Сумма по трейдеру",
+    requisite_amount_mismatch: "Сумма по реквизиту",
+    order_mismatch: "Ордер не сходится",
+    amount_mismatch: "Сумма ордера",
+    status_mismatch: "Статус ордера",
+    worker_mismatch: "Трейдер ордера",
+    missing_in_trader_import: "Нет в CRM",
+    extra_in_trader_import: "Лишний в CRM",
+    payout_not_fully_paid: "Выплата не закрыта",
+    missing_manual_payout_order: "Нет ручной выплаты",
+    extra_manual_payout_order: "Лишняя ручная выплата",
+    manual_payout_not_fully_paid: "Ручная выплата не закрыта",
+    source_requisite_outbound_mismatch: "Выход по реквизиту",
+  };
+
+  return labels[issueType] ?? issueType;
+}
+
+function buildHistoryRows(
+  inbound: ReconciliationSummary[],
+  outbound: ReconciliationSummary[],
+): TeamleadReconciliationHistoryRow[] {
+  return [
+    ...inbound.map((summary) => ({
+      id: summary.runId ?? 0,
+      direction: "inbound" as const,
+      directionLabel: directionLabel("inbound"),
+      summary,
+    })),
+    ...outbound.map((summary) => ({
+      id: summary.runId ?? 0,
+      direction: "outbound" as const,
+      directionLabel: directionLabel("outbound"),
+      summary,
+    })),
+  ].sort((left, right) => {
+    const rightTime = right.summary.createdAt ? new Date(right.summary.createdAt).getTime() : 0;
+    const leftTime = left.summary.createdAt ? new Date(left.summary.createdAt).getTime() : 0;
+    return rightTime - leftTime || right.id - left.id;
+  });
+}
+
+function directionLabel(direction: OrderDirection) {
+  return direction === "inbound" ? "Входы" : "Выходы";
+}
+
+function statusShortLabel(status: ReconciliationSummary["status"]) {
+  if (status === "matched") return "ok";
+  if (status === "accepted_with_comment") return "принято";
+  return "!";
 }
 
 function latestSavedImport(items?: OrderImportHistoryItem[]) {

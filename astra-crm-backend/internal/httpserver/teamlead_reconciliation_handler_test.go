@@ -194,19 +194,26 @@ func TestTeamleadReconciliationHandlerShiftInboundItemsReturnsItems(t *testing.T
 }
 
 type fakeTeamleadReconciliationService struct {
-	latestTeamID         int64
-	latestRun            reconciliation.Run
-	latestErr            error
-	latestOutboundTeamID int64
-	latestOutboundRun    reconciliation.Run
-	latestOutboundErr    error
-	startTeamID          int64
-	startDirection       string
-	startRun             reconciliation.Run
-	startErr             error
-	acceptRecord         reconciliation.AcceptTeamleadCurrentParams
-	acceptedRun          reconciliation.Run
-	acceptErr            error
+	latestTeamID          int64
+	latestRun             reconciliation.Run
+	latestErr             error
+	latestOutboundTeamID  int64
+	latestOutboundRun     reconciliation.Run
+	latestOutboundErr     error
+	startTeamID           int64
+	startDirection        string
+	startRun              reconciliation.Run
+	startErr              error
+	historyRecord         reconciliation.ListTeamleadCurrentRunsParams
+	historyRuns           []reconciliation.Run
+	historyErr            error
+	currentRunRecord      reconciliation.GetTeamleadCurrentRunParams
+	currentRun            reconciliation.Run
+	currentRunErr         error
+	currentRunItemsRecord reconciliation.GetTeamleadCurrentRunParams
+	acceptRecord          reconciliation.AcceptTeamleadCurrentParams
+	acceptedRun           reconciliation.Run
+	acceptErr             error
 
 	periodTeamID         int64
 	periodID             int64
@@ -275,6 +282,30 @@ func (s *fakeTeamleadReconciliationService) ListTeamleadInboundItems(ctx context
 
 func (s *fakeTeamleadReconciliationService) ListTeamleadOutboundItems(ctx context.Context, teamID int64) ([]reconciliation.Item, error) {
 	s.outboundItemsTeamID = teamID
+	if s.itemsErr != nil {
+		return nil, s.itemsErr
+	}
+	return s.items, nil
+}
+
+func (s *fakeTeamleadReconciliationService) ListTeamleadCurrentRuns(ctx context.Context, params reconciliation.ListTeamleadCurrentRunsParams) ([]reconciliation.Run, error) {
+	s.historyRecord = params
+	if s.historyErr != nil {
+		return nil, s.historyErr
+	}
+	return s.historyRuns, nil
+}
+
+func (s *fakeTeamleadReconciliationService) GetTeamleadCurrentRun(ctx context.Context, params reconciliation.GetTeamleadCurrentRunParams) (reconciliation.Run, error) {
+	s.currentRunRecord = params
+	if s.currentRunErr != nil {
+		return reconciliation.Run{}, s.currentRunErr
+	}
+	return s.currentRun, nil
+}
+
+func (s *fakeTeamleadReconciliationService) ListTeamleadCurrentItems(ctx context.Context, params reconciliation.GetTeamleadCurrentRunParams) ([]reconciliation.Item, error) {
+	s.currentRunItemsRecord = params
 	if s.itemsErr != nil {
 		return nil, s.itemsErr
 	}

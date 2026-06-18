@@ -413,6 +413,8 @@ type fakeStore struct {
 	acceptedOutboundRun                      Run
 	acceptTeamleadCurrentRecord              AcceptTeamleadCurrentRecord
 	acceptedTeamleadCurrentRun               Run
+	teamleadCurrentRuns                      []Run
+	teamleadCurrentRun                       Run
 	activeTeamleadScopes                     []TeamleadInboundPeriodScope
 	activeTeamleadOutboundScopes             []TeamleadOutboundPeriodScope
 	items                                    []Item
@@ -568,6 +570,14 @@ func (s *fakeStore) LatestTeamleadOutbound(ctx context.Context, teamID int64) (R
 		Status:    StatusMatched,
 		CreatedAt: time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
 	}, nil
+}
+
+func (s *fakeStore) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, direction string, limit int32) ([]Run, error) {
+	return s.teamleadCurrentRuns, nil
+}
+
+func (s *fakeStore) GetTeamleadCurrentRun(ctx context.Context, teamID int64, direction string, runID int64) (Run, error) {
+	return s.teamleadCurrentRun, nil
 }
 
 func (s *fakeStore) ListItems(ctx context.Context, runID int64) ([]Item, error) {

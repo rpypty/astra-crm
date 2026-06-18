@@ -14,6 +14,9 @@ type TeamleadReconciliationService interface {
 	LatestTeamleadInbound(ctx context.Context, teamID int64) (reconciliation.Run, error)
 	LatestTeamleadOutbound(ctx context.Context, teamID int64) (reconciliation.Run, error)
 	RecalculateTeamleadCurrent(ctx context.Context, params reconciliation.RecalculateTeamleadCurrentParams) (reconciliation.Run, error)
+	ListTeamleadCurrentRuns(ctx context.Context, params reconciliation.ListTeamleadCurrentRunsParams) ([]reconciliation.Run, error)
+	GetTeamleadCurrentRun(ctx context.Context, params reconciliation.GetTeamleadCurrentRunParams) (reconciliation.Run, error)
+	ListTeamleadCurrentItems(ctx context.Context, params reconciliation.GetTeamleadCurrentRunParams) ([]reconciliation.Item, error)
 	ListTeamleadInboundItems(ctx context.Context, teamID int64) ([]reconciliation.Item, error)
 	ListTeamleadOutboundItems(ctx context.Context, teamID int64) ([]reconciliation.Item, error)
 	AcceptTeamleadCurrent(ctx context.Context, params reconciliation.AcceptTeamleadCurrentParams) (reconciliation.Run, error)
@@ -39,6 +42,10 @@ type reconciliationItemsResponse struct {
 	Items []reconciliation.PublicItem `json:"items"`
 }
 
+type reconciliationRunsResponse struct {
+	Runs []reconciliation.PublicRun `json:"runs"`
+}
+
 func (h *TeamleadReconciliationHandler) LatestInbound(w http.ResponseWriter, r *http.Request) {
 	h.latest(w, r, "inbound")
 }
@@ -61,6 +68,30 @@ func (h *TeamleadReconciliationHandler) InboundItems(w http.ResponseWriter, r *h
 
 func (h *TeamleadReconciliationHandler) OutboundItems(w http.ResponseWriter, r *http.Request) {
 	h.currentItems(w, r, "outbound")
+}
+
+func (h *TeamleadReconciliationHandler) InboundHistory(w http.ResponseWriter, r *http.Request) {
+	h.history(w, r, "inbound")
+}
+
+func (h *TeamleadReconciliationHandler) OutboundHistory(w http.ResponseWriter, r *http.Request) {
+	h.history(w, r, "outbound")
+}
+
+func (h *TeamleadReconciliationHandler) InboundRun(w http.ResponseWriter, r *http.Request) {
+	h.currentRun(w, r, "inbound")
+}
+
+func (h *TeamleadReconciliationHandler) OutboundRun(w http.ResponseWriter, r *http.Request) {
+	h.currentRun(w, r, "outbound")
+}
+
+func (h *TeamleadReconciliationHandler) InboundRunItems(w http.ResponseWriter, r *http.Request) {
+	h.currentRunItems(w, r, "inbound")
+}
+
+func (h *TeamleadReconciliationHandler) OutboundRunItems(w http.ResponseWriter, r *http.Request) {
+	h.currentRunItems(w, r, "outbound")
 }
 
 func (h *TeamleadReconciliationHandler) AcceptInbound(w http.ResponseWriter, r *http.Request) {
@@ -154,6 +185,94 @@ func (h *TeamleadReconciliationHandler) currentItems(w http.ResponseWriter, r *h
 		RespondError(w, NotFoundError())
 		return
 	}
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, reconciliationItemsResponse{
+		Items: reconciliation.PublicItemsFromDomain(items),
+	})
+}
+
+func (h *TeamleadReconciliationHandler) history(w http.ResponseWriter, r *http.Request, direction string) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	runs, err := h.service.ListTeamleadCurrentRuns(r.Context(), reconciliation.ListTeamleadCurrentRunsParams{
+		TeamID:    actor.TeamID,
+		Direction: direction,
+		Limit:     limitFromQuery(r, 50),
+	})
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, reconciliationRunsResponse{
+		Runs: reconciliation.PublicRunsFromDomain(runs),
+	})
+}
+
+func (h *TeamleadReconciliationHandler) currentRun(w http.ResponseWriter, r *http.Request, direction string) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	runID, ok := reconciliationRunIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	run, err := h.service.GetTeamleadCurrentRun(r.Context(), reconciliation.GetTeamleadCurrentRunParams{
+		TeamID:    actor.TeamID,
+		Direction: direction,
+		RunID:     runID,
+	})
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, reconciliationRunResponse{
+		Run: reconciliation.PublicRunFromDomain(run),
+	})
+}
+
+func (h *TeamleadReconciliationHandler) currentRunItems(w http.ResponseWriter, r *http.Request, direction string) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	runID, ok := reconciliationRunIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	items, err := h.service.ListTeamleadCurrentItems(r.Context(), reconciliation.GetTeamleadCurrentRunParams{
+		TeamID:    actor.TeamID,
+		Direction: direction,
+		RunID:     runID,
+	})
 	if err != nil {
 		RespondError(w, mapReconciliationError(err))
 		return
@@ -424,4 +543,20 @@ func periodIDFromRequest(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	}
 
 	return id, true
+}
+
+func limitFromQuery(r *http.Request, fallback int32) int32 {
+	raw := strings.TrimSpace(r.URL.Query().Get("limit"))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	if parsed > 100 {
+		return 100
+	}
+
+	return int32(parsed)
 }

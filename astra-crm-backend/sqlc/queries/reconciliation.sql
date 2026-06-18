@@ -1056,6 +1056,30 @@ WHERE team_id = sqlc.arg(team_id)
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
 
+-- name: ListTeamleadCurrentReconciliationRuns :many
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE team_id = sqlc.arg(team_id)
+  AND type = CASE
+      WHEN sqlc.arg(direction)::text = 'inbound' THEN 'teamlead_period_inbound'
+      ELSE 'teamlead_period_outbound'
+  END
+  AND accounting_period_id IS NULL
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(limit_count);
+
+-- name: GetTeamleadCurrentReconciliationRun :one
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE id = sqlc.arg(run_id)
+  AND team_id = sqlc.arg(team_id)
+  AND type = CASE
+      WHEN sqlc.arg(direction)::text = 'inbound' THEN 'teamlead_period_inbound'
+      ELSE 'teamlead_period_outbound'
+  END
+  AND accounting_period_id IS NULL
+LIMIT 1;
+
 -- name: LatestActiveTeamleadCurrentImportBatch :one
 SELECT id, team_id, uploaded_by, scope_type, direction, shift_id, accounting_period_id, trader_id, file_name, file_hash, rows_count, status, superseded_by_batch_id, error_message, created_at, applied_at
 FROM import_batches

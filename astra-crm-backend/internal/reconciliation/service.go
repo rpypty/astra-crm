@@ -29,6 +29,8 @@ type Store interface {
 	LatestTeamleadPeriodOutbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error)
 	LatestTeamleadInbound(ctx context.Context, teamID int64) (Run, error)
 	LatestTeamleadOutbound(ctx context.Context, teamID int64) (Run, error)
+	ListTeamleadCurrentRuns(ctx context.Context, teamID int64, direction string, limit int32) ([]Run, error)
+	GetTeamleadCurrentRun(ctx context.Context, teamID int64, direction string, runID int64) (Run, error)
 	AcceptTeamleadCurrent(ctx context.Context, record AcceptTeamleadCurrentRecord) (Run, error)
 	ListItems(ctx context.Context, runID int64) ([]Item, error)
 	ListActiveTeamleadInboundPeriodScopes(ctx context.Context, teamID int64) ([]TeamleadInboundPeriodScope, error)
@@ -104,6 +106,18 @@ type AcceptTeamleadCurrentParams struct {
 	Direction string
 	RunID     int64
 	Comment   string
+}
+
+type ListTeamleadCurrentRunsParams struct {
+	TeamID    int64
+	Direction string
+	Limit     int32
+}
+
+type GetTeamleadCurrentRunParams struct {
+	TeamID    int64
+	Direction string
+	RunID     int64
 }
 
 func (s *Service) RecalculateTraderInbound(ctx context.Context, params RecalculateTraderInboundParams) (Run, error) {
@@ -229,6 +243,35 @@ func (s *Service) LatestTeamleadOutbound(ctx context.Context, teamID int64) (Run
 	}
 
 	return s.store.LatestTeamleadOutbound(ctx, teamID)
+}
+
+func (s *Service) ListTeamleadCurrentRuns(ctx context.Context, params ListTeamleadCurrentRunsParams) ([]Run, error) {
+	if params.TeamID <= 0 || !isSupportedDirection(params.Direction) {
+		return nil, ErrInvalidInput
+	}
+	limit := params.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+
+	return s.store.ListTeamleadCurrentRuns(ctx, params.TeamID, params.Direction, limit)
+}
+
+func (s *Service) GetTeamleadCurrentRun(ctx context.Context, params GetTeamleadCurrentRunParams) (Run, error) {
+	if params.TeamID <= 0 || params.RunID <= 0 || !isSupportedDirection(params.Direction) {
+		return Run{}, ErrInvalidInput
+	}
+
+	return s.store.GetTeamleadCurrentRun(ctx, params.TeamID, params.Direction, params.RunID)
+}
+
+func (s *Service) ListTeamleadCurrentItems(ctx context.Context, params GetTeamleadCurrentRunParams) ([]Item, error) {
+	run, err := s.GetTeamleadCurrentRun(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.store.ListItems(ctx, run.ID)
 }
 
 func (s *Service) ListTeamleadInboundItems(ctx context.Context, teamID int64) ([]Item, error) {

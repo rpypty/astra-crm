@@ -30,6 +30,12 @@ export const queryKeys = {
     reconciliation: (direction: "inbound" | "outbound") => ["teamlead", direction, "reconciliation"] as const,
     reconciliationItems: (direction: "inbound" | "outbound") =>
       ["teamlead", direction, "reconciliation", "items"] as const,
+    reconciliationHistory: (direction: "inbound" | "outbound") =>
+      ["teamlead", direction, "reconciliation", "history"] as const,
+    reconciliationRun: (direction: "inbound" | "outbound", runId: number | undefined) =>
+      ["teamlead", direction, "reconciliation", runId] as const,
+    reconciliationRunItems: (direction: "inbound" | "outbound", runId: number | undefined) =>
+      ["teamlead", direction, "reconciliation", runId, "items"] as const,
     audit: (params?: Record<string, unknown>) => ["teamlead", "audit", params] as const,
   },
   trader: {
