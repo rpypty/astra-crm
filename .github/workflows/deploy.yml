@@ -116,6 +116,15 @@ jobs:
             fi
           fi
 
+          : "${POSTGRES_DB:?POSTGRES_DB is required in $ENV_DIR/.env}"
+          : "${POSTGRES_USER:?POSTGRES_USER is required in $ENV_DIR/.env}"
+          : "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in $ENV_DIR/.env and cannot be empty}"
+          : "${DATABASE_URL:?DATABASE_URL is required in $ENV_DIR/.env}"
+          if [ -z "${POSTGRES_PASSWORD}" ]; then
+            echo "POSTGRES_PASSWORD is empty after parsing env; this breaks postgres init." >&2
+            exit 1
+          fi
+
           docker compose --project-directory "$ENV_DIR" --env-file "$ENV_DIR/.env" -f "$ENV_DIR/compose.yml" config --quiet
           docker compose --project-directory "$ENV_DIR" --env-file "$ENV_DIR/.env" -f "$ENV_DIR/compose.yml" up -d --remove-orphans
           docker compose --project-directory "$ENV_DIR" --env-file "$ENV_DIR/.env" -f "$ENV_DIR/compose.yml" ps
