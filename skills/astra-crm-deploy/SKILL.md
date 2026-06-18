@@ -119,10 +119,10 @@ FRONTEND_IMAGE="astra-crm-frontend:${ENV}-${SHA}"
 
 docker build -t "$BACKEND_IMAGE" ./astra-crm-backend
 docker build \
-  --target production \
+  -f deploy/Dockerfile.frontend \
   --build-arg VITE_API_BASE_URL=/api/v1 \
   -t "$FRONTEND_IMAGE" \
-  ./astra-crm-frontend
+  .
 ```
 
 Update the target environment image tags:
