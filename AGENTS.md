@@ -70,6 +70,10 @@ Deploy MVP:
 - Frontend static SPA.
 - Caddy or Nginx.
 
+VPS access:
+
+- Use `ssh astra` to connect to the project VPS.
+
 ---
 
 ## 3. Go coding preferences
