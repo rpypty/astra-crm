@@ -108,7 +108,15 @@ export type RequisiteReportShift = {
   shiftStatus: "open" | "closing" | "closed" | "closed_with_discrepancy";
   takenAt: string;
   releasedAt?: string;
-  requisiteStatus: "active" | "worked" | "correction" | "released" | "blocked";
+  requisiteStatus:
+    | "active"
+    | "worked"
+    | "worked_pending_review"
+    | "worked_verified"
+    | "worked_discrepancy"
+    | "correction"
+    | "released"
+    | "blocked";
   inboundTurnoverMinor: number;
   outboundTurnoverMinor: number;
   targetTurnoverMinor: number;
@@ -133,8 +141,15 @@ export type RequisiteAssignmentEvent = {
 export type AssignmentHistoryItem = {
   id: number;
   changedAt: string;
-  oldTrader?: string;
-  newTrader?: string;
+  traderId: number;
+  status: RequisiteAssignmentStatus;
+  assignedForDate: string;
+  targetTurnoverMinor: number;
+  unassignedAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  cancelledAt?: string;
+  wasReassign: boolean;
   changedBy: string;
   comment: string;
 };
@@ -157,7 +172,7 @@ export type ShiftRequisite = {
   assignmentStatus: RequisiteAssignmentStatus;
   assignedForDate: string;
   targetTurnoverMinor: number;
-  status: "assigned" | "in_work" | "worked" | "correction" | "blocked";
+  status: "assigned" | "in_work" | "worked" | "worked_pending_review" | "worked_verified" | "worked_discrepancy" | "correction" | "blocked";
 };
 
 export type ShiftReport = {
@@ -166,10 +181,52 @@ export type ShiftReport = {
   startedAt: string;
   endedAt?: string;
   closedAt?: string;
-  status: "closed" | "closed_with_discrepancy";
+  status: "open" | "closing" | "closed" | "closed_with_discrepancy" | "draft";
   inboundReconciliationStatus: string;
   outboundReconciliationStatus: string;
   closeComment?: string;
+};
+
+export type ShiftReportReconciliation = {
+  id: number;
+  status: "matched" | "mismatch" | "accepted_with_comment";
+  expectedMinor: number;
+  actualMinor: number;
+  diffMinor: number;
+  comment?: string;
+  createdAt: string;
+};
+
+export type ShiftReportRow = {
+  rowKey: string;
+  shiftRequisiteId?: number;
+  requisiteId?: number;
+  phone: string;
+  methodType: string;
+  bankCode: string;
+  bankName: string;
+  proxy?: string;
+  employeeComment?: string;
+  cardNumber?: string;
+  holderName?: string;
+  status: string;
+  inboundTurnoverMinor: number;
+  outboundTurnoverMinor: number;
+  closingBalanceMinor: number;
+  targetTurnoverMinor: number;
+  csvInboundMinor: number;
+  csvOutboundMinor: number;
+  inboundDiffMinor: number;
+  outboundDiffMinor: number;
+  hasMismatch: boolean;
+  csvOnly: boolean;
+};
+
+export type ShiftReportDetails = {
+  shift: ShiftReport;
+  inbound?: ShiftReportReconciliation;
+  outbound?: ShiftReportReconciliation;
+  rows: ShiftReportRow[];
 };
 
 export type TurnoverEntry = {
@@ -182,12 +239,15 @@ export type TurnoverEntry = {
 
 export type Payout = {
   id: number;
+  shiftId: number;
   destinationBank: string;
   destinationRequisite: string;
   amountMinor: number;
   paidMinor: number;
   status: "open" | "paid" | "cancelled";
   createdAt: string;
+  updatedAt: string;
+  deletedAt?: string;
 };
 
 export type PayoutTransfer = {
@@ -195,6 +255,8 @@ export type PayoutTransfer = {
   payoutId: number;
   sourceShiftRequisiteId: number;
   sourceRequisiteId: number;
+  sourcePhone?: string;
+  sourceBankName?: string;
   amountMinor: number;
   comment?: string;
   createdAt: string;
@@ -208,6 +270,7 @@ export type OrderFilters = {
   search?: string;
   status?: string;
   traderIds?: number[];
+  confirmedOnly?: boolean;
 };
 
 export type Order = {
@@ -237,6 +300,7 @@ export type OrderDashboardSummary = {
   failedCount: number;
   unknownAmountMinor: number;
   unknownCount: number;
+  blockedBalanceMinor: number;
 };
 
 export type OrderStatusBreakdownItem = {

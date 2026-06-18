@@ -130,9 +130,10 @@ export function TraderTransactionsPage({ initialDirection = "inbound" }: { initi
 }
 
 function TraderOrdersDirectionContent({ direction, periodFilter }: { direction: OrderDirection; periodFilter: PeriodFilter }) {
+  const confirmedPeriodFilter = useMemo(() => ({ ...periodFilter, confirmedOnly: true }), [periodFilter]);
   const dashboardQuery = useQuery({
-    queryKey: queryKeys.trader.dashboard(direction, periodFilter),
-    queryFn: () => api.orders.dashboard("trader", direction, periodFilter),
+    queryKey: queryKeys.trader.dashboard(direction, confirmedPeriodFilter),
+    queryFn: () => api.orders.dashboard("trader", direction, confirmedPeriodFilter),
   });
   const reconciliationQuery = useQuery({
     queryKey: ["trader", direction, "reconciliation"],
@@ -157,13 +158,14 @@ function TraderOrdersDirectionContent({ direction, periodFilter }: { direction: 
 }
 
 function TraderOrdersTable({ direction, periodFilter }: { direction: "inbound" | "outbound"; periodFilter: PeriodFilter }) {
+  const confirmedPeriodFilter = useMemo(() => ({ ...periodFilter, confirmedOnly: true }), [periodFilter]);
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
   const [detailsOrder, setDetailsOrder] = useState<Awaited<ReturnType<typeof api.orders.list>>[number] | null>(null);
   const ordersQuery = useQuery({
-    queryKey: queryKeys.trader.orders(direction, periodFilter),
-    queryFn: () => api.orders.list("trader", direction, periodFilter),
+    queryKey: queryKeys.trader.orders(direction, confirmedPeriodFilter),
+    queryFn: () => api.orders.list("trader", direction, confirmedPeriodFilter),
   });
   const data = useMemo(
     () => filterOrdersBySearch(ordersQuery.data ?? [], deferredSearch),
@@ -171,7 +173,7 @@ function TraderOrdersTable({ direction, periodFilter }: { direction: "inbound" |
   );
   useEffect(() => {
     setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
-  }, [deferredSearch, direction, periodFilter]);
+  }, [deferredSearch, direction, confirmedPeriodFilter]);
   const columns = useMemo<ColumnDef<Awaited<ReturnType<typeof api.orders.list>>[number]>[]>(
     () => [
       { accessorKey: "createdAt", header: "Время", cell: ({ row }) => <DateTimeCell value={row.original.createdAt} /> },

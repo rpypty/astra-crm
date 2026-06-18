@@ -234,8 +234,7 @@ func (s *TraderService) ResetPassword(ctx context.Context, params ResetTraderPas
 		EntityType: "user",
 		EntityID:   strconv.FormatInt(params.TraderID, 10),
 		After: map[string]any{
-			"userId":            params.TraderID,
-			"temporaryPassword": temporaryPassword,
+			"userId": params.TraderID,
 		},
 	}); err != nil {
 		return ResetTraderPasswordResult{}, err

@@ -31,10 +31,14 @@ export function ImportCsvDialog({
   scopeLabel,
   scope,
   direction,
+  accountingPeriodId,
+  disabled,
 }: {
   scopeLabel: string;
   scope: "teamlead" | "trader";
   direction: OrderDirection;
+  accountingPeriodId?: number;
+  disabled?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -55,7 +59,7 @@ export function ImportCsvDialog({
     <>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogTrigger asChild>
-          <Button type="button" variant="outline">
+          <Button type="button" variant="outline" disabled={disabled}>
             <Upload className="h-4 w-4" />
             Импорт CSV
           </Button>
@@ -95,11 +99,11 @@ export function ImportCsvDialog({
               </Button>
               <Button
                 type="button"
-                disabled={!file || uploadMutation.isPending}
+                disabled={!file || uploadMutation.isPending || disabled}
                 onClick={() => {
                   if (!file) return;
                   setError(null);
-                  uploadMutation.mutate({ file, scope, direction });
+                  uploadMutation.mutate({ file, scope, direction, accountingPeriodId });
                 }}
               >
                 Загрузить

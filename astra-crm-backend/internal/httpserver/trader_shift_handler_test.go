@@ -257,6 +257,90 @@ func TestTraderShiftHandlerTeamAssignedRequisitesByShiftPassesTeamScope(t *testi
 	}
 }
 
+func TestTraderShiftHandlerShiftReportPassesTraderScope(t *testing.T) {
+	service := &fakeTraderShiftService{
+		shiftReport: shifts.ShiftReportDetails{
+			Shift: shifts.Shift{
+				ID:       10,
+				TeamID:   2,
+				TraderID: 3,
+				Status:   shifts.StatusClosed,
+			},
+			Rows: []shifts.ShiftReportRow{
+				{
+					RowKey:               "crm:20",
+					ShiftRequisiteID:     int64TestPtr(20),
+					RequisiteID:          int64TestPtr(4),
+					Phone:                "+79991234567",
+					BankCode:             "sber",
+					BankName:             "Сбер",
+					InboundTurnoverMinor: 150000,
+					CSVInboundMinor:      100000,
+					InboundDiffMinor:     50000,
+					HasMismatch:          true,
+				},
+			},
+		},
+	}
+	handler := NewTraderShiftHandler(service)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/trader/shifts/10/report", nil)
+	request = request.WithContext(withShiftRouteParam(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     3,
+		TeamID: 2,
+		Role:   users.RoleTrader,
+		Status: users.StatusActive,
+	}), "shiftId", "10"))
+
+	handler.ShiftReport(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if service.shiftReportTraderID != 3 || service.shiftReportShiftID != 10 {
+		t.Fatalf("report call = trader:%d shift:%d, want 3/10", service.shiftReportTraderID, service.shiftReportShiftID)
+	}
+	if !strings.Contains(response.Body.String(), `"hasMismatch":true`) {
+		t.Fatalf("response does not include mismatch row: %s", response.Body.String())
+	}
+}
+
+func TestTraderShiftHandlerTeamShiftReportPassesTeamScope(t *testing.T) {
+	service := &fakeTraderShiftService{
+		teamShiftReport: shifts.ShiftReportDetails{
+			Shift: shifts.Shift{
+				ID:       10,
+				TeamID:   2,
+				TraderID: 3,
+				Status:   shifts.StatusClosedWithDiscrepancy,
+			},
+		},
+	}
+	handler := NewTraderShiftHandler(service)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/teamlead/shifts/10/report", nil)
+	request = request.WithContext(withShiftRouteParam(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     1,
+		TeamID: 2,
+		Role:   users.RoleTeamlead,
+		Status: users.StatusActive,
+	}), "shiftId", "10"))
+
+	handler.TeamShiftReport(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if service.teamShiftReportShiftID != 10 {
+		t.Fatalf("team report shift id = %d, want 10", service.teamShiftReportShiftID)
+	}
+	if !strings.Contains(response.Body.String(), `"status":"closed_with_discrepancy"`) {
+		t.Fatalf("response does not include shift status: %s", response.Body.String())
+	}
+}
+
 func TestTraderShiftHandlerCloseShiftRequisitePassesClosingBalance(t *testing.T) {
 	service := &fakeTraderShiftService{}
 	handler := NewTraderShiftHandler(service)
@@ -302,6 +386,86 @@ func TestTraderShiftHandlerCloseShiftRequisiteValidatesClosingBalance(t *testing
 	}
 }
 
+func TestTraderShiftHandlerCorrectShiftRequisitePassesCorrection(t *testing.T) {
+	service := &fakeTraderShiftService{}
+	handler := NewTraderShiftHandler(service)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/trader/shift-requisites/20/correction", strings.NewReader(`{"inboundTurnoverMinor":150000,"outboundTurnoverMinor":25000,"closingBalanceMinor":7500,"comment":"исправлено после сверки"}`))
+	request = request.WithContext(withShiftRouteParam(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     3,
+		TeamID: 2,
+		Role:   users.RoleTrader,
+		Status: users.StatusActive,
+	}), "shiftRequisiteId", "20"))
+
+	handler.CorrectShiftRequisite(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if service.correctRequisiteParams.InboundTurnoverMinor != 150000 || service.correctRequisiteParams.OutboundTurnoverMinor != 25000 {
+		t.Fatalf("corrected turnovers = %d/%d, want 150000/25000", service.correctRequisiteParams.InboundTurnoverMinor, service.correctRequisiteParams.OutboundTurnoverMinor)
+	}
+	if service.correctRequisiteParams.ClosingBalanceMinor != 7500 {
+		t.Fatalf("closing balance = %d, want 7500", service.correctRequisiteParams.ClosingBalanceMinor)
+	}
+	if service.correctRequisiteParams.Comment != "исправлено после сверки" {
+		t.Fatalf("comment = %q, want correction comment", service.correctRequisiteParams.Comment)
+	}
+	if !strings.Contains(response.Body.String(), `"status":"worked_verified"`) {
+		t.Fatalf("response does not include refreshed status: %s", response.Body.String())
+	}
+}
+
+func TestTraderShiftHandlerCorrectShiftRequisiteRequiresComment(t *testing.T) {
+	handler := NewTraderShiftHandler(&fakeTraderShiftService{})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/trader/shift-requisites/20/correction", strings.NewReader(`{"inboundTurnoverMinor":150000,"outboundTurnoverMinor":25000,"closingBalanceMinor":7500,"comment":" "}`))
+	request = request.WithContext(withShiftRouteParam(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     3,
+		TeamID: 2,
+		Role:   users.RoleTrader,
+		Status: users.StatusActive,
+	}), "shiftRequisiteId", "20"))
+
+	handler.CorrectShiftRequisite(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(response.Body.String(), "comment") {
+		t.Fatalf("response does not mention comment: %s", response.Body.String())
+	}
+}
+
+func TestTraderShiftHandlerReturnShiftRequisiteToWorkPassesScope(t *testing.T) {
+	service := &fakeTraderShiftService{}
+	handler := NewTraderShiftHandler(service)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/trader/shift-requisites/20/return-to-work", strings.NewReader(`{}`))
+	request = request.WithContext(withShiftRouteParam(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     3,
+		TeamID: 2,
+		Role:   users.RoleTrader,
+		Status: users.StatusActive,
+	}), "shiftRequisiteId", "20"))
+
+	handler.ReturnShiftRequisiteToWork(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if service.returnRequisiteParams.TeamID != 2 || service.returnRequisiteParams.TraderID != 3 || service.returnRequisiteParams.ShiftRequisiteID != 20 {
+		t.Fatalf("return params = team:%d trader:%d shiftRequisite:%d, want 2/3/20", service.returnRequisiteParams.TeamID, service.returnRequisiteParams.TraderID, service.returnRequisiteParams.ShiftRequisiteID)
+	}
+	if !strings.Contains(response.Body.String(), `"status":"active"`) {
+		t.Fatalf("response does not include active status: %s", response.Body.String())
+	}
+}
+
 func TestTraderShiftHandlerCloseCurrentMapsBlockedClose(t *testing.T) {
 	handler := NewTraderShiftHandler(&fakeTraderShiftService{
 		closeErr: shifts.ErrCloseBlocked,
@@ -338,10 +502,17 @@ type fakeTraderShiftService struct {
 	turnoverParams               shifts.CreateTurnoverParams
 	turnover                     shifts.TurnoverEntry
 	closeRequisiteParams         shifts.CloseShiftRequisiteParams
+	correctRequisiteParams       shifts.CorrectShiftRequisiteParams
+	returnRequisiteParams        shifts.ReturnShiftRequisiteParams
 	shiftRequisitesByShiftID     int64
 	shiftAssignedRequisites      []shifts.AssignedRequisite
 	teamShiftRequisitesByShiftID int64
 	teamShiftAssignedRequisites  []shifts.AssignedRequisite
+	shiftReportTraderID          int64
+	shiftReportShiftID           int64
+	shiftReport                  shifts.ShiftReportDetails
+	teamShiftReportShiftID       int64
+	teamShiftReport              shifts.ShiftReportDetails
 	closeErr                     error
 }
 
@@ -355,6 +526,17 @@ func (s *fakeTraderShiftService) ShiftHistory(ctx context.Context, teamID int64,
 
 func (s *fakeTraderShiftService) TeamShiftHistory(ctx context.Context, teamID int64, limit int32) ([]shifts.Shift, error) {
 	return nil, nil
+}
+
+func (s *fakeTraderShiftService) ShiftReport(ctx context.Context, teamID int64, traderID int64, shiftID int64) (shifts.ShiftReportDetails, error) {
+	s.shiftReportTraderID = traderID
+	s.shiftReportShiftID = shiftID
+	return s.shiftReport, nil
+}
+
+func (s *fakeTraderShiftService) TeamShiftReport(ctx context.Context, teamID int64, shiftID int64) (shifts.ShiftReportDetails, error) {
+	s.teamShiftReportShiftID = shiftID
+	return s.teamShiftReport, nil
 }
 
 func (s *fakeTraderShiftService) AssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]shifts.AssignedRequisite, error) {
@@ -407,6 +589,46 @@ func (s *fakeTraderShiftService) CloseShiftRequisite(ctx context.Context, params
 		InboundTurnoverMinor:  params.InboundTurnoverMinor,
 		OutboundTurnoverMinor: params.OutboundTurnoverMinor,
 		ClosingBalanceMinor:   params.ClosingBalanceMinor,
+		CreatedAt:             time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+		UpdatedAt:             time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC),
+	}, nil
+}
+
+func (s *fakeTraderShiftService) CorrectShiftRequisite(ctx context.Context, params shifts.CorrectShiftRequisiteParams) (shifts.ShiftRequisite, error) {
+	s.correctRequisiteParams = params
+	return shifts.ShiftRequisite{
+		ID:                    params.ShiftRequisiteID,
+		TeamID:                params.TeamID,
+		ShiftID:               10,
+		TraderID:              params.TraderID,
+		RequisiteID:           4,
+		CardNumber:            "1234567890123456",
+		HolderName:            "Иванов Иван",
+		TakenAt:               time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+		Status:                shifts.RequisiteStatusVerified,
+		InboundTurnoverMinor:  params.InboundTurnoverMinor,
+		OutboundTurnoverMinor: params.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   params.ClosingBalanceMinor,
+		CreatedAt:             time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+		UpdatedAt:             time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC),
+	}, nil
+}
+
+func (s *fakeTraderShiftService) ReturnShiftRequisiteToWork(ctx context.Context, params shifts.ReturnShiftRequisiteParams) (shifts.ShiftRequisite, error) {
+	s.returnRequisiteParams = params
+	return shifts.ShiftRequisite{
+		ID:                    params.ShiftRequisiteID,
+		TeamID:                params.TeamID,
+		ShiftID:               10,
+		TraderID:              params.TraderID,
+		RequisiteID:           4,
+		CardNumber:            "1234567890123456",
+		HolderName:            "Иванов Иван",
+		TakenAt:               time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+		Status:                shifts.RequisiteStatusActive,
+		InboundTurnoverMinor:  150000,
+		OutboundTurnoverMinor: 25000,
+		ClosingBalanceMinor:   7500,
 		CreatedAt:             time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
 		UpdatedAt:             time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC),
 	}, nil

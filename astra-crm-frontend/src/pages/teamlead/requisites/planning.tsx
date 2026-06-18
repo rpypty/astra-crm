@@ -77,6 +77,7 @@ export function PlanRequisiteDialog({
   open,
   onOpenChange,
   plan,
+  initialRequisiteId,
   requisites,
   traders,
   isSaving,
@@ -86,12 +87,16 @@ export function PlanRequisiteDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   plan: RequisiteAssignmentWorkRow | null;
+  initialRequisiteId?: number | null;
   requisites: Requisite[];
   traders: Trader[];
   isSaving: boolean;
   error?: string | null;
   onSubmit: (values: PlanForm) => void;
 }) {
+  const initialRequisite = initialRequisiteId
+    ? requisites.find((requisite) => requisite.id === initialRequisiteId)
+    : undefined;
   const formValues = useMemo<PlanForm>(
     () =>
       plan
@@ -104,13 +109,13 @@ export function PlanRequisiteDialog({
             comment: plan.comment ?? "",
           }
         : {
-            requisiteId: requisites[0]?.id ? String(requisites[0].id) : "",
+            requisiteId: initialRequisite ? String(initialRequisite.id) : requisites[0]?.id ? String(requisites[0].id) : "",
             traderId: traders[0]?.id ? String(traders[0].id) : "",
             assignedForDate: tomorrowDateInputValue(),
             targetTurnover: "",
             comment: "",
           },
-    [plan, requisites, traders],
+    [initialRequisite, plan, requisites, traders],
   );
   const form = useForm<PlanForm>({
     resolver: zodResolver(planSchema),
@@ -158,7 +163,7 @@ export function PlanRequisiteDialog({
           <DialogTitle className="text-base font-semibold">
             {plan ? "Редактировать план" : "Запланировать реквизит"}
           </DialogTitle>
-          <DialogDescription>Назначение реквизита на дату с целевым оборотом для трейдера.</DialogDescription>
+          <DialogDescription>Назначение реквизита на дату с лимитом для трейдера.</DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
           <FormField label="Дата" error={form.formState.errors.assignedForDate?.message}>
@@ -182,7 +187,7 @@ export function PlanRequisiteDialog({
               searchPlaceholder="Найти трейдера"
             />
           </FormField>
-          <FormField label="Целевой оборот" error={form.formState.errors.targetTurnover?.message}>
+          <FormField label="Лимит" error={form.formState.errors.targetTurnover?.message}>
             <Input inputMode="decimal" placeholder="500000" {...form.register("targetTurnover")} />
           </FormField>
           <FormField label="Комментарий">

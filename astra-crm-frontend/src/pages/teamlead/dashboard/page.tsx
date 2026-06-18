@@ -103,7 +103,7 @@ const planSchema = z.object({
   requisiteId: z.string().min(1, "Выберите реквизит"),
   traderId: z.string().min(1, "Выберите трейдера"),
   assignedForDate: z.string().min(1, "Выберите дату"),
-  targetTurnover: z.string().min(1, "Введите целевой оборот").refine((value) => parseMoneyToMinor(value) > 0, "Сумма должна быть больше 0"),
+  targetTurnover: z.string().min(1, "Введите лимит").refine((value) => parseMoneyToMinor(value) > 0, "Сумма должна быть больше 0"),
   comment: z.string().optional(),
 });
 
@@ -130,6 +130,9 @@ export function TeamleadDashboardPage() {
     queryKey: queryKeys.teamlead.dashboard("outbound", periodFilter),
     queryFn: () => api.orders.dashboard("teamlead", "outbound", periodFilter),
   });
+  const blockedBalanceMinor =
+    inboundDashboardQuery.data?.summary.blockedBalanceMinor ?? outboundDashboardQuery.data?.summary.blockedBalanceMinor ?? 0;
+  const isBlockedBalanceLoading = inboundDashboardQuery.isLoading && outboundDashboardQuery.isLoading;
 
   return (
     <div className="space-y-6">
@@ -142,6 +145,7 @@ export function TeamleadDashboardPage() {
           direction="inbound"
           isLoading={inboundDashboardQuery.isLoading}
           error={inboundDashboardQuery.error instanceof Error ? inboundDashboardQuery.error : null}
+          showUnknownStatuses={false}
         />
         <OrderDashboard
           title="Выплаты"
@@ -149,14 +153,27 @@ export function TeamleadDashboardPage() {
           direction="outbound"
           isLoading={outboundDashboardQuery.isLoading}
           error={outboundDashboardQuery.error instanceof Error ? outboundDashboardQuery.error : null}
+          showUnknownStatuses={false}
         />
       </div>
-      <ProfitLossPlaceholder periodFilter={periodFilter} />
+      <ProfitLossPlaceholder
+        periodFilter={periodFilter}
+        blockedBalanceMinor={blockedBalanceMinor}
+        isBlockedBalanceLoading={isBlockedBalanceLoading}
+      />
     </div>
   );
 }
 
-function ProfitLossPlaceholder({ periodFilter }: { periodFilter: PeriodFilter }) {
+function ProfitLossPlaceholder({
+  periodFilter,
+  blockedBalanceMinor,
+  isBlockedBalanceLoading,
+}: {
+  periodFilter: PeriodFilter;
+  blockedBalanceMinor: number;
+  isBlockedBalanceLoading: boolean;
+}) {
   const data = useMemo(() => buildProfitLossPlaceholder(periodFilter), [periodFilter]);
   const totalMinor = data.length > 0 ? data[data.length - 1].cumulativeMinor : 0;
   const isProfit = totalMinor >= 0;
@@ -179,10 +196,14 @@ function ProfitLossPlaceholder({ periodFilter }: { periodFilter: PeriodFilter })
             </div>
             <div className="mt-1 text-sm text-muted-foreground">Прибыль/убыток за выбранный период</div>
           </div>
-          <div className="grid w-full gap-2 sm:w-auto sm:grid-cols-3">
+          <div className="grid w-full gap-2 sm:grid-cols-2 xl:w-auto xl:grid-cols-4">
             <ProfitLossMetric label="Прибыльных дней" value={String(profitableDays)} />
             <ProfitLossMetric label="Лучший день" value={formatMoneyMinor(bestDay)} tone="positive" />
             <ProfitLossMetric label="Худший день" value={formatMoneyMinor(worstDay)} tone="negative" />
+            <ProfitLossMetric
+              label="Заблокированный остаток"
+              value={isBlockedBalanceLoading ? "Загрузка" : formatMoneyMinor(blockedBalanceMinor)}
+            />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">

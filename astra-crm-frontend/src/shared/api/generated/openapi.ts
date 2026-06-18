@@ -159,7 +159,7 @@ export type components = {
   shiftStatus: "open" | "closing" | "closed" | "closed_with_discrepancy";
   takenAt: string;
   releasedAt?: string;
-  requisiteStatus: "active" | "worked" | "correction" | "released" | "blocked";
+  requisiteStatus: "active" | "worked" | "worked_pending_review" | "worked_verified" | "worked_discrepancy" | "correction" | "released" | "blocked";
   inboundTurnoverMinor: number;
   outboundTurnoverMinor: number;
   targetTurnoverMinor: number;
@@ -256,7 +256,7 @@ export type components = {
   shiftRequisiteId?: number;
   cardNumber?: string;
   holderName?: string;
-  shiftRequisiteStatus?: "active" | "worked" | "correction" | "released" | "blocked";
+  shiftRequisiteStatus?: "active" | "worked" | "worked_pending_review" | "worked_verified" | "worked_discrepancy" | "correction" | "released" | "blocked";
   takenAt?: string;
   inboundTurnoverMinor: number;
   outboundTurnoverMinor: number;
@@ -277,7 +277,7 @@ export type components = {
   holderName: string;
   takenAt: string;
   releasedAt?: string;
-  status: "active" | "worked" | "correction" | "released" | "blocked";
+  status: "active" | "worked" | "worked_pending_review" | "worked_verified" | "worked_discrepancy" | "correction" | "released" | "blocked";
   inboundTurnoverMinor: number;
   outboundTurnoverMinor: number;
   closingBalanceMinor: number;
@@ -320,6 +320,12 @@ export type components = {
   blocked: boolean;
   comment?: string;
 };
+    CorrectShiftRequisiteRequest: {
+  inboundTurnoverMinor: number;
+  outboundTurnoverMinor: number;
+  closingBalanceMinor: number;
+  comment: string;
+};
     CloseChecklist: {
   shift: components["schemas"]["Shift"];
   inboundImported: boolean;
@@ -358,6 +364,8 @@ export type components = {
   traderId: number;
   sourceShiftRequisiteId: number;
   sourceRequisiteId: number;
+  sourcePhone?: string;
+  sourceBankName?: string;
   amountMinor: number;
   createdBy: number;
   createdAt: string;
@@ -410,6 +418,7 @@ export type components = {
   failedCount: number;
   unknownAmountMinor: number;
   unknownCount: number;
+  blockedBalanceMinor: number;
 };
     OrderStatusBreakdownItem: {
   rawStatus: string;

@@ -22,6 +22,9 @@ import type {
   RequisiteReport,
   RequisiteReportShift,
   RequisiteReportSummary,
+  ShiftReportDetails,
+  ShiftReportReconciliation,
+  ShiftReportRow,
   ShiftReport,
   ShiftRequisite,
   Trader,
@@ -79,6 +82,50 @@ type BackendOrder = ApiSchema<"Order">;
 type BackendImportResult = ApiSchema<"ImportResult">;
 type BackendReconciliationRun = ApiSchema<"ReconciliationRun">;
 
+type BackendShiftReportReconciliation = {
+  id: number;
+  status: "matched" | "mismatch" | "accepted_with_comment";
+  expectedAmountMinor: number;
+  actualAmountMinor: number;
+  diffAmountMinor: number;
+  comment?: string;
+  createdAt: string;
+};
+
+type BackendShiftReportRow = {
+  rowKey: string;
+  shiftRequisiteId?: number;
+  requisiteId?: number;
+  phone: string;
+  methodType: string;
+  bankCode: string;
+  bankName: string;
+  proxy?: string;
+  employeeComment?: string;
+  cardNumber?: string;
+  holderName?: string;
+  status: string;
+  inboundTurnoverMinor: number;
+  outboundTurnoverMinor: number;
+  closingBalanceMinor: number;
+  targetTurnoverMinor: number;
+  csvInboundMinor: number;
+  csvOutboundMinor: number;
+  inboundDiffMinor: number;
+  outboundDiffMinor: number;
+  hasMismatch: boolean;
+  csvOnly: boolean;
+};
+
+type ShiftReportDetailsResponse = {
+  report: {
+    shift: ApiSchema<"Shift">;
+    inbound?: BackendShiftReportReconciliation;
+    outbound?: BackendShiftReportReconciliation;
+    rows: BackendShiftReportRow[];
+  };
+};
+
 export const api = {
   auth: {
     async login(input: { login: string; password: string }) {
@@ -108,13 +155,11 @@ export const api = {
       id?: number;
       login: string;
       password?: string;
-      externalWorkerName: string;
       salaryRateBps: number;
       status: UserStatus;
     }) {
       if (input.id) {
         await apiClient.patch<TraderResponse>(`/teamlead/traders/${input.id}`, {
-          externalWorkerName: input.externalWorkerName,
           salaryRateBps: input.salaryRateBps,
           status: input.status,
         });
@@ -124,7 +169,7 @@ export const api = {
       await apiClient.post<TraderResponse>("/teamlead/traders", {
         login: input.login,
         password: input.password,
-        externalWorkerName: input.externalWorkerName,
+        externalWorkerName: input.login,
         salaryRateBps: input.salaryRateBps,
       });
     },
@@ -149,8 +194,6 @@ export const api = {
       bankCode: string;
       proxy: string;
       employeeComment?: string;
-      assignedTraderId?: number;
-      currentAssignedTraderId?: number;
       status: "active" | "archived";
     }) {
       if (input.id) {
@@ -161,14 +204,6 @@ export const api = {
           employeeComment: input.employeeComment,
           status: input.status,
         });
-        if (input.assignedTraderId && input.assignedTraderId !== input.currentAssignedTraderId) {
-          await apiClient.post<AssignmentResponse>(`/teamlead/requisites/${input.id}/assign`, {
-            traderId: input.assignedTraderId,
-            comment: "Изменение назначения из CRM",
-          });
-        } else if (!input.assignedTraderId && input.currentAssignedTraderId) {
-          await apiClient.post<void>(`/teamlead/requisites/${input.id}/unassign`);
-        }
         return;
       }
 
@@ -177,7 +212,6 @@ export const api = {
         bankCode: input.bankCode,
         proxy: input.proxy,
         employeeComment: input.employeeComment,
-        assignedTraderId: input.assignedTraderId,
       });
     },
     async history(requisiteId: number) {
@@ -251,6 +285,10 @@ export const api = {
       const response = await apiClient.get<ShiftHistoryResponse>("/trader/shift/history");
       return response.items.map(toShiftReport);
     },
+    async report(shiftId: number): Promise<ShiftReportDetails> {
+      const response = await apiClient.get<ShiftReportDetailsResponse>(`/trader/shifts/${shiftId}/report`);
+      return toShiftReportDetails(response.report);
+    },
     async requisites() {
       const [assignedResponse, turnoversResponse] = await Promise.all([
         apiClient.get<ApiSchema<"AssignedRequisitesResponse">>("/trader/requisites"),
@@ -317,6 +355,27 @@ export const api = {
         comment: input.comment,
       });
     },
+    async correctRequisite(input: {
+      shiftRequisiteId: number;
+      inboundTurnoverMinor: number;
+      outboundTurnoverMinor: number;
+      closingBalanceMinor: number;
+      comment: string;
+    }) {
+      const response = await apiClient.post<ShiftRequisiteResponse>(`/trader/shift-requisites/${input.shiftRequisiteId}/correction`, {
+        inboundTurnoverMinor: input.inboundTurnoverMinor,
+        outboundTurnoverMinor: input.outboundTurnoverMinor,
+        closingBalanceMinor: input.closingBalanceMinor,
+        comment: input.comment,
+      });
+      return response.shiftRequisite;
+    },
+    async returnRequisiteToWork(shiftRequisiteId: number) {
+      const response = await apiClient.post<ShiftRequisiteResponse>(
+        `/trader/shift-requisites/${shiftRequisiteId}/return-to-work`,
+      );
+      return response.shiftRequisite;
+    },
     async addTurnover(input: { shiftRequisiteId: number; amountMinor: number; comment?: string }) {
       await apiClient.post<TurnoverResponse>("/trader/shift/current/turnovers", input);
     },
@@ -338,6 +397,10 @@ export const api = {
     async history(): Promise<ShiftReport[]> {
       const response = await apiClient.get<ShiftHistoryResponse>("/teamlead/shift/history");
       return response.items.map(toShiftReport);
+    },
+    async report(shiftId: number): Promise<ShiftReportDetails> {
+      const response = await apiClient.get<ShiftReportDetailsResponse>(`/teamlead/shifts/${shiftId}/report`);
+      return toShiftReportDetails(response.report);
     },
     async reportRequisites(shiftId: number) {
       const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>(`/teamlead/shifts/${shiftId}/requisites`);
@@ -361,6 +424,24 @@ export const api = {
         throw error;
       }
     },
+    async periodReconciliation(periodId: number, direction: OrderDirection): Promise<ReconciliationSummary | null> {
+      try {
+        const response = await apiClient.get<ReconciliationResponse>(`/teamlead/periods/${periodId}/reconciliation/${direction}`);
+        return toReconciliation(response.run);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+    async periodReconciliationItems(periodId: number, direction: OrderDirection): Promise<ReconciliationItem[]> {
+      try {
+        const response = await apiClient.get<ReconciliationItemsResponse>(`/teamlead/periods/${periodId}/reconciliation/${direction}/items`);
+        return response.items.map(toReconciliationItem);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) return [];
+        throw error;
+      }
+    },
   },
 
   payouts: {
@@ -368,12 +449,28 @@ export const api = {
       const response = await apiClient.get<PayoutsResponse>("/trader/payouts");
       return response.items.map(toPayout);
     },
+    async history() {
+      const response = await apiClient.get<PayoutsResponse>("/trader/payouts/history");
+      return response.items.map(toPayout);
+    },
     async transfers(payoutId: number) {
       const response = await apiClient.get<PayoutDetailsResponse>(`/trader/payouts/${payoutId}`);
       return response.transfers.map(toTransfer);
     },
     async create(input: { destinationBank: string; destinationRequisite: string; amountMinor: number }) {
-      await apiClient.post<PayoutResponse>("/trader/payouts", input);
+      const response = await apiClient.post<PayoutResponse>("/trader/payouts", input);
+      return toPayout(response.payout);
+    },
+    async update(input: { id: number; destinationBank: string; destinationRequisite: string; amountMinor: number }) {
+      const response = await apiClient.patch<PayoutResponse>(`/trader/payouts/${input.id}`, {
+        destinationBank: input.destinationBank,
+        destinationRequisite: input.destinationRequisite,
+        amountMinor: input.amountMinor,
+      });
+      return toPayout(response.payout);
+    },
+    async delete(payoutId: number) {
+      await apiClient.delete<void>(`/trader/payouts/${payoutId}`);
     },
     async addTransfer(input: { payoutId: number; sourceShiftRequisiteId: number; amountMinor: number; comment?: string }) {
       await apiClient.post<TransferResponse>(`/trader/payouts/${input.payoutId}/transfers`, {
@@ -381,6 +478,20 @@ export const api = {
         amountMinor: input.amountMinor,
         comment: input.comment,
       });
+    },
+    async updateTransfer(input: {
+      payoutId: number;
+      transferId: number;
+      sourceShiftRequisiteId: number;
+      amountMinor: number;
+      comment?: string;
+    }) {
+      const response = await apiClient.patch<TransferResponse>(`/trader/payouts/${input.payoutId}/transfers/${input.transferId}`, {
+        sourceShiftRequisiteId: input.sourceShiftRequisiteId,
+        amountMinor: input.amountMinor,
+        comment: input.comment,
+      });
+      return toTransfer(response.transfer);
     },
     async deleteTransfer(input: { payoutId: number; transferId: number } | number) {
       if (typeof input === "number") {
@@ -442,6 +553,7 @@ export const api = {
           dateTo: filters?.dateTo,
           status: filters?.status,
           traderIds: filters?.traderIds,
+          confirmedOnly: filters?.confirmedOnly,
         })}`,
       );
       return response.items.map(toOrder).filter((order) => filterOrder(order, filters));
@@ -532,7 +644,15 @@ function toAssignmentHistory(assignment: BackendAssignment): AssignmentHistoryIt
   return {
     id: assignment.id,
     changedAt: assignment.assignedAt,
-    newTrader: String(assignment.traderId),
+    traderId: assignment.traderId,
+    status: assignment.status,
+    assignedForDate: assignment.assignedForDate,
+    targetTurnoverMinor: assignment.targetTurnoverMinor,
+    unassignedAt: assignment.unassignedAt,
+    startedAt: assignment.startedAt,
+    completedAt: assignment.completedAt,
+    cancelledAt: assignment.cancelledAt,
+    wasReassign: assignment.wasReassign,
     changedBy: String(assignment.assignedBy),
     comment: assignment.comment ?? "",
   };
@@ -656,11 +776,19 @@ function toShiftRequisite(item: BackendAssignedRequisite, latestTurnovers: Map<n
 }
 
 function toShiftRequisiteStatus(item: BackendAssignedRequisite): ShiftRequisite["status"] {
-  if (!item.shiftRequisiteId) return "assigned";
+  if (!item.shiftRequisiteId) {
+    if (item.assignmentStatus === "blocked") return "blocked";
+    if (item.assignmentStatus === "worked") return "worked_pending_review";
+    return "assigned";
+  }
   if (item.shiftRequisiteStatus === "active") return "in_work";
   if (item.shiftRequisiteStatus === "blocked") return "blocked";
   if (item.shiftRequisiteStatus === "correction") return "correction";
-  return "worked";
+  if (item.shiftRequisiteStatus === "worked_pending_review") return "worked_pending_review";
+  if (item.shiftRequisiteStatus === "worked_verified") return "worked_verified";
+  if (item.shiftRequisiteStatus === "worked_discrepancy") return "worked_discrepancy";
+  if (item.shiftRequisiteStatus === "worked") return "worked_pending_review";
+  return "worked_pending_review";
 }
 
 function toShiftReport(item: ApiSchema<"Shift">): ShiftReport {
@@ -677,6 +805,54 @@ function toShiftReport(item: ApiSchema<"Shift">): ShiftReport {
   };
 }
 
+function toShiftReportDetails(item: ShiftReportDetailsResponse["report"]): ShiftReportDetails {
+  return {
+    shift: toShiftReport(item.shift),
+    inbound: item.inbound ? toShiftReportReconciliation(item.inbound) : undefined,
+    outbound: item.outbound ? toShiftReportReconciliation(item.outbound) : undefined,
+    rows: item.rows.map(toShiftReportRow),
+  };
+}
+
+function toShiftReportReconciliation(item: BackendShiftReportReconciliation): ShiftReportReconciliation {
+  return {
+    id: item.id,
+    status: item.status,
+    expectedMinor: item.expectedAmountMinor,
+    actualMinor: item.actualAmountMinor,
+    diffMinor: item.diffAmountMinor,
+    comment: item.comment,
+    createdAt: item.createdAt,
+  };
+}
+
+function toShiftReportRow(item: BackendShiftReportRow): ShiftReportRow {
+  return {
+    rowKey: item.rowKey,
+    shiftRequisiteId: item.shiftRequisiteId,
+    requisiteId: item.requisiteId,
+    phone: item.phone,
+    methodType: item.methodType,
+    bankCode: item.bankCode,
+    bankName: item.bankName,
+    proxy: item.proxy,
+    employeeComment: item.employeeComment,
+    cardNumber: item.cardNumber,
+    holderName: item.holderName,
+    status: item.status,
+    inboundTurnoverMinor: item.inboundTurnoverMinor,
+    outboundTurnoverMinor: item.outboundTurnoverMinor,
+    closingBalanceMinor: item.closingBalanceMinor,
+    targetTurnoverMinor: item.targetTurnoverMinor,
+    csvInboundMinor: item.csvInboundMinor,
+    csvOutboundMinor: item.csvOutboundMinor,
+    inboundDiffMinor: item.inboundDiffMinor,
+    outboundDiffMinor: item.outboundDiffMinor,
+    hasMismatch: item.hasMismatch,
+    csvOnly: item.csvOnly,
+  };
+}
+
 function toTurnover(item: BackendTurnover): TurnoverEntry {
   return {
     id: item.id,
@@ -690,12 +866,15 @@ function toTurnover(item: BackendTurnover): TurnoverEntry {
 function toPayout(item: BackendPayout): Payout {
   return {
     id: item.id,
+    shiftId: item.shiftId,
     destinationBank: item.destinationBank,
     destinationRequisite: item.destinationRequisite,
     amountMinor: item.amountMinor,
     paidMinor: item.paidAmountMinor,
     status: item.status === "paid" ? "paid" : item.status === "cancelled" ? "cancelled" : "open",
     createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    deletedAt: item.deletedAt,
   };
 }
 
@@ -705,6 +884,8 @@ function toTransfer(item: BackendTransfer): PayoutTransfer {
     payoutId: item.manualPayoutOrderId,
     sourceShiftRequisiteId: item.sourceShiftRequisiteId,
     sourceRequisiteId: item.sourceRequisiteId,
+    sourcePhone: item.sourcePhone,
+    sourceBankName: item.sourceBankName,
     amountMinor: item.amountMinor,
     comment: item.comment,
     createdAt: item.createdAt,

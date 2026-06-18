@@ -91,11 +91,103 @@ func (r *Repository) TeamShiftHistory(ctx context.Context, teamID int64, limit i
 	return items, nil
 }
 
+func (r *Repository) ShiftReport(ctx context.Context, teamID int64, traderID int64, shiftID int64) (ShiftReportDetails, error) {
+	shift, err := r.queries.GetTraderShiftByIDForTrader(ctx, db.GetTraderShiftByIDForTraderParams{
+		TeamID:   teamID,
+		TraderID: traderID,
+		ShiftID:  shiftID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ShiftReportDetails{}, ErrCurrentShiftNotFound
+	}
+	if err != nil {
+		return ShiftReportDetails{}, err
+	}
+
+	return r.shiftReport(ctx, fromDBShift(shift))
+}
+
+func (r *Repository) TeamShiftReport(ctx context.Context, teamID int64, shiftID int64) (ShiftReportDetails, error) {
+	shift, err := r.queries.GetTraderShiftByIDForTeam(ctx, db.GetTraderShiftByIDForTeamParams{
+		TeamID:  teamID,
+		ShiftID: shiftID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ShiftReportDetails{}, ErrCurrentShiftNotFound
+	}
+	if err != nil {
+		return ShiftReportDetails{}, err
+	}
+
+	return r.shiftReport(ctx, fromDBShift(shift))
+}
+
+func (r *Repository) shiftReport(ctx context.Context, shift Shift) (ShiftReportDetails, error) {
+	rows, err := r.queries.ListShiftReportRows(ctx, db.ListShiftReportRowsParams{
+		TeamID:  shift.TeamID,
+		ShiftID: shift.ID,
+	})
+	if err != nil {
+		return ShiftReportDetails{}, err
+	}
+
+	inbound, err := r.latestReportReconciliation(ctx, shift.TeamID, shift.ID, "inbound")
+	if err != nil {
+		return ShiftReportDetails{}, err
+	}
+	outbound, err := r.latestReportReconciliation(ctx, shift.TeamID, shift.ID, "outbound")
+	if err != nil {
+		return ShiftReportDetails{}, err
+	}
+
+	items := make([]ShiftReportRow, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fromShiftReportRow(row))
+	}
+
+	return ShiftReportDetails{
+		Shift:    shift,
+		Inbound:  inbound,
+		Outbound: outbound,
+		Rows:     items,
+	}, nil
+}
+
+func (r *Repository) latestReportReconciliation(ctx context.Context, teamID int64, shiftID int64, direction string) (*ShiftReportReconciliation, error) {
+	var (
+		run db.ReconciliationRun
+		err error
+	)
+	switch direction {
+	case "inbound":
+		run, err = r.queries.LatestTraderInboundReconciliationRunByShift(ctx, db.LatestTraderInboundReconciliationRunByShiftParams{
+			TeamID:  teamID,
+			ShiftID: pgtype.Int8{Int64: shiftID, Valid: true},
+		})
+	case "outbound":
+		run, err = r.queries.LatestTraderOutboundReconciliationRunByShift(ctx, db.LatestTraderOutboundReconciliationRunByShiftParams{
+			TeamID:  teamID,
+			ShiftID: pgtype.Int8{Int64: shiftID, Valid: true},
+		})
+	default:
+		return nil, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return fromDBReportReconciliation(run), nil
+}
+
 func (r *Repository) ActiveAssignment(ctx context.Context, teamID int64, traderID int64, requisiteID int64) (int64, error) {
 	row, err := r.queries.GetActiveAssignmentForTraderRequisite(ctx, db.GetActiveAssignmentForTraderRequisiteParams{
 		TeamID:      teamID,
 		TraderID:    traderID,
 		RequisiteID: requisiteID,
+		Today:       currentBusinessDate(),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, ErrActiveAssignmentNotFound
@@ -111,6 +203,7 @@ func (r *Repository) AssignedRequisites(ctx context.Context, teamID int64, trade
 	rows, err := r.queries.ListAssignedRequisitesForTrader(ctx, db.ListAssignedRequisitesForTraderParams{
 		TeamID:   teamID,
 		TraderID: traderID,
+		Today:    currentBusinessDate(),
 	})
 	if err != nil {
 		return nil, err
@@ -128,6 +221,7 @@ func (r *Repository) FutureAssignedRequisites(ctx context.Context, teamID int64,
 	rows, err := r.queries.ListFutureAssignedRequisitesForTrader(ctx, db.ListFutureAssignedRequisitesForTraderParams{
 		TeamID:   teamID,
 		TraderID: traderID,
+		Today:    currentBusinessDate(),
 	})
 	if err != nil {
 		return nil, err
@@ -145,6 +239,7 @@ func (r *Repository) HistoricalAssignedRequisites(ctx context.Context, teamID in
 	rows, err := r.queries.ListHistoricalAssignedRequisitesForTrader(ctx, db.ListHistoricalAssignedRequisitesForTraderParams{
 		TeamID:   teamID,
 		TraderID: traderID,
+		Today:    currentBusinessDate(),
 	})
 	if err != nil {
 		return nil, err
@@ -156,6 +251,20 @@ func (r *Repository) HistoricalAssignedRequisites(ctx context.Context, teamID in
 	}
 
 	return items, nil
+}
+
+func currentBusinessDate() pgtype.Date {
+	now := time.Now().In(businessLocation())
+	return pgtype.Date{Time: time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()), Valid: true}
+}
+
+func businessLocation() *time.Location {
+	location, err := time.LoadLocation("Europe/Moscow")
+	if err != nil {
+		return time.FixedZone("Europe/Moscow", 3*60*60)
+	}
+
+	return location
 }
 
 func (r *Repository) AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]AssignedRequisite, error) {
@@ -270,6 +379,7 @@ func (r *Repository) CloseShiftRequisite(ctx context.Context, params CloseShiftR
 		OutboundTurnoverMinor: params.OutboundTurnoverMinor,
 		ClosingBalanceMinor:   params.ClosingBalanceMinor,
 		Blocked:               params.Blocked,
+		CreatedBy:             params.CreatedBy,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ShiftRequisite{}, ErrShiftRequisiteNotFound
@@ -286,6 +396,59 @@ func (r *Repository) CloseShiftRequisite(ctx context.Context, params CloseShiftR
 	}
 
 	return fromCloseShiftRequisiteRow(row), nil
+}
+
+func (r *Repository) CorrectClosedShiftRequisiteTurnovers(ctx context.Context, params CorrectShiftRequisiteTurnoversRecord) (ShiftRequisite, error) {
+	row, err := r.queries.CorrectClosedShiftRequisiteTurnovers(ctx, db.CorrectClosedShiftRequisiteTurnoversParams{
+		TeamID:                params.TeamID,
+		TraderID:              params.TraderID,
+		ShiftRequisiteID:      params.ShiftRequisiteID,
+		InboundTurnoverMinor:  params.InboundTurnoverMinor,
+		OutboundTurnoverMinor: params.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   params.ClosingBalanceMinor,
+		CreatedBy:             params.CreatedBy,
+		Comment:               pgtype.Text{String: params.Comment, Valid: true},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ShiftRequisite{}, ErrShiftRequisiteNotFound
+	}
+	if err != nil {
+		return ShiftRequisite{}, err
+	}
+
+	return fromCorrectShiftRequisiteRow(row), nil
+}
+
+func (r *Repository) ReturnShiftRequisiteToWork(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) (ShiftRequisite, error) {
+	row, err := r.queries.ReturnShiftRequisiteToWork(ctx, db.ReturnShiftRequisiteToWorkParams{
+		TeamID:           teamID,
+		TraderID:         traderID,
+		ShiftRequisiteID: shiftRequisiteID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ShiftRequisite{}, ErrShiftRequisiteNotFound
+	}
+	if err != nil {
+		return ShiftRequisite{}, err
+	}
+
+	return fromReturnShiftRequisiteToWorkRow(row), nil
+}
+
+func (r *Repository) GetShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) (ShiftRequisite, error) {
+	row, err := r.queries.GetShiftRequisiteForTrader(ctx, db.GetShiftRequisiteForTraderParams{
+		TeamID:           teamID,
+		TraderID:         traderID,
+		ShiftRequisiteID: shiftRequisiteID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ShiftRequisite{}, ErrShiftRequisiteNotFound
+	}
+	if err != nil {
+		return ShiftRequisite{}, err
+	}
+
+	return fromGetShiftRequisiteForTraderRow(row), nil
 }
 
 func (r *Repository) CreateTurnoverEntry(ctx context.Context, params CreateTurnoverEntryRecord) (TurnoverEntry, error) {
@@ -401,6 +564,18 @@ type CloseShiftRequisiteRecord struct {
 	OutboundTurnoverMinor int64
 	ClosingBalanceMinor   int64
 	Blocked               bool
+	CreatedBy             int64
+}
+
+type CorrectShiftRequisiteTurnoversRecord struct {
+	TeamID                int64
+	TraderID              int64
+	ShiftRequisiteID      int64
+	InboundTurnoverMinor  int64
+	OutboundTurnoverMinor int64
+	ClosingBalanceMinor   int64
+	CreatedBy             int64
+	Comment               string
 }
 
 type CloseShiftRecord struct {
@@ -578,6 +753,57 @@ func fromUpdateShiftRequisiteRow(row db.UpdateShiftRequisiteDetailsRow) ShiftReq
 }
 
 func fromCloseShiftRequisiteRow(row db.CloseShiftRequisiteRow) ShiftRequisite {
+	return fromShiftRequisiteFields(row.ID, row.TeamID, row.ShiftID, row.TraderID, row.RequisiteID, row.AssignmentID, row.CardNumber, row.HolderName, row.TakenAt, row.ReleasedAt, row.Status, row.InboundTurnoverMinor, row.OutboundTurnoverMinor, row.ClosingBalanceMinor, row.CreatedAt, row.UpdatedAt)
+}
+
+func fromShiftReportRow(row db.ListShiftReportRowsRow) ShiftReportRow {
+	return ShiftReportRow{
+		RowKey:                row.RowKey,
+		ShiftRequisiteID:      int64Ptr(row.ShiftRequisiteID),
+		RequisiteID:           int64Ptr(row.RequisiteID),
+		Phone:                 row.Phone,
+		MethodType:            row.MethodType,
+		BankCode:              row.BankCode,
+		BankName:              row.BankName,
+		Proxy:                 textPtr(row.Proxy),
+		EmployeeComment:       textPtr(row.EmployeeComment),
+		CardNumber:            textPtr(row.CardNumber),
+		HolderName:            textPtr(row.HolderName),
+		Status:                row.Status,
+		InboundTurnoverMinor:  row.InboundTurnoverMinor,
+		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   row.ClosingBalanceMinor,
+		TargetTurnoverMinor:   row.TargetTurnoverMinor,
+		CSVInboundMinor:       row.CsvInboundMinor,
+		CSVOutboundMinor:      row.CsvOutboundMinor,
+		InboundDiffMinor:      row.InboundDiffMinor,
+		OutboundDiffMinor:     row.OutboundDiffMinor,
+		HasMismatch:           row.HasMismatch,
+		CSVOnly:               row.CsvOnly,
+	}
+}
+
+func fromDBReportReconciliation(row db.ReconciliationRun) *ShiftReportReconciliation {
+	return &ShiftReportReconciliation{
+		ID:                  row.ID,
+		Status:              row.Status,
+		ExpectedAmountMinor: row.ExpectedAmountMinor,
+		ActualAmountMinor:   row.ActualAmountMinor,
+		DiffAmountMinor:     row.DiffAmountMinor,
+		Comment:             textPtr(row.Comment),
+		CreatedAt:           row.CreatedAt.Time,
+	}
+}
+
+func fromCorrectShiftRequisiteRow(row db.CorrectClosedShiftRequisiteTurnoversRow) ShiftRequisite {
+	return fromShiftRequisiteFields(row.ID, row.TeamID, row.ShiftID, row.TraderID, row.RequisiteID, row.AssignmentID, row.CardNumber, row.HolderName, row.TakenAt, row.ReleasedAt, row.Status, row.InboundTurnoverMinor, row.OutboundTurnoverMinor, row.ClosingBalanceMinor, row.CreatedAt, row.UpdatedAt)
+}
+
+func fromReturnShiftRequisiteToWorkRow(row db.ReturnShiftRequisiteToWorkRow) ShiftRequisite {
+	return fromShiftRequisiteFields(row.ID, row.TeamID, row.ShiftID, row.TraderID, row.RequisiteID, row.AssignmentID, row.CardNumber, row.HolderName, row.TakenAt, row.ReleasedAt, row.Status, row.InboundTurnoverMinor, row.OutboundTurnoverMinor, row.ClosingBalanceMinor, row.CreatedAt, row.UpdatedAt)
+}
+
+func fromGetShiftRequisiteForTraderRow(row db.GetShiftRequisiteForTraderRow) ShiftRequisite {
 	return fromShiftRequisiteFields(row.ID, row.TeamID, row.ShiftID, row.TraderID, row.RequisiteID, row.AssignmentID, row.CardNumber, row.HolderName, row.TakenAt, row.ReleasedAt, row.Status, row.InboundTurnoverMinor, row.OutboundTurnoverMinor, row.ClosingBalanceMinor, row.CreatedAt, row.UpdatedAt)
 }
 

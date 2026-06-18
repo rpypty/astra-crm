@@ -20,6 +20,8 @@ type Store interface {
 	CreateShift(ctx context.Context, teamID int64, traderID int64) (Shift, error)
 	ShiftHistory(ctx context.Context, teamID int64, traderID int64, limit int32) ([]Shift, error)
 	TeamShiftHistory(ctx context.Context, teamID int64, limit int32) ([]Shift, error)
+	ShiftReport(ctx context.Context, teamID int64, traderID int64, shiftID int64) (ShiftReportDetails, error)
+	TeamShiftReport(ctx context.Context, teamID int64, shiftID int64) (ShiftReportDetails, error)
 	ActiveAssignment(ctx context.Context, teamID int64, traderID int64, requisiteID int64) (int64, error)
 	AssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error)
 	FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error)
@@ -30,6 +32,9 @@ type Store interface {
 	ShiftRequisites(ctx context.Context, teamID int64, traderID int64) ([]ShiftRequisite, error)
 	UpdateShiftRequisiteDetails(ctx context.Context, params UpdateShiftRequisiteDetailsRecord) (ShiftRequisite, error)
 	CloseShiftRequisite(ctx context.Context, params CloseShiftRequisiteRecord) (ShiftRequisite, error)
+	CorrectClosedShiftRequisiteTurnovers(ctx context.Context, params CorrectShiftRequisiteTurnoversRecord) (ShiftRequisite, error)
+	ReturnShiftRequisiteToWork(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) (ShiftRequisite, error)
+	GetShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) (ShiftRequisite, error)
 	CreateTurnoverEntry(ctx context.Context, params CreateTurnoverEntryRecord) (TurnoverEntry, error)
 	LatestTurnovers(ctx context.Context, teamID int64, traderID int64) ([]TurnoverEntry, error)
 	TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]TurnoverEntry, error)
@@ -108,6 +113,24 @@ type CloseShiftRequisiteParams struct {
 	Comment               *string
 }
 
+type CorrectShiftRequisiteParams struct {
+	ActorID               int64
+	TeamID                int64
+	TraderID              int64
+	ShiftRequisiteID      int64
+	InboundTurnoverMinor  int64
+	OutboundTurnoverMinor int64
+	ClosingBalanceMinor   int64
+	Comment               string
+}
+
+type ReturnShiftRequisiteParams struct {
+	ActorID          int64
+	TeamID           int64
+	TraderID         int64
+	ShiftRequisiteID int64
+}
+
 type CloseShiftParams struct {
 	ActorID      int64
 	TeamID       int64
@@ -147,6 +170,22 @@ func (s *Service) TeamShiftHistory(ctx context.Context, teamID int64, limit int3
 	}
 
 	return s.store.TeamShiftHistory(ctx, teamID, limit)
+}
+
+func (s *Service) ShiftReport(ctx context.Context, teamID int64, traderID int64, shiftID int64) (ShiftReportDetails, error) {
+	if teamID <= 0 || traderID <= 0 || shiftID <= 0 {
+		return ShiftReportDetails{}, ErrInvalidInput
+	}
+
+	return s.store.ShiftReport(ctx, teamID, traderID, shiftID)
+}
+
+func (s *Service) TeamShiftReport(ctx context.Context, teamID int64, shiftID int64) (ShiftReportDetails, error) {
+	if teamID <= 0 || shiftID <= 0 {
+		return ShiftReportDetails{}, ErrInvalidInput
+	}
+
+	return s.store.TeamShiftReport(ctx, teamID, shiftID)
 }
 
 func (s *Service) AssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
@@ -345,6 +384,7 @@ func (s *Service) CloseShiftRequisite(ctx context.Context, params CloseShiftRequ
 		OutboundTurnoverMinor: params.OutboundTurnoverMinor,
 		ClosingBalanceMinor:   params.ClosingBalanceMinor,
 		Blocked:               params.Blocked,
+		CreatedBy:             params.ActorID,
 	})
 	if err != nil {
 		return ShiftRequisite{}, err
@@ -364,6 +404,85 @@ func (s *Service) CloseShiftRequisite(ctx context.Context, params CloseShiftRequ
 	}
 
 	return closed, nil
+}
+
+func (s *Service) CorrectShiftRequisite(ctx context.Context, params CorrectShiftRequisiteParams) (ShiftRequisite, error) {
+	comment := strings.TrimSpace(params.Comment)
+	if params.ActorID <= 0 || params.TeamID <= 0 || params.TraderID <= 0 || params.ShiftRequisiteID <= 0 || params.InboundTurnoverMinor < 0 || params.OutboundTurnoverMinor < 0 || params.ClosingBalanceMinor < 0 || comment == "" {
+		return ShiftRequisite{}, ErrInvalidInput
+	}
+
+	updated, err := s.store.CorrectClosedShiftRequisiteTurnovers(ctx, CorrectShiftRequisiteTurnoversRecord{
+		TeamID:                params.TeamID,
+		TraderID:              params.TraderID,
+		ShiftRequisiteID:      params.ShiftRequisiteID,
+		InboundTurnoverMinor:  params.InboundTurnoverMinor,
+		OutboundTurnoverMinor: params.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   params.ClosingBalanceMinor,
+		CreatedBy:             params.ActorID,
+		Comment:               comment,
+	})
+	if err != nil {
+		return ShiftRequisite{}, err
+	}
+
+	if err := s.writeAudit(ctx, audit.Event{
+		TeamID:     params.TeamID,
+		ActorID:    params.ActorID,
+		Action:     audit.ActionShiftRequisiteCorrected,
+		EntityType: "shift_requisite",
+		EntityID:   strconv.FormatInt(updated.ID, 10),
+		After:      PublicShiftRequisiteFromDomain(updated),
+		Comment:    &comment,
+	}); err != nil {
+		return ShiftRequisite{}, err
+	}
+
+	if s.turnoverHook != nil {
+		if err := s.turnoverHook.AfterTurnoverCreated(ctx, TurnoverEntry{
+			TeamID:           updated.TeamID,
+			ShiftID:          updated.ShiftID,
+			ShiftRequisiteID: updated.ID,
+			RequisiteID:      updated.RequisiteID,
+			TraderID:         updated.TraderID,
+			AmountMinor:      updated.InboundTurnoverMinor,
+			CreatedBy:        params.ActorID,
+			Comment:          &comment,
+		}); err != nil {
+			return ShiftRequisite{}, err
+		}
+	}
+
+	refreshed, err := s.store.GetShiftRequisite(ctx, params.TeamID, params.TraderID, params.ShiftRequisiteID)
+	if err != nil {
+		return ShiftRequisite{}, err
+	}
+
+	return refreshed, nil
+}
+
+func (s *Service) ReturnShiftRequisiteToWork(ctx context.Context, params ReturnShiftRequisiteParams) (ShiftRequisite, error) {
+	if params.ActorID <= 0 || params.TeamID <= 0 || params.TraderID <= 0 || params.ShiftRequisiteID <= 0 {
+		return ShiftRequisite{}, ErrInvalidInput
+	}
+
+	updated, err := s.store.ReturnShiftRequisiteToWork(ctx, params.TeamID, params.TraderID, params.ShiftRequisiteID)
+	if err != nil {
+		return ShiftRequisite{}, err
+	}
+
+	if err := s.writeAudit(ctx, audit.Event{
+		TeamID:     params.TeamID,
+		ActorID:    params.ActorID,
+		Action:     audit.ActionShiftRequisiteReturnedToWork,
+		EntityType: "shift_requisite",
+		EntityID:   strconv.FormatInt(updated.ID, 10),
+		After:      PublicShiftRequisiteFromDomain(updated),
+	}); err != nil {
+		return ShiftRequisite{}, err
+	}
+
+	return updated, nil
 }
 
 func (s *Service) CloseChecklist(ctx context.Context, teamID int64, traderID int64) (CloseChecklist, error) {

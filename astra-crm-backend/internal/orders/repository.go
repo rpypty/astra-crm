@@ -20,6 +20,13 @@ func NewRepository(queries *db.Queries) *Repository {
 }
 
 func (r *Repository) ListTraderOrders(ctx context.Context, scope Scope, filters Filters) (ListResult, error) {
+	if filters.ConfirmedOnly {
+		if scope.TraderID == nil {
+			return ListResult{}, ErrInvalidInput
+		}
+		return r.traderConfirmedOrders(ctx, scope, filters)
+	}
+
 	shiftID, err := r.currentShiftID(ctx, scope)
 	if err != nil {
 		return ListResult{}, err
@@ -50,21 +57,47 @@ func (r *Repository) ListTraderOrders(ctx context.Context, scope Scope, filters 
 
 func (r *Repository) ListTeamleadOrders(ctx context.Context, scope Scope, filters Filters) (ListResult, error) {
 	rows, err := r.queries.ListTeamleadOrders(ctx, db.ListTeamleadOrdersParams{
-		TeamID:     scope.TeamID,
-		Direction:  scope.Direction,
-		DateFrom:   dateValue(filters.DateFrom),
-		DateTo:     dateValue(filters.DateTo),
-		TraderID:   int8Value(filters.TraderID),
-		TraderIds:  filters.TraderIDs,
-		WorkerName: textValue(filters.WorkerName),
-		Requisite:  textValue(filters.Requisite),
-		MethodType: textValue(filters.MethodType),
-		Status:     textValue(filters.Status),
-		AmountFrom: int8Value(filters.AmountFrom),
-		AmountTo:   int8Value(filters.AmountTo),
-		Sort:       filters.Sort,
-		PageOffset: pageOffset(filters),
-		PageSize:   int32(filters.PageSize),
+		TeamID:        scope.TeamID,
+		Direction:     scope.Direction,
+		DateFrom:      dateValue(filters.DateFrom),
+		DateTo:        dateValue(filters.DateTo),
+		TraderID:      int8Value(filters.TraderID),
+		TraderIds:     filters.TraderIDs,
+		WorkerName:    textValue(filters.WorkerName),
+		Requisite:     textValue(filters.Requisite),
+		MethodType:    textValue(filters.MethodType),
+		Status:        textValue(filters.Status),
+		AmountFrom:    int8Value(filters.AmountFrom),
+		AmountTo:      int8Value(filters.AmountTo),
+		Sort:          filters.Sort,
+		PageOffset:    pageOffset(filters),
+		PageSize:      int32(filters.PageSize),
+		ConfirmedOnly: filters.ConfirmedOnly,
+	})
+	if err != nil {
+		return ListResult{}, err
+	}
+
+	return listResultFromTeamleadRows(rows, filters), nil
+}
+
+func (r *Repository) traderConfirmedOrders(ctx context.Context, scope Scope, filters Filters) (ListResult, error) {
+	rows, err := r.queries.ListTeamleadOrders(ctx, db.ListTeamleadOrdersParams{
+		TeamID:        scope.TeamID,
+		Direction:     scope.Direction,
+		DateFrom:      dateValue(filters.DateFrom),
+		DateTo:        dateValue(filters.DateTo),
+		TraderID:      int8Value(scope.TraderID),
+		WorkerName:    textValue(filters.WorkerName),
+		Requisite:     textValue(filters.Requisite),
+		MethodType:    textValue(filters.MethodType),
+		Status:        textValue(filters.Status),
+		AmountFrom:    int8Value(filters.AmountFrom),
+		AmountTo:      int8Value(filters.AmountTo),
+		Sort:          filters.Sort,
+		PageOffset:    pageOffset(filters),
+		PageSize:      int32(filters.PageSize),
+		ConfirmedOnly: true,
 	})
 	if err != nil {
 		return ListResult{}, err
@@ -74,6 +107,13 @@ func (r *Repository) ListTeamleadOrders(ctx context.Context, scope Scope, filter
 }
 
 func (r *Repository) TraderDashboard(ctx context.Context, scope Scope, filters Filters) (Dashboard, error) {
+	if filters.ConfirmedOnly {
+		if scope.TraderID == nil {
+			return Dashboard{}, ErrInvalidInput
+		}
+		return r.traderConfirmedDashboard(ctx, scope, filters)
+	}
+
 	shiftID, err := r.currentShiftID(ctx, scope)
 	if err != nil {
 		return Dashboard{}, err
@@ -85,6 +125,14 @@ func (r *Repository) TraderDashboard(ctx context.Context, scope Scope, filters F
 		Direction: scope.Direction,
 		DateFrom:  dateValue(filters.DateFrom),
 		DateTo:    dateValue(filters.DateTo),
+	})
+	if err != nil {
+		return Dashboard{}, err
+	}
+
+	blockedBalanceMinor, err := r.queries.TraderBlockedBalanceSummary(ctx, db.TraderBlockedBalanceSummaryParams{
+		TeamID:   scope.TeamID,
+		TraderID: *scope.TraderID,
 	})
 	if err != nil {
 		return Dashboard{}, err
@@ -114,14 +162,15 @@ func (r *Repository) TraderDashboard(ctx context.Context, scope Scope, filters F
 	breakdown := traderBreakdownFromRows(breakdownRows)
 	return Dashboard{
 		Summary: Summary{
-			TotalAmountMinor:   summary.TotalAmountMinor,
-			TotalCount:         summary.TotalCount,
-			SuccessAmountMinor: summary.SuccessAmountMinor,
-			SuccessCount:       summary.SuccessCount,
-			FailedAmountMinor:  summary.FailedAmountMinor,
-			FailedCount:        summary.FailedCount,
-			UnknownAmountMinor: summary.UnknownAmountMinor,
-			UnknownCount:       summary.UnknownCount,
+			TotalAmountMinor:    summary.TotalAmountMinor,
+			TotalCount:          summary.TotalCount,
+			SuccessAmountMinor:  summary.SuccessAmountMinor,
+			SuccessCount:        summary.SuccessCount,
+			FailedAmountMinor:   summary.FailedAmountMinor,
+			FailedCount:         summary.FailedCount,
+			UnknownAmountMinor:  summary.UnknownAmountMinor,
+			UnknownCount:        summary.UnknownCount,
+			BlockedBalanceMinor: blockedBalanceMinor,
 		},
 		StatusBreakdown: breakdown,
 		UnknownStatuses: unknownStatuses(breakdown),
@@ -131,10 +180,20 @@ func (r *Repository) TraderDashboard(ctx context.Context, scope Scope, filters F
 
 func (r *Repository) TeamleadDashboard(ctx context.Context, scope Scope, filters Filters) (Dashboard, error) {
 	summary, err := r.queries.TeamleadOrdersSummary(ctx, db.TeamleadOrdersSummaryParams{
+		TeamID:        scope.TeamID,
+		Direction:     scope.Direction,
+		ConfirmedOnly: filters.ConfirmedOnly,
+		DateFrom:      dateValue(filters.DateFrom),
+		DateTo:        dateValue(filters.DateTo),
+		TraderID:      int8Value(filters.TraderID),
+		TraderIds:     filters.TraderIDs,
+	})
+	if err != nil {
+		return Dashboard{}, err
+	}
+
+	blockedBalanceMinor, err := r.queries.TeamleadBlockedBalanceSummary(ctx, db.TeamleadBlockedBalanceSummaryParams{
 		TeamID:    scope.TeamID,
-		Direction: scope.Direction,
-		DateFrom:  dateValue(filters.DateFrom),
-		DateTo:    dateValue(filters.DateTo),
 		TraderID:  int8Value(filters.TraderID),
 		TraderIds: filters.TraderIDs,
 	})
@@ -143,12 +202,13 @@ func (r *Repository) TeamleadDashboard(ctx context.Context, scope Scope, filters
 	}
 
 	breakdownRows, err := r.queries.TeamleadStatusBreakdown(ctx, db.TeamleadStatusBreakdownParams{
-		TeamID:    scope.TeamID,
-		Direction: scope.Direction,
-		DateFrom:  dateValue(filters.DateFrom),
-		DateTo:    dateValue(filters.DateTo),
-		TraderID:  int8Value(filters.TraderID),
-		TraderIds: filters.TraderIDs,
+		TeamID:        scope.TeamID,
+		Direction:     scope.Direction,
+		ConfirmedOnly: filters.ConfirmedOnly,
+		DateFrom:      dateValue(filters.DateFrom),
+		DateTo:        dateValue(filters.DateTo),
+		TraderID:      int8Value(filters.TraderID),
+		TraderIds:     filters.TraderIDs,
 	})
 	if err != nil {
 		return Dashboard{}, err
@@ -168,18 +228,71 @@ func (r *Repository) TeamleadDashboard(ctx context.Context, scope Scope, filters
 	breakdown := teamleadBreakdownFromRows(breakdownRows)
 	return Dashboard{
 		Summary: Summary{
-			TotalAmountMinor:   summary.TotalAmountMinor,
-			TotalCount:         summary.TotalCount,
-			SuccessAmountMinor: summary.SuccessAmountMinor,
-			SuccessCount:       summary.SuccessCount,
-			FailedAmountMinor:  summary.FailedAmountMinor,
-			FailedCount:        summary.FailedCount,
-			UnknownAmountMinor: summary.UnknownAmountMinor,
-			UnknownCount:       summary.UnknownCount,
+			TotalAmountMinor:    summary.TotalAmountMinor,
+			TotalCount:          summary.TotalCount,
+			SuccessAmountMinor:  summary.SuccessAmountMinor,
+			SuccessCount:        summary.SuccessCount,
+			FailedAmountMinor:   summary.FailedAmountMinor,
+			FailedCount:         summary.FailedCount,
+			UnknownAmountMinor:  summary.UnknownAmountMinor,
+			UnknownCount:        summary.UnknownCount,
+			BlockedBalanceMinor: blockedBalanceMinor,
 		},
 		StatusBreakdown: breakdown,
 		UnknownStatuses: unknownStatuses(breakdown),
 		RecentImports:   importsFromRows(importRows),
+	}, nil
+}
+
+func (r *Repository) traderConfirmedDashboard(ctx context.Context, scope Scope, filters Filters) (Dashboard, error) {
+	summary, err := r.queries.TeamleadOrdersSummary(ctx, db.TeamleadOrdersSummaryParams{
+		TeamID:        scope.TeamID,
+		Direction:     scope.Direction,
+		ConfirmedOnly: true,
+		DateFrom:      dateValue(filters.DateFrom),
+		DateTo:        dateValue(filters.DateTo),
+		TraderID:      int8Value(scope.TraderID),
+	})
+	if err != nil {
+		return Dashboard{}, err
+	}
+
+	blockedBalanceMinor, err := r.queries.TraderBlockedBalanceSummary(ctx, db.TraderBlockedBalanceSummaryParams{
+		TeamID:   scope.TeamID,
+		TraderID: *scope.TraderID,
+	})
+	if err != nil {
+		return Dashboard{}, err
+	}
+
+	breakdownRows, err := r.queries.TeamleadStatusBreakdown(ctx, db.TeamleadStatusBreakdownParams{
+		TeamID:        scope.TeamID,
+		Direction:     scope.Direction,
+		ConfirmedOnly: true,
+		DateFrom:      dateValue(filters.DateFrom),
+		DateTo:        dateValue(filters.DateTo),
+		TraderID:      int8Value(scope.TraderID),
+	})
+	if err != nil {
+		return Dashboard{}, err
+	}
+
+	breakdown := teamleadBreakdownFromRows(breakdownRows)
+	return Dashboard{
+		Summary: Summary{
+			TotalAmountMinor:    summary.TotalAmountMinor,
+			TotalCount:          summary.TotalCount,
+			SuccessAmountMinor:  summary.SuccessAmountMinor,
+			SuccessCount:        summary.SuccessCount,
+			FailedAmountMinor:   summary.FailedAmountMinor,
+			FailedCount:         summary.FailedCount,
+			UnknownAmountMinor:  summary.UnknownAmountMinor,
+			UnknownCount:        summary.UnknownCount,
+			BlockedBalanceMinor: blockedBalanceMinor,
+		},
+		StatusBreakdown: breakdown,
+		UnknownStatuses: unknownStatuses(breakdown),
+		RecentImports:   []ImportHistoryItem{},
 	}, nil
 }
 

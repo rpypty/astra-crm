@@ -104,7 +104,7 @@ const planSchema = z.object({
   requisiteId: z.string().min(1, "Выберите реквизит"),
   traderId: z.string().min(1, "Выберите трейдера"),
   assignedForDate: z.string().min(1, "Выберите дату"),
-  targetTurnover: z.string().min(1, "Введите целевой оборот").refine((value) => parseMoneyToMinor(value) > 0, "Сумма должна быть больше 0"),
+  targetTurnover: z.string().min(1, "Введите лимит").refine((value) => parseMoneyToMinor(value) > 0, "Сумма должна быть больше 0"),
   comment: z.string().optional(),
 });
 
@@ -463,4 +463,3 @@ function OrderDetailsDialog({ order, onClose }: { order: Order | null; onClose: 
     </Dialog>
   );
 }
-

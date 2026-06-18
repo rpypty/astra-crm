@@ -43,7 +43,9 @@ LEFT JOIN LATERAL (
     JOIN users u ON u.id = ra.trader_id
     WHERE ra.team_id = r.team_id
       AND ra.requisite_id = r.id
-    ORDER BY COALESCE(ra.completed_at, ra.cancelled_at, ra.unassigned_at, ra.assigned_at) DESC, ra.id DESC
+      AND ra.unassigned_at IS NULL
+      AND ra.status IN ('planned', 'assigned', 'in_work')
+    ORDER BY ra.assigned_for_date DESC, ra.assigned_at DESC, ra.id DESC
     LIMIT 1
 ) ra ON true
 WHERE r.team_id = sqlc.arg(team_id)
@@ -83,7 +85,9 @@ LEFT JOIN LATERAL (
     JOIN users u ON u.id = ra.trader_id
     WHERE ra.team_id = r.team_id
       AND ra.requisite_id = r.id
-    ORDER BY COALESCE(ra.completed_at, ra.cancelled_at, ra.unassigned_at, ra.assigned_at) DESC, ra.id DESC
+      AND ra.unassigned_at IS NULL
+      AND ra.status IN ('planned', 'assigned', 'in_work')
+    ORDER BY ra.assigned_for_date DESC, ra.assigned_at DESC, ra.id DESC
     LIMIT 1
 ) ra ON true
 WHERE r.team_id = sqlc.arg(team_id)
@@ -180,6 +184,7 @@ FROM requisite_assignments
 WHERE team_id = $1
   AND trader_id = $2
   AND unassigned_at IS NULL
+  AND status IN ('planned', 'assigned', 'in_work')
 ORDER BY assigned_at DESC, id DESC;
 
 -- name: GetRequisiteAssignmentByIDForTeam :one
@@ -228,6 +233,7 @@ RETURNING id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassi
 UPDATE requisite_assignments
 SET status = CASE WHEN sqlc.arg(blocked)::boolean THEN 'blocked' ELSE 'worked' END,
     completed_at = COALESCE(completed_at, now()),
+    unassigned_at = COALESCE(unassigned_at, now()),
     updated_at = now()
 WHERE team_id = sqlc.arg(team_id)
   AND shift_requisite_id = sqlc.arg(shift_requisite_id)

@@ -25,19 +25,20 @@ var (
 )
 
 type Filters struct {
-	DateFrom   *time.Time
-	DateTo     *time.Time
-	TraderID   *int64
-	TraderIDs  []int64
-	WorkerName *string
-	Requisite  *string
-	MethodType *string
-	Status     *string
-	AmountFrom *int64
-	AmountTo   *int64
-	Page       int64
-	PageSize   int64
-	Sort       string
+	DateFrom      *time.Time
+	DateTo        *time.Time
+	TraderID      *int64
+	TraderIDs     []int64
+	WorkerName    *string
+	Requisite     *string
+	MethodType    *string
+	Status        *string
+	AmountFrom    *int64
+	AmountTo      *int64
+	ConfirmedOnly bool
+	Page          int64
+	PageSize      int64
+	Sort          string
 }
 
 type Scope struct {
@@ -81,14 +82,15 @@ type Dashboard struct {
 }
 
 type Summary struct {
-	TotalAmountMinor   int64
-	TotalCount         int64
-	SuccessAmountMinor int64
-	SuccessCount       int64
-	FailedAmountMinor  int64
-	FailedCount        int64
-	UnknownAmountMinor int64
-	UnknownCount       int64
+	TotalAmountMinor    int64
+	TotalCount          int64
+	SuccessAmountMinor  int64
+	SuccessCount        int64
+	FailedAmountMinor   int64
+	FailedCount         int64
+	UnknownAmountMinor  int64
+	UnknownCount        int64
+	BlockedBalanceMinor int64
 }
 
 type StatusBreakdownItem struct {

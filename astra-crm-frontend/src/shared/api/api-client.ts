@@ -87,7 +87,7 @@ export class ApiClient {
   }
 }
 
-export function queryString(params: Record<string, string | number | Array<string | number> | undefined | null>) {
+export function queryString(params: Record<string, string | number | boolean | Array<string | number> | undefined | null>) {
   const searchParams = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null || value === "" || value === "all") {

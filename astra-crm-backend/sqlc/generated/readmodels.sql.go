@@ -54,55 +54,67 @@ SELECT
     osi.import_batch_id,
     count(*) OVER()::bigint AS total_count
 FROM order_scope_items osi
+JOIN trader_shifts ts ON ts.id = osi.shift_id
 LEFT JOIN users u ON u.id = osi.trader_id
 WHERE osi.team_id = $1
   AND osi.scope_type = 'trader_shift'
   AND osi.direction = $2
   AND osi.is_active = TRUE
-  AND ($3::date IS NULL OR osi.created_at_external::date >= $3::date)
-  AND ($4::date IS NULL OR osi.created_at_external::date <= $4::date)
-  AND ($5::bigint IS NULL OR osi.trader_id = $5::bigint)
-  AND (COALESCE(cardinality($6::bigint[]), 0) = 0 OR osi.trader_id = ANY($6::bigint[]))
-  AND ($7::text IS NULL OR osi.worker_name ILIKE '%' || $7::text || '%')
   AND (
-      $8::text IS NULL
-      OR osi.requisite_raw ILIKE '%' || $8::text || '%'
-      OR osi.requisite_phone ILIKE '%' || $8::text || '%'
+      NOT $3::boolean
+      OR (
+          ts.status IN ('closed', 'closed_with_discrepancy')
+          AND (
+              (osi.direction = 'inbound' AND ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+              OR (osi.direction = 'outbound' AND ts.outbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+          )
+      )
   )
-  AND ($9::text IS NULL OR osi.method_type = $9::text)
+  AND ($4::date IS NULL OR osi.created_at_external::date >= $4::date)
+  AND ($5::date IS NULL OR osi.created_at_external::date <= $5::date)
+  AND ($6::bigint IS NULL OR osi.trader_id = $6::bigint)
+  AND (COALESCE(cardinality($7::bigint[]), 0) = 0 OR osi.trader_id = ANY($7::bigint[]))
+  AND ($8::text IS NULL OR osi.worker_name ILIKE '%' || $8::text || '%')
   AND (
-      $10::text IS NULL
-      OR osi.raw_status = $10::text
-      OR osi.normalized_status = $10::text
+      $9::text IS NULL
+      OR osi.requisite_raw ILIKE '%' || $9::text || '%'
+      OR osi.requisite_phone ILIKE '%' || $9::text || '%'
   )
-  AND ($11::bigint IS NULL OR osi.amount_minor >= $11::bigint)
-  AND ($12::bigint IS NULL OR osi.amount_minor <= $12::bigint)
+  AND ($10::text IS NULL OR osi.method_type = $10::text)
+  AND (
+      $11::text IS NULL
+      OR osi.raw_status = $11::text
+      OR osi.normalized_status = $11::text
+  )
+  AND ($12::bigint IS NULL OR osi.amount_minor >= $12::bigint)
+  AND ($13::bigint IS NULL OR osi.amount_minor <= $13::bigint)
 ORDER BY
-    CASE WHEN $13::text = 'amount_asc' THEN osi.amount_minor END ASC,
-    CASE WHEN $13::text = 'amount_desc' THEN osi.amount_minor END DESC,
-    CASE WHEN $13::text = 'created_at_asc' THEN osi.created_at_external END ASC,
+    CASE WHEN $14::text = 'amount_asc' THEN osi.amount_minor END ASC,
+    CASE WHEN $14::text = 'amount_desc' THEN osi.amount_minor END DESC,
+    CASE WHEN $14::text = 'created_at_asc' THEN osi.created_at_external END ASC,
     osi.created_at_external DESC,
     osi.id DESC
-LIMIT $15
-OFFSET $14
+LIMIT $16
+OFFSET $15
 `
 
 type ListTeamleadOrdersParams struct {
-	TeamID     int64
-	Direction  string
-	DateFrom   pgtype.Date
-	DateTo     pgtype.Date
-	TraderID   pgtype.Int8
-	TraderIds  []int64
-	WorkerName pgtype.Text
-	Requisite  pgtype.Text
-	MethodType pgtype.Text
-	Status     pgtype.Text
-	AmountFrom pgtype.Int8
-	AmountTo   pgtype.Int8
-	Sort       string
-	PageOffset int32
-	PageSize   int32
+	TeamID        int64
+	Direction     string
+	ConfirmedOnly bool
+	DateFrom      pgtype.Date
+	DateTo        pgtype.Date
+	TraderID      pgtype.Int8
+	TraderIds     []int64
+	WorkerName    pgtype.Text
+	Requisite     pgtype.Text
+	MethodType    pgtype.Text
+	Status        pgtype.Text
+	AmountFrom    pgtype.Int8
+	AmountTo      pgtype.Int8
+	Sort          string
+	PageOffset    int32
+	PageSize      int32
 }
 
 type ListTeamleadOrdersRow struct {
@@ -130,6 +142,7 @@ func (q *Queries) ListTeamleadOrders(ctx context.Context, arg ListTeamleadOrders
 	rows, err := q.db.Query(ctx, listTeamleadOrders,
 		arg.TeamID,
 		arg.Direction,
+		arg.ConfirmedOnly,
 		arg.DateFrom,
 		arg.DateTo,
 		arg.TraderID,
@@ -326,6 +339,30 @@ func (q *Queries) ListTraderOrders(ctx context.Context, arg ListTraderOrdersPara
 	return items, nil
 }
 
+const teamleadBlockedBalanceSummary = `-- name: TeamleadBlockedBalanceSummary :one
+SELECT COALESCE(sum(r.last_closing_balance_minor), 0)::bigint AS blocked_balance_minor
+FROM requisites r
+JOIN shift_requisites sr ON sr.id = r.last_shift_requisite_id
+WHERE r.team_id = $1
+  AND r.deleted_at IS NULL
+  AND r.last_activity_status = 'blocked'
+  AND ($2::bigint IS NULL OR sr.trader_id = $2::bigint)
+  AND (COALESCE(cardinality($3::bigint[]), 0) = 0 OR sr.trader_id = ANY($3::bigint[]))
+`
+
+type TeamleadBlockedBalanceSummaryParams struct {
+	TeamID    int64
+	TraderID  pgtype.Int8
+	TraderIds []int64
+}
+
+func (q *Queries) TeamleadBlockedBalanceSummary(ctx context.Context, arg TeamleadBlockedBalanceSummaryParams) (int64, error) {
+	row := q.db.QueryRow(ctx, teamleadBlockedBalanceSummary, arg.TeamID, arg.TraderID, arg.TraderIds)
+	var blocked_balance_minor int64
+	err := row.Scan(&blocked_balance_minor)
+	return blocked_balance_minor, err
+}
+
 const teamleadOrdersSummary = `-- name: TeamleadOrdersSummary :one
 SELECT
     COALESCE(sum(osi.amount_minor), 0)::bigint AS total_amount_minor,
@@ -337,23 +374,35 @@ SELECT
     COALESCE(sum(CASE WHEN osi.normalized_status = 'unknown' THEN osi.amount_minor ELSE 0 END), 0)::bigint AS unknown_amount_minor,
     count(*) FILTER (WHERE osi.normalized_status = 'unknown')::bigint AS unknown_count
 FROM order_scope_items osi
+JOIN trader_shifts ts ON ts.id = osi.shift_id
 WHERE osi.team_id = $1
   AND osi.scope_type = 'trader_shift'
   AND osi.direction = $2
   AND osi.is_active = TRUE
-  AND ($3::date IS NULL OR osi.created_at_external::date >= $3::date)
-  AND ($4::date IS NULL OR osi.created_at_external::date <= $4::date)
-  AND ($5::bigint IS NULL OR osi.trader_id = $5::bigint)
-  AND (COALESCE(cardinality($6::bigint[]), 0) = 0 OR osi.trader_id = ANY($6::bigint[]))
+  AND (
+      NOT $3::boolean
+      OR (
+          ts.status IN ('closed', 'closed_with_discrepancy')
+          AND (
+              (osi.direction = 'inbound' AND ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+              OR (osi.direction = 'outbound' AND ts.outbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+          )
+      )
+  )
+  AND ($4::date IS NULL OR osi.created_at_external::date >= $4::date)
+  AND ($5::date IS NULL OR osi.created_at_external::date <= $5::date)
+  AND ($6::bigint IS NULL OR osi.trader_id = $6::bigint)
+  AND (COALESCE(cardinality($7::bigint[]), 0) = 0 OR osi.trader_id = ANY($7::bigint[]))
 `
 
 type TeamleadOrdersSummaryParams struct {
-	TeamID    int64
-	Direction string
-	DateFrom  pgtype.Date
-	DateTo    pgtype.Date
-	TraderID  pgtype.Int8
-	TraderIds []int64
+	TeamID        int64
+	Direction     string
+	ConfirmedOnly bool
+	DateFrom      pgtype.Date
+	DateTo        pgtype.Date
+	TraderID      pgtype.Int8
+	TraderIds     []int64
 }
 
 type TeamleadOrdersSummaryRow struct {
@@ -371,6 +420,7 @@ func (q *Queries) TeamleadOrdersSummary(ctx context.Context, arg TeamleadOrdersS
 	row := q.db.QueryRow(ctx, teamleadOrdersSummary,
 		arg.TeamID,
 		arg.Direction,
+		arg.ConfirmedOnly,
 		arg.DateFrom,
 		arg.DateTo,
 		arg.TraderID,
@@ -460,25 +510,37 @@ SELECT
     COALESCE(sum(osi.amount_minor), 0)::bigint AS amount_minor,
     count(*)::bigint AS count
 FROM order_scope_items osi
+JOIN trader_shifts ts ON ts.id = osi.shift_id
 WHERE osi.team_id = $1
   AND osi.scope_type = 'trader_shift'
   AND osi.direction = $2
   AND osi.is_active = TRUE
-  AND ($3::date IS NULL OR osi.created_at_external::date >= $3::date)
-  AND ($4::date IS NULL OR osi.created_at_external::date <= $4::date)
-  AND ($5::bigint IS NULL OR osi.trader_id = $5::bigint)
-  AND (COALESCE(cardinality($6::bigint[]), 0) = 0 OR osi.trader_id = ANY($6::bigint[]))
+  AND (
+      NOT $3::boolean
+      OR (
+          ts.status IN ('closed', 'closed_with_discrepancy')
+          AND (
+              (osi.direction = 'inbound' AND ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+              OR (osi.direction = 'outbound' AND ts.outbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+          )
+      )
+  )
+  AND ($4::date IS NULL OR osi.created_at_external::date >= $4::date)
+  AND ($5::date IS NULL OR osi.created_at_external::date <= $5::date)
+  AND ($6::bigint IS NULL OR osi.trader_id = $6::bigint)
+  AND (COALESCE(cardinality($7::bigint[]), 0) = 0 OR osi.trader_id = ANY($7::bigint[]))
 GROUP BY osi.raw_status, osi.normalized_status
 ORDER BY count DESC, amount_minor DESC, osi.raw_status
 `
 
 type TeamleadStatusBreakdownParams struct {
-	TeamID    int64
-	Direction string
-	DateFrom  pgtype.Date
-	DateTo    pgtype.Date
-	TraderID  pgtype.Int8
-	TraderIds []int64
+	TeamID        int64
+	Direction     string
+	ConfirmedOnly bool
+	DateFrom      pgtype.Date
+	DateTo        pgtype.Date
+	TraderID      pgtype.Int8
+	TraderIds     []int64
 }
 
 type TeamleadStatusBreakdownRow struct {
@@ -492,6 +554,7 @@ func (q *Queries) TeamleadStatusBreakdown(ctx context.Context, arg TeamleadStatu
 	rows, err := q.db.Query(ctx, teamleadStatusBreakdown,
 		arg.TeamID,
 		arg.Direction,
+		arg.ConfirmedOnly,
 		arg.DateFrom,
 		arg.DateTo,
 		arg.TraderID,
@@ -518,6 +581,28 @@ func (q *Queries) TeamleadStatusBreakdown(ctx context.Context, arg TeamleadStatu
 		return nil, err
 	}
 	return items, nil
+}
+
+const traderBlockedBalanceSummary = `-- name: TraderBlockedBalanceSummary :one
+SELECT COALESCE(sum(r.last_closing_balance_minor), 0)::bigint AS blocked_balance_minor
+FROM requisites r
+JOIN shift_requisites sr ON sr.id = r.last_shift_requisite_id
+WHERE r.team_id = $1
+  AND r.deleted_at IS NULL
+  AND r.last_activity_status = 'blocked'
+  AND sr.trader_id = $2
+`
+
+type TraderBlockedBalanceSummaryParams struct {
+	TeamID   int64
+	TraderID int64
+}
+
+func (q *Queries) TraderBlockedBalanceSummary(ctx context.Context, arg TraderBlockedBalanceSummaryParams) (int64, error) {
+	row := q.db.QueryRow(ctx, traderBlockedBalanceSummary, arg.TeamID, arg.TraderID)
+	var blocked_balance_minor int64
+	err := row.Scan(&blocked_balance_minor)
+	return blocked_balance_minor, err
 }
 
 const traderOrdersSummary = `-- name: TraderOrdersSummary :one

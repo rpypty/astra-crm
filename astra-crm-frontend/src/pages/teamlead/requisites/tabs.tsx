@@ -105,7 +105,7 @@ export function RequisitePlanningTab({
       isLoading={isLoading}
       error={error}
       emptyTitle="Планов пока нет"
-      emptyDescription="Запланируйте дату, трейдера, реквизит и целевой оборот."
+      emptyDescription="Запланируйте дату, трейдера, реквизит и лимит."
       onRowClick={onRowClick}
     />
   );

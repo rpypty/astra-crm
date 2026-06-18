@@ -104,7 +104,7 @@ deleted_at nullable
 
 Rules:
 
-- Login must be unique globally or at least unique per team.
+- Login must be unique globally.
 - Password hash must never be returned in API.
 - Password hash must never be written to audit before/after payload.
 - Physical deletion is forbidden once user has domain history.

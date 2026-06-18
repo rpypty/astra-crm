@@ -12,11 +12,17 @@ export const queryKeys = {
     requisitePlanEvents: (assignmentId: number | undefined) =>
       ["teamlead", "requisites", "plans", assignmentId, "events"] as const,
     shiftHistory: ["teamlead", "shift", "history"] as const,
+    shiftReport: (shiftId: number) => ["teamlead", "shift", shiftId, "report"] as const,
     shiftReportRequisites: (shiftId: number) => ["teamlead", "shift", shiftId, "requisites"] as const,
     shiftReportReconciliation: (shiftId: number, direction: "inbound" | "outbound") =>
       ["teamlead", "shift", shiftId, direction, "reconciliation"] as const,
     shiftReportReconciliationItems: (shiftId: number, direction: "inbound" | "outbound") =>
       ["teamlead", "shift", shiftId, direction, "reconciliation", "items"] as const,
+    periods: ["teamlead", "periods"] as const,
+    periodReconciliation: (periodId: number | undefined, direction: "inbound" | "outbound") =>
+      ["teamlead", "period", periodId, direction, "reconciliation"] as const,
+    periodReconciliationItems: (periodId: number | undefined, direction: "inbound" | "outbound") =>
+      ["teamlead", "period", periodId, direction, "reconciliation", "items"] as const,
     dashboard: (direction: "inbound" | "outbound", params?: Record<string, unknown>) =>
       ["teamlead", direction, "dashboard", params] as const,
     orders: (direction: "inbound" | "outbound", params?: Record<string, unknown>) =>
@@ -27,6 +33,7 @@ export const queryKeys = {
     profile: (params?: Record<string, unknown>) => ["trader", "profile", params] as const,
     currentShift: ["trader", "shift", "current"] as const,
     shiftHistory: ["trader", "shift", "history"] as const,
+    shiftReport: (shiftId: number) => ["trader", "shift", shiftId, "report"] as const,
     shiftReportRequisites: (shiftId: number) => ["trader", "shift", shiftId, "requisites"] as const,
     shiftReportReconciliation: (shiftId: number, direction: "inbound" | "outbound") =>
       ["trader", "shift", shiftId, direction, "reconciliation"] as const,
@@ -36,6 +43,7 @@ export const queryKeys = {
     futureRequisites: ["trader", "requisites", "future"] as const,
     historicalRequisites: ["trader", "requisites", "history"] as const,
     payouts: (params?: Record<string, unknown>) => ["trader", "payouts", params] as const,
+    payoutHistory: ["trader", "payouts", "history"] as const,
     dashboard: (direction: "inbound" | "outbound", params?: Record<string, unknown>) =>
       ["trader", direction, "dashboard", params] as const,
     orders: (direction: "inbound" | "outbound", params?: Record<string, unknown>) =>

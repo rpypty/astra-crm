@@ -15,7 +15,6 @@ import { OrderDashboard } from "@/widgets/order-dashboard/ui/order-dashboard";
 import { PageHeader } from "@/shared/ui/page-header";
 import { PeriodFilterBar } from "@/features/period-filter/ui/period-filter-bar";
 import { ReportReconciliationDetails } from "@/features/reconciliation/ui/report-reconciliation-details";
-import { RequisiteCell } from "@/entities/requisite/ui/requisite-cell";
 import { StatusBadge } from "@/entities/status/ui/status-badge";
 import { UserCell } from "@/entities/user/ui/user-cell";
 import { Button } from "@/shared/ui/button";
@@ -114,7 +113,6 @@ const requisiteSchema = z.object({
   bankCode: z.string().min(1, "Выберите банк"),
   proxy: z.string().min(1, "Введите proxy"),
   employeeComment: z.string().optional(),
-  assignedTraderId: z.string(),
   status: z.enum(["active", "archived"]),
 });
 
@@ -123,7 +121,7 @@ const planSchema = z.object({
   requisiteId: z.string().min(1, "Выберите реквизит"),
   traderId: z.string().min(1, "Выберите трейдера"),
   assignedForDate: z.string().min(1, "Выберите дату"),
-  targetTurnover: z.string().min(1, "Введите целевой оборот").refine((value) => parseMoneyToMinor(value) > 0, "Сумма должна быть больше 0"),
+  targetTurnover: z.string().min(1, "Введите лимит").refine((value) => parseMoneyToMinor(value) > 0, "Сумма должна быть больше 0"),
   comment: z.string().optional(),
 });
 
@@ -152,8 +150,10 @@ export function TeamleadRequisitesPage() {
   const [reportRequisite, setReportRequisite] = useState<RequisiteReportTarget | null>(null);
   const [editingPlan, setEditingPlan] = useState<RequisiteAssignmentWorkRow | null>(null);
   const [eventsPlan, setEventsPlan] = useState<RequisiteAssignmentWorkRow | null>(null);
+  const [cancelPlan, setCancelPlan] = useState<RequisiteAssignmentWorkRow | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  const [initialPlanRequisiteId, setInitialPlanRequisiteId] = useState<number | null>(null);
   const [copiedMessage, setCopiedMessage] = useState<string | null>(null);
 
   const requisitesQuery = useQuery({
@@ -168,7 +168,7 @@ export function TeamleadRequisitesPage() {
   const plansQuery = useQuery({
     queryKey: queryKeys.teamlead.requisitePlans,
     queryFn: api.requisites.plans,
-    enabled: activeTab === "planning",
+    enabled: activeTab === "planning" || activeTab === "all",
   });
   const banksQuery = useQuery({
     queryKey: queryKeys.banks,
@@ -204,6 +204,7 @@ export function TeamleadRequisitesPage() {
       await invalidateRequisiteWorkQueries(queryClient);
       setPlanOpen(false);
       setEditingPlan(null);
+      setInitialPlanRequisiteId(null);
     },
   });
   const cancelPlanMutation = useMutation({
@@ -232,6 +233,16 @@ export function TeamleadRequisitesPage() {
     const timeout = window.setTimeout(() => setCopiedMessage(null), 1800);
     return () => window.clearTimeout(timeout);
   }, [copiedMessage]);
+
+  const editablePlansByRequisiteId = useMemo(() => {
+    const plans = new Map<number, RequisiteAssignmentWorkRow>();
+    for (const plan of plansQuery.data ?? []) {
+      if (isPlanCancellable(plan)) {
+        plans.set(plan.requisiteId, plan);
+      }
+    }
+    return plans;
+  }, [plansQuery.data]);
 
   const columns = useMemo<ColumnDef<Requisite>[]>(
     () => [
@@ -337,44 +348,49 @@ export function TeamleadRequisitesPage() {
     () => [
       {
         accessorKey: "assignedForDate",
-        header: "Дата",
-        cell: ({ row }) => formatDateOnly(row.original.assignedForDate),
+        header: () => <div className="text-center">Дата</div>,
+        cell: ({ row }) => <div className="text-center tabular-nums">{formatDateOnly(row.original.assignedForDate)}</div>,
       },
       {
         accessorKey: "phone",
-        header: "Реквизит",
-        cell: ({ row }) => <RequisitePhoneMenu item={row.original} onCopy={copyToClipboard} />,
-      },
-      {
-        accessorKey: "traderLogin",
-        header: "Трейдер",
-        cell: ({ row }) => <UserCell login={row.original.traderLogin} />,
-      },
-      {
-        accessorKey: "status",
-        header: "Статус",
+        header: () => <div className="text-center">Реквизит</div>,
         cell: ({ row }) => (
-          <ReportStatusButton
-            status={row.original.status}
-            target={workRowReportTarget(row.original)}
-            onOpen={setReportRequisite}
-          />
+          <div className="flex justify-center">
+            <RequisitePhoneMenu item={row.original} onCopy={copyToClipboard} />
+          </div>
         ),
       },
       {
-        accessorKey: "inboundTurnoverMinor",
-        header: () => <div className="text-right">Оборот</div>,
-        cell: ({ row }) => <MoneyCell valueMinor={row.original.inboundTurnoverMinor} />,
+        accessorKey: "traderLogin",
+        header: () => <div className="text-center">Трейдер</div>,
+        cell: ({ row }) => (
+          <div className="flex justify-center">
+            <UserCell login={row.original.traderLogin} />
+          </div>
+        ),
+      },
+      {
+        accessorKey: "status",
+        header: () => <div className="text-center">Статус</div>,
+        cell: ({ row }) => (
+          <div className="flex justify-center">
+            <ReportStatusButton
+              status={row.original.status}
+              target={workRowReportTarget(row.original)}
+              onOpen={setReportRequisite}
+            />
+          </div>
+        ),
       },
       {
         accessorKey: "targetTurnoverMinor",
-        header: () => <div className="text-right">Цель</div>,
-        cell: ({ row }) => <MoneyCell valueMinor={row.original.targetTurnoverMinor} />,
+        header: () => <div className="text-center">Лимит</div>,
+        cell: ({ row }) => <CenteredMoneyValue value={row.original.targetTurnoverMinor} />,
       },
       {
-        accessorKey: "closingBalanceMinor",
-        header: () => <div className="text-right">Остаток</div>,
-        cell: ({ row }) => <MoneyCell valueMinor={row.original.closingBalanceMinor} />,
+        accessorKey: "inboundTurnoverMinor",
+        header: () => <div className="text-center">Оборот</div>,
+        cell: ({ row }) => <ActivityTurnoverCell item={row.original} />,
       },
     ],
     [copyToClipboard],
@@ -389,9 +405,7 @@ export function TeamleadRequisitesPage() {
       {
         accessorKey: "phone",
         header: "Реквизит",
-        cell: ({ row }) => (
-          <RequisiteCell phone={row.original.phone} method={row.original.bankName} proxy={row.original.proxy} />
-        ),
+        cell: ({ row }) => <RequisitePhoneMenu item={row.original} onCopy={copyToClipboard} />,
       },
       {
         accessorKey: "traderLogin",
@@ -400,7 +414,7 @@ export function TeamleadRequisitesPage() {
       },
       {
         accessorKey: "targetTurnoverMinor",
-        header: () => <div className="text-right">Целевой оборот</div>,
+        header: () => <div className="text-right">Лимит</div>,
         cell: ({ row }) => <MoneyCell valueMinor={row.original.targetTurnoverMinor} />,
       },
       {
@@ -468,7 +482,7 @@ export function TeamleadRequisitesPage() {
                 size="icon"
                 className="h-8 w-8 text-red-600 hover:text-red-700"
                 title="Отменить план"
-                onClick={() => cancelPlanMutation.mutate(row.original.assignmentId)}
+                onClick={() => setCancelPlan(row.original)}
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -477,7 +491,7 @@ export function TeamleadRequisitesPage() {
         ),
       },
     ],
-    [cancelPlanMutation],
+    [copyToClipboard],
   );
   const data = requisitesQuery.data ?? [];
   const bankFilterOptions = useMemo<SearchableSelectOption[]>(
@@ -505,6 +519,7 @@ export function TeamleadRequisitesPage() {
         type="button"
         onClick={() => {
           setEditingPlan(null);
+          setInitialPlanRequisiteId(null);
           setPlanOpen(true);
         }}
       >
@@ -618,14 +633,46 @@ export function TeamleadRequisitesPage() {
           setArchiveRequisite(null);
         }}
       />
+      <ConfirmActionDialog
+        open={Boolean(cancelPlan)}
+        onOpenChange={(open) => !open && setCancelPlan(null)}
+        title="Убрать назначение?"
+        description={
+          cancelPlan
+            ? `${formatRussianPhone(cancelPlan.phone)} · ${cancelPlan.bankName} · ${formatDateOnly(cancelPlan.assignedForDate)}`
+            : "Назначение реквизита будет убрано."
+        }
+        confirmText="Убрать"
+        onConfirm={() => {
+          if (cancelPlan) cancelPlanMutation.mutate(cancelPlan.assignmentId);
+          setCancelPlan(null);
+        }}
+      />
       <RequisiteFormDialog
         open={formOpen}
         onOpenChange={setFormOpen}
         requisite={editingRequisite}
-        traders={tradersQuery.data ?? []}
+        editablePlan={editingRequisite ? editablePlansByRequisiteId.get(editingRequisite.id) ?? null : null}
         banks={banksQuery.data ?? []}
         isSaving={saveMutation.isPending}
         error={saveMutation.error instanceof Error ? saveMutation.error.message : null}
+        onCreateAssignment={() => {
+          if (!editingRequisite) return;
+          setFormOpen(false);
+          setEditingPlan(null);
+          setInitialPlanRequisiteId(editingRequisite.id);
+          setPlanOpen(true);
+        }}
+        onEditAssignment={(plan) => {
+          setFormOpen(false);
+          setInitialPlanRequisiteId(null);
+          setEditingPlan(plan);
+          setPlanOpen(true);
+        }}
+        onCancelAssignment={(plan) => {
+          setFormOpen(false);
+          setCancelPlan(plan);
+        }}
         onSubmit={(values) =>
           saveMutation.mutate({
             id: values.id,
@@ -633,8 +680,6 @@ export function TeamleadRequisitesPage() {
             bankCode: values.bankCode,
             proxy: values.proxy,
             employeeComment: values.employeeComment,
-            assignedTraderId: values.assignedTraderId === "unassigned" ? undefined : Number(values.assignedTraderId),
-            currentAssignedTraderId: editingRequisite?.assignedTraderId,
             status: values.status,
           })
         }
@@ -652,8 +697,6 @@ export function TeamleadRequisitesPage() {
             bankCode: commentRequisite.bankCode,
             proxy: commentRequisite.proxy,
             employeeComment,
-            assignedTraderId: commentRequisite.assignedTraderId,
-            currentAssignedTraderId: commentRequisite.assignedTraderId,
             status: commentRequisite.status,
           });
         }}
@@ -665,9 +708,13 @@ export function TeamleadRequisitesPage() {
         open={planOpen}
         onOpenChange={(open) => {
           setPlanOpen(open);
-          if (!open) setEditingPlan(null);
+          if (!open) {
+            setEditingPlan(null);
+            setInitialPlanRequisiteId(null);
+          }
         }}
         plan={editingPlan}
+        initialRequisiteId={initialPlanRequisiteId}
         requisites={(requisitesQuery.data ?? []).filter((requisite) => requisite.status === "active")}
         traders={tradersQuery.data ?? []}
         isSaving={savePlanMutation.isPending}
@@ -675,6 +722,45 @@ export function TeamleadRequisitesPage() {
         onSubmit={(values) => savePlanMutation.mutate(values)}
       />
       <PlanEventsDialog plan={eventsPlan} onClose={() => setEventsPlan(null)} />
+    </div>
+  );
+}
+
+function ActivityTurnoverCell({ item }: { item: RequisiteAssignmentWorkRow }) {
+  return (
+    <div className="flex justify-center">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-auto px-2 py-1 text-center font-medium tabular-nums hover:bg-accent"
+            title="Показать вход, выход и остаток"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {formatMoneyMinor(item.inboundTurnoverMinor)}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-52 p-2" onClick={(event) => event.stopPropagation()}>
+          <DropdownMenuLabel className="px-1">Оборот</DropdownMenuLabel>
+          <ActivityTurnoverRow label="Вход" value={item.inboundTurnoverMinor} />
+          <ActivityTurnoverRow label="Выход" value={item.outboundTurnoverMinor} />
+          <ActivityTurnoverRow label="Остаток" value={item.closingBalanceMinor} />
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+function CenteredMoneyValue({ value }: { value: number }) {
+  return <div className="text-center font-medium tabular-nums">{formatMoneyMinor(value)}</div>;
+}
+
+function ActivityTurnoverRow({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-sm px-1 py-1.5 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="whitespace-nowrap font-medium tabular-nums">{formatMoneyMinor(value)}</span>
     </div>
   );
 }

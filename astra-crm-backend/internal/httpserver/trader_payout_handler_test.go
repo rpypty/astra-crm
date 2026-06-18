@@ -136,6 +136,50 @@ func TestTraderPayoutHandlerAddTransferPassesRouteAndBodyIDs(t *testing.T) {
 	}
 }
 
+func TestTraderPayoutHandlerPatchTransferPassesRouteAndBodyIDs(t *testing.T) {
+	service := &fakeTraderPayoutService{
+		transfer: payouts.Transfer{
+			ID:                     50,
+			TeamID:                 2,
+			ManualPayoutOrderID:    40,
+			ShiftID:                10,
+			TraderID:               3,
+			SourceShiftRequisiteID: 21,
+			SourceRequisiteID:      5,
+			SourcePhone:            "+79021001008",
+			SourceBankName:         "Газпромбанк",
+			AmountMinor:            60000,
+			CreatedBy:              3,
+			CreatedAt:              time.Date(2026, 6, 8, 11, 0, 0, 0, time.UTC),
+		},
+	}
+	handler := NewTraderPayoutHandler(service)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPatch, "/api/v1/trader/payouts/40/transfers/50", strings.NewReader(`{"sourceShiftRequisiteId":21,"amountMinor":60000}`))
+	request = request.WithContext(withPayoutRouteParams(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     3,
+		TeamID: 2,
+		Role:   users.RoleTrader,
+		Status: users.StatusActive,
+	}), map[string]string{
+		"payoutId":   "40",
+		"transferId": "50",
+	}))
+
+	handler.PatchTransfer(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if service.patchTransferParams.PayoutID != 40 || service.patchTransferParams.TransferID != 50 || service.patchTransferParams.SourceShiftRequisiteID != 21 {
+		t.Fatalf("patch transfer ids = payout %d transfer %d source %d, want 40/50/21", service.patchTransferParams.PayoutID, service.patchTransferParams.TransferID, service.patchTransferParams.SourceShiftRequisiteID)
+	}
+	if !strings.Contains(response.Body.String(), `"sourcePhone":"+79021001008"`) {
+		t.Fatalf("response does not include source phone: %s", response.Body.String())
+	}
+}
+
 func withPayoutRouteParams(ctx context.Context, values map[string]string) context.Context {
 	routeContext := chi.NewRouteContext()
 	for key, value := range values {
@@ -145,14 +189,19 @@ func withPayoutRouteParams(ctx context.Context, values map[string]string) contex
 }
 
 type fakeTraderPayoutService struct {
-	createParams      payouts.CreateOrderParams
-	addTransferParams payouts.AddTransferParams
-	order             payouts.Order
-	transfer          payouts.Transfer
-	addTransferErr    error
+	createParams        payouts.CreateOrderParams
+	addTransferParams   payouts.AddTransferParams
+	patchTransferParams payouts.PatchTransferParams
+	order               payouts.Order
+	transfer            payouts.Transfer
+	addTransferErr      error
 }
 
 func (s *fakeTraderPayoutService) ListOrders(ctx context.Context, teamID int64, traderID int64) ([]payouts.Order, error) {
+	return nil, nil
+}
+
+func (s *fakeTraderPayoutService) ListOrderHistory(ctx context.Context, teamID int64, traderID int64) ([]payouts.Order, error) {
 	return nil, nil
 }
 
@@ -178,6 +227,11 @@ func (s *fakeTraderPayoutService) AddTransfer(ctx context.Context, params payout
 	if s.addTransferErr != nil {
 		return payouts.Transfer{}, s.addTransferErr
 	}
+	return s.transfer, nil
+}
+
+func (s *fakeTraderPayoutService) PatchTransfer(ctx context.Context, params payouts.PatchTransferParams) (payouts.Transfer, error) {
+	s.patchTransferParams = params
 	return s.transfer, nil
 }
 

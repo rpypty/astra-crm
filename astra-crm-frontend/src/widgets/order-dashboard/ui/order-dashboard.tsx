@@ -17,6 +17,7 @@ type OrderDashboardProps = {
   title?: string;
   isLoading?: boolean;
   error?: Error | null;
+  showUnknownStatuses?: boolean;
 };
 
 const statusLabels: Record<string, string> = {
@@ -35,7 +36,7 @@ const statusColors: Record<string, string> = {
   unknown: "#d97706",
 };
 
-export function OrderDashboard({ dashboard, direction, title, isLoading, error }: OrderDashboardProps) {
+export function OrderDashboard({ dashboard, direction, title, isLoading, error, showUnknownStatuses = true }: OrderDashboardProps) {
   if (isLoading) {
     return <EmptyState title="Загружаем показатели" />;
   }
@@ -109,7 +110,7 @@ export function OrderDashboard({ dashboard, direction, title, isLoading, error }
           />
         </div>
 
-        {unknownStatuses.length ? (
+        {showUnknownStatuses && unknownStatuses.length ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
             Неизвестные CSV-статусы: {unknownStatuses.join(", ")}
           </div>

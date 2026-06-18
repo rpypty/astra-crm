@@ -33,6 +33,8 @@ type Transfer struct {
 	TraderID               int64
 	SourceShiftRequisiteID int64
 	SourceRequisiteID      int64
+	SourcePhone            string
+	SourceBankName         string
 	AmountMinor            int64
 	CreatedBy              int64
 	CreatedAt              time.Time

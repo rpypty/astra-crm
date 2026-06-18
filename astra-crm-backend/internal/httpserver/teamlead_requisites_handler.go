@@ -641,7 +641,7 @@ func validatePlanRequisiteRequest(request planRequisiteRequest) (time.Time, map[
 		fields["traderId"] = "Некорректный ID трейдера"
 	}
 	if request.TargetTurnoverMinor <= 0 {
-		fields["targetTurnoverMinor"] = "Целевой оборот должен быть больше 0"
+		fields["targetTurnoverMinor"] = "Лимит должен быть больше 0"
 	}
 
 	planDate, err := time.Parse("2006-01-02", strings.TrimSpace(request.AssignedForDate))

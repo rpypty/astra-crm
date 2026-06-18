@@ -14,19 +14,62 @@ WHERE osi.team_id = sqlc.arg(team_id)
   AND osi.is_active = TRUE;
 
 -- name: CalculateTraderInboundActual :one
-WITH latest AS (
-    SELECT DISTINCT ON (e.shift_requisite_id)
-        e.amount_minor
-    FROM requisite_turnover_entries e
-    JOIN trader_shifts ts ON ts.id = e.shift_id
-    WHERE e.team_id = sqlc.arg(team_id)
-      AND e.trader_id = sqlc.arg(trader_id)
-      AND e.shift_id = sqlc.arg(shift_id)
+SELECT COALESCE(sum(sr.inbound_turnover_minor), 0)::bigint AS actual_amount_minor
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+WHERE sr.team_id = sqlc.arg(team_id)
+  AND sr.trader_id = sqlc.arg(trader_id)
+  AND sr.shift_id = sqlc.arg(shift_id)
+  AND sr.status IN ('worked_pending_review', 'worked_verified', 'worked_discrepancy', 'correction', 'blocked')
+  AND ts.status IN ('open', 'closing');
+
+-- name: CountTraderInboundRequisiteMismatches :one
+WITH crm_requisites AS (
+    SELECT
+        sr.id AS shift_requisite_id,
+        r.phone,
+        sr.inbound_turnover_minor AS actual_amount_minor,
+        COALESCE(
+            NULLIF(right(regexp_replace(r.phone, '[^0-9]', '', 'g'), 10), ''),
+            'requisite:' || r.id::text
+        ) AS match_key
+    FROM shift_requisites sr
+    JOIN requisites r ON r.id = sr.requisite_id
+    JOIN trader_shifts ts ON ts.id = sr.shift_id
+    WHERE sr.team_id = sqlc.arg(team_id)
+      AND sr.trader_id = sqlc.arg(trader_id)
+      AND sr.shift_id = sqlc.arg(shift_id)
+      AND sr.status IN ('worked_pending_review', 'worked_verified', 'worked_discrepancy', 'correction')
       AND ts.status IN ('open', 'closing')
-    ORDER BY e.shift_requisite_id, e.created_at DESC, e.id DESC
+),
+csv_requisites AS (
+    SELECT
+        COALESCE(
+            NULLIF(right(regexp_replace(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), ''), '[^0-9]', '', 'g'), 10), ''),
+            'csv:' || lower(btrim(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), 'unknown')))
+        ) AS match_key,
+        COALESCE(sum(CASE WHEN normalized_status IN ('success', 'corrected') THEN amount_minor ELSE 0 END), 0)::bigint AS expected_amount_minor
+    FROM order_scope_items
+    WHERE team_id = sqlc.arg(team_id)
+      AND scope_type = 'trader_shift'
+      AND shift_id = sqlc.arg(shift_id)
+      AND direction = 'inbound'
+      AND is_active = TRUE
+    GROUP BY COALESCE(
+        NULLIF(right(regexp_replace(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), ''), '[^0-9]', '', 'g'), 10), ''),
+        'csv:' || lower(btrim(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), 'unknown')))
+    )
+),
+all_keys AS (
+    SELECT match_key FROM crm_requisites
+    UNION
+    SELECT match_key FROM csv_requisites
 )
-SELECT COALESCE(sum(amount_minor), 0)::bigint AS actual_amount_minor
-FROM latest;
+SELECT count(*)::bigint
+FROM all_keys
+LEFT JOIN crm_requisites crm ON crm.match_key = all_keys.match_key
+LEFT JOIN csv_requisites csv ON csv.match_key = all_keys.match_key
+WHERE COALESCE(crm.actual_amount_minor, 0) <> COALESCE(csv.expected_amount_minor, 0);
 
 -- name: CreateTraderInboundReconciliationRun :one
 INSERT INTO reconciliation_runs (
@@ -68,6 +111,124 @@ VALUES (
     sqlc.arg(status)
 )
 RETURNING id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at;
+
+-- name: CreateTraderInboundRequisiteMismatchItems :many
+WITH crm_requisites AS (
+    SELECT
+        sr.id AS shift_requisite_id,
+        r.id AS requisite_id,
+        r.phone,
+        b.name AS bank_name,
+        sr.inbound_turnover_minor AS actual_amount_minor,
+        COALESCE(
+            NULLIF(right(regexp_replace(r.phone, '[^0-9]', '', 'g'), 10), ''),
+            'requisite:' || r.id::text
+        ) AS match_key
+    FROM shift_requisites sr
+    JOIN requisites r ON r.id = sr.requisite_id
+    JOIN banks b ON b.code = r.bank_code
+    JOIN trader_shifts ts ON ts.id = sr.shift_id
+    WHERE sr.team_id = sqlc.arg(team_id)
+      AND sr.trader_id = sqlc.arg(trader_id)
+      AND sr.shift_id = sqlc.arg(shift_id)
+      AND sr.status IN ('worked_pending_review', 'worked_verified', 'worked_discrepancy', 'correction')
+      AND ts.status IN ('open', 'closing')
+),
+csv_requisites AS (
+    SELECT
+        COALESCE(
+            NULLIF(right(regexp_replace(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), ''), '[^0-9]', '', 'g'), 10), ''),
+            'csv:' || lower(btrim(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), 'unknown')))
+        ) AS match_key,
+        max(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''))) AS requisite_raw,
+        COALESCE(sum(CASE WHEN normalized_status IN ('success', 'corrected') THEN amount_minor ELSE 0 END), 0)::bigint AS expected_amount_minor,
+        count(*) FILTER (WHERE normalized_status IN ('success', 'corrected'))::bigint AS success_count
+    FROM order_scope_items
+    WHERE team_id = sqlc.arg(team_id)
+      AND scope_type = 'trader_shift'
+      AND shift_id = sqlc.arg(shift_id)
+      AND direction = 'inbound'
+      AND is_active = TRUE
+    GROUP BY COALESCE(
+        NULLIF(right(regexp_replace(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), ''), '[^0-9]', '', 'g'), 10), ''),
+        'csv:' || lower(btrim(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), 'unknown')))
+    )
+),
+all_keys AS (
+    SELECT match_key FROM crm_requisites
+    UNION
+    SELECT match_key FROM csv_requisites
+)
+INSERT INTO reconciliation_items (
+    reconciliation_run_id,
+    issue_type,
+    teamlead_value_json,
+    trader_value_json,
+    message
+)
+SELECT
+    sqlc.arg(run_id),
+    'requisite_invoice_amount_mismatch',
+    CASE
+        WHEN csv.match_key IS NULL THEN NULL::jsonb
+        ELSE jsonb_build_object(
+            'requisite', csv.requisite_raw,
+            'expectedAmountMinor', csv.expected_amount_minor,
+            'successCount', csv.success_count
+        )
+    END,
+    CASE
+        WHEN crm.match_key IS NULL THEN NULL::jsonb
+        ELSE jsonb_build_object(
+            'shiftRequisiteId', crm.shift_requisite_id,
+            'requisiteId', crm.requisite_id,
+            'phone', crm.phone,
+            'bankName', crm.bank_name,
+            'actualAmountMinor', crm.actual_amount_minor
+        )
+    END,
+    'Closed requisite turnover differs from invoice CSV amount'
+FROM all_keys
+LEFT JOIN crm_requisites crm ON crm.match_key = all_keys.match_key
+LEFT JOIN csv_requisites csv ON csv.match_key = all_keys.match_key
+WHERE COALESCE(crm.actual_amount_minor, 0) <> COALESCE(csv.expected_amount_minor, 0)
+RETURNING id;
+
+-- name: UpdateTraderInboundRequisiteReviewStatuses :exec
+WITH csv_requisites AS (
+    SELECT
+        COALESCE(
+            NULLIF(right(regexp_replace(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), ''), '[^0-9]', '', 'g'), 10), ''),
+            'csv:' || lower(btrim(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), 'unknown')))
+        ) AS match_key,
+        COALESCE(sum(CASE WHEN normalized_status IN ('success', 'corrected') THEN amount_minor ELSE 0 END), 0)::bigint AS expected_amount_minor
+    FROM order_scope_items
+    WHERE team_id = sqlc.arg(team_id)
+      AND scope_type = 'trader_shift'
+      AND shift_id = sqlc.arg(shift_id)
+      AND direction = 'inbound'
+      AND is_active = TRUE
+    GROUP BY COALESCE(
+        NULLIF(right(regexp_replace(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), ''), '[^0-9]', '', 'g'), 10), ''),
+        'csv:' || lower(btrim(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), 'unknown')))
+    )
+)
+UPDATE shift_requisites sr
+SET status = CASE
+        WHEN sr.inbound_turnover_minor = COALESCE(csv_requisites.expected_amount_minor, 0) THEN 'worked_verified'
+        ELSE 'worked_discrepancy'
+    END,
+    updated_at = now()
+FROM requisites r
+LEFT JOIN csv_requisites ON csv_requisites.match_key = COALESCE(
+    NULLIF(right(regexp_replace(r.phone, '[^0-9]', '', 'g'), 10), ''),
+    'requisite:' || r.id::text
+)
+WHERE sr.requisite_id = r.id
+  AND sr.team_id = sqlc.arg(team_id)
+  AND sr.trader_id = sqlc.arg(trader_id)
+  AND sr.shift_id = sqlc.arg(shift_id)
+  AND sr.status IN ('worked_pending_review', 'worked_verified', 'worked_discrepancy', 'correction');
 
 -- name: LatestTraderInboundReconciliationRun :one
 SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
@@ -176,14 +337,79 @@ VALUES (
 )
 RETURNING id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at;
 
--- name: CreateTraderOutboundUnpaidPayoutItems :exec
-WITH payout_totals AS (
+-- name: CreateTraderOutboundReconciliationItems :many
+WITH source_requisites AS (
+    SELECT
+        sr.id AS shift_requisite_id,
+        sr.requisite_id,
+        r.phone,
+        b.name AS bank_name,
+        COALESCE(sr.outbound_turnover_minor, 0)::bigint AS closed_outbound_turnover_minor,
+        COALESCE(sum(mpt.amount_minor), 0)::bigint AS transfer_amount_minor
+    FROM shift_requisites sr
+    JOIN requisites r ON r.id = sr.requisite_id
+    JOIN banks b ON b.code = r.bank_code
+    LEFT JOIN manual_payout_transfers mpt ON mpt.source_shift_requisite_id = sr.id
+        AND mpt.team_id = sr.team_id
+        AND mpt.trader_id = sr.trader_id
+        AND mpt.shift_id = sr.shift_id
+    WHERE sr.team_id = sqlc.arg(team_id)
+      AND sr.trader_id = sqlc.arg(trader_id)
+      AND sr.shift_id = sqlc.arg(shift_id)
+      AND sr.status IN ('worked_pending_review', 'worked_verified', 'worked_discrepancy', 'correction', 'blocked')
+    GROUP BY sr.id, r.phone, b.name
+),
+source_requisite_items AS (
+    SELECT
+        'source_requisite_outbound_mismatch'::text AS issue_type,
+        NULL::bigint AS external_order_id,
+        NULL::text AS external_inner_id,
+        NULL::jsonb AS teamlead_value_json,
+        jsonb_build_object(
+            'shiftRequisiteId', shift_requisite_id,
+            'requisiteId', requisite_id,
+            'requisitePhone', phone,
+            'bankName', bank_name,
+            'closedOutboundTurnoverMinor', closed_outbound_turnover_minor,
+            'transferAmountMinor', transfer_amount_minor,
+            'diffAmountMinor', closed_outbound_turnover_minor - transfer_amount_minor
+        ) AS trader_value_json,
+        'Closed requisite outbound turnover differs from payout transfers from this source requisite'::text AS message
+    FROM source_requisites
+    WHERE closed_outbound_turnover_minor <> transfer_amount_minor
+),
+csv_orders_raw AS (
+    SELECT DISTINCT ON (osi.external_inner_id)
+        osi.external_order_id,
+        osi.external_inner_id,
+        osi.amount_minor,
+        osi.normalized_status
+    FROM order_scope_items osi
+    WHERE osi.team_id = sqlc.arg(team_id)
+      AND osi.scope_type = 'trader_shift'
+      AND osi.shift_id = sqlc.arg(shift_id)
+      AND osi.direction = 'outbound'
+      AND osi.is_active = TRUE
+    ORDER BY osi.external_inner_id, osi.created_at DESC, osi.id DESC
+),
+csv_orders AS (
+    SELECT
+        external_order_id,
+        external_inner_id,
+        amount_minor,
+        normalized_status,
+        row_number() OVER (PARTITION BY amount_minor ORDER BY external_inner_id) AS match_number
+    FROM csv_orders_raw
+    WHERE normalized_status IN ('success', 'corrected')
+),
+payout_totals AS (
     SELECT
         mpo.id,
         mpo.destination_bank,
         mpo.destination_requisite,
         mpo.amount_minor,
-        COALESCE(sum(mpt.amount_minor), 0)::bigint AS paid_amount_minor
+        COALESCE(sum(mpt.amount_minor), 0)::bigint AS paid_amount_minor,
+        row_number() OVER (PARTITION BY mpo.amount_minor ORDER BY mpo.created_at, mpo.id) AS match_number
     FROM manual_payout_orders mpo
     LEFT JOIN manual_payout_transfers mpt ON mpt.manual_payout_order_id = mpo.id
     WHERE mpo.team_id = sqlc.arg(team_id)
@@ -192,27 +418,73 @@ WITH payout_totals AS (
       AND mpo.deleted_at IS NULL
       AND mpo.status <> 'cancelled'
     GROUP BY mpo.id
+),
+payout_order_items AS (
+    SELECT
+        CASE
+            WHEN pt.id IS NULL THEN 'missing_manual_payout_order'
+            WHEN csv.external_inner_id IS NULL THEN 'extra_manual_payout_order'
+            WHEN pt.paid_amount_minor <> pt.amount_minor THEN 'manual_payout_not_fully_paid'
+        END AS issue_type,
+        csv.external_order_id,
+        csv.external_inner_id,
+        CASE
+            WHEN csv.external_inner_id IS NULL THEN NULL::jsonb
+            ELSE jsonb_build_object(
+                'amountMinor', csv.amount_minor,
+                'normalizedStatus', csv.normalized_status
+            )
+        END AS teamlead_value_json,
+        CASE
+            WHEN pt.id IS NULL THEN NULL::jsonb
+            ELSE jsonb_build_object(
+                'manualPayoutOrderId', pt.id,
+                'destinationBank', pt.destination_bank,
+                'destinationRequisite', pt.destination_requisite,
+                'amountMinor', pt.amount_minor,
+                'paidAmountMinor', pt.paid_amount_minor,
+                'remainingAmountMinor', pt.amount_minor - pt.paid_amount_minor
+            )
+        END AS trader_value_json,
+        CASE
+            WHEN pt.id IS NULL THEN 'Payout is present in trader CSV but no manual payout order with the same amount was created'
+            WHEN csv.external_inner_id IS NULL THEN 'Manual payout order has no matching successful payout amount in trader CSV'
+            WHEN pt.paid_amount_minor <> pt.amount_minor THEN 'Manual payout order is not fully paid by transfers'
+        END AS message
+    FROM csv_orders csv
+    FULL JOIN payout_totals pt ON pt.amount_minor = csv.amount_minor
+        AND pt.match_number = csv.match_number
+    WHERE pt.id IS NULL
+       OR csv.external_inner_id IS NULL
+       OR pt.paid_amount_minor <> pt.amount_minor
+),
+items AS (
+    SELECT issue_type, external_order_id, external_inner_id, teamlead_value_json, trader_value_json, message
+    FROM source_requisite_items
+    UNION ALL
+    SELECT issue_type, external_order_id, external_inner_id, teamlead_value_json, trader_value_json, message
+    FROM payout_order_items
+    WHERE issue_type IS NOT NULL
 )
 INSERT INTO reconciliation_items (
     reconciliation_run_id,
     issue_type,
+    external_order_id,
+    external_inner_id,
+    teamlead_value_json,
     trader_value_json,
     message
 )
 SELECT
     sqlc.arg(run_id),
-    'payout_not_fully_paid',
-    jsonb_build_object(
-        'manualPayoutOrderId', id,
-        'destinationBank', destination_bank,
-        'destinationRequisite', destination_requisite,
-        'amountMinor', amount_minor,
-        'paidAmountMinor', paid_amount_minor,
-        'remainingAmountMinor', amount_minor - paid_amount_minor
-    ),
-    'Manual payout order is not fully paid'
-FROM payout_totals
-WHERE paid_amount_minor <> amount_minor;
+    issue_type,
+    external_order_id,
+    external_inner_id,
+    teamlead_value_json,
+    trader_value_json,
+    message
+FROM items
+RETURNING id;
 
 -- name: LatestTraderOutboundReconciliationRun :one
 SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
@@ -352,7 +624,9 @@ teamlead_orders AS (
         osi.requisite_raw,
         osi.requisite_phone,
         osi.amount_minor,
-        osi.normalized_status
+        osi.normalized_status,
+        osi.raw_status,
+        osi.created_at_external
     FROM order_scope_items osi
     WHERE osi.team_id = sqlc.arg(team_id)
       AND osi.scope_type = 'teamlead_period'
@@ -404,7 +678,7 @@ total_items AS (
             'successAmountMinor', tr.amount_minor,
             'successCount', tr.count
         ) AS trader_value_json,
-        'Teamlead period invoice success total differs from trader closed requisites'::text AS message
+        'Teamlead period invoice success total differs from CRM requisite turnover'::text AS message
     FROM teamlead_success_total tl
     CROSS JOIN trader_success_total tr
     WHERE tl.amount_minor <> tr.amount_minor
@@ -454,11 +728,11 @@ requisite_total_items AS (
                 'bankCode', tr.bank_code,
                 'traderId', tr.trader_id,
                 'traderLogin', tr.trader_login,
-                'closedInboundTurnoverMinor', tr.amount_minor,
-                'closedRequisitesCount', tr.count
+                'successAmountMinor', tr.amount_minor,
+                'successCount', tr.count
             )
         END AS trader_value_json,
-        'Requisite invoice turnover differs between teamlead period CSV and trader closed requisite turnover'::text AS message
+        'Requisite turnover differs between teamlead CSV transactions and CRM final turnover'::text AS message
     FROM teamlead_requisite_totals tl
     FULL JOIN trader_requisite_totals tr ON tr.requisite_key = tl.requisite_key
     WHERE COALESCE(tl.amount_minor, 0) <> COALESCE(tr.amount_minor, 0)
@@ -635,7 +909,7 @@ trader_orders AS (
         mpo.trader_id,
         u.login AS trader_login,
         row_number() OVER (
-            PARTITION BY lower(btrim(mpo.destination_requisite)), mpo.amount_minor
+            PARTITION BY mpo.amount_minor
             ORDER BY mpo.id
         ) AS match_number
     FROM manual_payout_orders mpo
@@ -686,7 +960,7 @@ teamlead_matchable AS (
         tl.*,
         COALESCE(tl.requisite_phone, tl.requisite_raw, '') AS destination_key,
         row_number() OVER (
-            PARTITION BY lower(btrim(COALESCE(tl.requisite_phone, tl.requisite_raw, ''))), tl.amount_minor
+            PARTITION BY tl.amount_minor
             ORDER BY tl.external_inner_id
         ) AS match_number
     FROM teamlead_orders tl
@@ -724,13 +998,12 @@ order_items AS (
             )
         END AS trader_value_json,
         CASE
-            WHEN tr.manual_payout_order_id IS NULL THEN 'Payout is present in teamlead period CSV but no matching manual payout order was created'
-            WHEN tl.external_inner_id IS NULL THEN 'Manual payout order has no matching payout in teamlead period CSV'
+            WHEN tr.manual_payout_order_id IS NULL THEN 'Payout is present in teamlead period CSV but no manual payout order with the same amount was created'
+            WHEN tl.external_inner_id IS NULL THEN 'Manual payout order has no matching successful payout amount in teamlead period CSV'
             WHEN tr.paid_amount_minor <> tr.amount_minor THEN 'Manual payout order is not fully paid by transfers'
         END AS message
     FROM teamlead_matchable tl
-    FULL JOIN trader_orders tr ON lower(btrim(tr.destination_requisite)) = lower(btrim(tl.destination_key))
-        AND tr.amount_minor = tl.amount_minor
+    FULL JOIN trader_orders tr ON tr.amount_minor = tl.amount_minor
         AND tr.match_number = tl.match_number
     WHERE tr.manual_payout_order_id IS NULL
        OR tl.external_inner_id IS NULL

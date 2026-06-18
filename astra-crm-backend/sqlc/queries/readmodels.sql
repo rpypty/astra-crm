@@ -80,11 +80,22 @@ SELECT
     osi.import_batch_id,
     count(*) OVER()::bigint AS total_count
 FROM order_scope_items osi
+JOIN trader_shifts ts ON ts.id = osi.shift_id
 LEFT JOIN users u ON u.id = osi.trader_id
 WHERE osi.team_id = sqlc.arg(team_id)
   AND osi.scope_type = 'trader_shift'
   AND osi.direction = sqlc.arg(direction)
   AND osi.is_active = TRUE
+  AND (
+      NOT sqlc.arg(confirmed_only)::boolean
+      OR (
+          ts.status IN ('closed', 'closed_with_discrepancy')
+          AND (
+              (osi.direction = 'inbound' AND ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+              OR (osi.direction = 'outbound' AND ts.outbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+          )
+      )
+  )
   AND (sqlc.narg(date_from)::date IS NULL OR osi.created_at_external::date >= sqlc.narg(date_from)::date)
   AND (sqlc.narg(date_to)::date IS NULL OR osi.created_at_external::date <= sqlc.narg(date_to)::date)
   AND (sqlc.narg(trader_id)::bigint IS NULL OR osi.trader_id = sqlc.narg(trader_id)::bigint)
@@ -142,14 +153,44 @@ SELECT
     COALESCE(sum(CASE WHEN osi.normalized_status = 'unknown' THEN osi.amount_minor ELSE 0 END), 0)::bigint AS unknown_amount_minor,
     count(*) FILTER (WHERE osi.normalized_status = 'unknown')::bigint AS unknown_count
 FROM order_scope_items osi
+JOIN trader_shifts ts ON ts.id = osi.shift_id
 WHERE osi.team_id = sqlc.arg(team_id)
   AND osi.scope_type = 'trader_shift'
   AND osi.direction = sqlc.arg(direction)
   AND osi.is_active = TRUE
+  AND (
+      NOT sqlc.arg(confirmed_only)::boolean
+      OR (
+          ts.status IN ('closed', 'closed_with_discrepancy')
+          AND (
+              (osi.direction = 'inbound' AND ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+              OR (osi.direction = 'outbound' AND ts.outbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+          )
+      )
+  )
   AND (sqlc.narg(date_from)::date IS NULL OR osi.created_at_external::date >= sqlc.narg(date_from)::date)
   AND (sqlc.narg(date_to)::date IS NULL OR osi.created_at_external::date <= sqlc.narg(date_to)::date)
   AND (sqlc.narg(trader_id)::bigint IS NULL OR osi.trader_id = sqlc.narg(trader_id)::bigint)
   AND (COALESCE(cardinality(sqlc.arg(trader_ids)::bigint[]), 0) = 0 OR osi.trader_id = ANY(sqlc.arg(trader_ids)::bigint[]));
+
+-- name: TraderBlockedBalanceSummary :one
+SELECT COALESCE(sum(r.last_closing_balance_minor), 0)::bigint AS blocked_balance_minor
+FROM requisites r
+JOIN shift_requisites sr ON sr.id = r.last_shift_requisite_id
+WHERE r.team_id = sqlc.arg(team_id)
+  AND r.deleted_at IS NULL
+  AND r.last_activity_status = 'blocked'
+  AND sr.trader_id = sqlc.arg(trader_id);
+
+-- name: TeamleadBlockedBalanceSummary :one
+SELECT COALESCE(sum(r.last_closing_balance_minor), 0)::bigint AS blocked_balance_minor
+FROM requisites r
+JOIN shift_requisites sr ON sr.id = r.last_shift_requisite_id
+WHERE r.team_id = sqlc.arg(team_id)
+  AND r.deleted_at IS NULL
+  AND r.last_activity_status = 'blocked'
+  AND (sqlc.narg(trader_id)::bigint IS NULL OR sr.trader_id = sqlc.narg(trader_id)::bigint)
+  AND (COALESCE(cardinality(sqlc.arg(trader_ids)::bigint[]), 0) = 0 OR sr.trader_id = ANY(sqlc.arg(trader_ids)::bigint[]));
 
 -- name: TraderStatusBreakdown :many
 SELECT
@@ -175,10 +216,21 @@ SELECT
     COALESCE(sum(osi.amount_minor), 0)::bigint AS amount_minor,
     count(*)::bigint AS count
 FROM order_scope_items osi
+JOIN trader_shifts ts ON ts.id = osi.shift_id
 WHERE osi.team_id = sqlc.arg(team_id)
   AND osi.scope_type = 'trader_shift'
   AND osi.direction = sqlc.arg(direction)
   AND osi.is_active = TRUE
+  AND (
+      NOT sqlc.arg(confirmed_only)::boolean
+      OR (
+          ts.status IN ('closed', 'closed_with_discrepancy')
+          AND (
+              (osi.direction = 'inbound' AND ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+              OR (osi.direction = 'outbound' AND ts.outbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+          )
+      )
+  )
   AND (sqlc.narg(date_from)::date IS NULL OR osi.created_at_external::date >= sqlc.narg(date_from)::date)
   AND (sqlc.narg(date_to)::date IS NULL OR osi.created_at_external::date <= sqlc.narg(date_to)::date)
   AND (sqlc.narg(trader_id)::bigint IS NULL OR osi.trader_id = sqlc.narg(trader_id)::bigint)

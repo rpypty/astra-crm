@@ -9,9 +9,11 @@ test.describe.configure({ mode: "serial" });
 
 test("teamlead creates trader and requisite, trader closes matched shift", async ({ page }) => {
   const id = uniqueId();
+  const numericId = id.replace(/\D/g, "");
   const traderLogin = `e2e_trader_${id}`;
   const workerName = `E2E_OP_${id}`;
-  const phone = `+7977${id.slice(-7)}`;
+  const phone = `+7977${numericId.slice(-7).padStart(7, "0")}`;
+  const proxy = `127.0.0.1:${10000 + Number(numericId.slice(-4).padStart(4, "0"))}`;
 
   await loginUI(page, teamleadLogin, teamleadPassword, /\/teamlead\/dashboard/);
   await page.goto("/teamlead/traders");
@@ -21,17 +23,19 @@ test("teamlead creates trader and requisite, trader closes matched shift", async
   await expect(page.getByText(traderLogin)).toBeVisible();
 
   await page.goto("/teamlead/requisites");
-  await expect(page.getByRole("heading", { name: "Реквизиты" })).toBeVisible();
-  await createRequisiteUI(page, { phone, traderLogin });
-  await expect(page.getByText(phone)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Добавить реквизит" })).toBeVisible();
+  await createRequisiteUI(page, { phone, traderLogin, proxy });
+  await expect(page.getByText(formatPhoneForUI(phone))).toBeVisible();
 
   await logoutUI(page, teamleadLogin);
-  await loginUI(page, traderLogin, traderPassword, /\/trader\/requisites/);
+  await loginUI(page, traderLogin, traderPassword, /\/trader\/analytics/);
+  await page.goto("/trader/requisites");
   await expect(page.getByRole("heading", { name: "Мои реквизиты" })).toBeVisible();
 
   await takeRequisiteUI(page);
-  await addTurnoverUI(page, "1000", "E2E turnover");
-  await createPaidPayoutUI(page, "500", "E2E Bank", "2200000000000000");
+  await createPaidPayoutUI(page, "500", "Сбер", "9770000000");
+  await page.goto("/trader/requisites");
+  await closeRequisiteUI(page, { inbound: "1000", outbound: "500", balance: "500", comment: "E2E close requisite" });
 
   await page.goto("/trader/inbound");
   await importCsvUI(page, traderCSV(workerName, `e2e-in-ok-${id}`, 1000, "hand_success"), `inbound-${id}.csv`);
@@ -62,12 +66,27 @@ test("teamlead sees invoice and payout mismatches in closed shift report details
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Инвойсы").first()).toBeVisible();
   await expect(dialog.getByText("Выплаты").first()).toBeVisible();
-  await expect(dialog.getByText("Итоговая сумма не сходится")).toHaveCount(2);
+  await expect(dialog.getByText("Итоговая сумма не сходится")).toHaveCount(0);
   await expect(dialog.getByText(setup.inboundComment)).toBeVisible();
   await expect(dialog.getByText(setup.outboundComment)).toBeVisible();
   await expect(dialog.getByText(formatPhoneForUI(setup.requisitePhones[0]))).toBeVisible();
-  await expect(dialog.getByText(/7\s?500,00\s?₽/).first()).toBeVisible();
-  await expect(dialog.getByText(/2\s?000,00\s?₽/).first()).toBeVisible();
+  await expect(dialog.getByRole("columnheader", { name: "Оборот по CRM" })).toBeVisible();
+  await expect(dialog.getByRole("columnheader", { name: "CSV / переводы" })).toBeVisible();
+  await expect(dialog.getByRole("columnheader", { name: "Расхождение" })).toBeVisible();
+  await expect(dialog.getByLabel("Входящие: инвойсы").first()).toBeVisible();
+  await expect(dialog.getByLabel("Исходящие: выплаты").first()).toBeVisible();
+
+  const mismatchedRequisiteRow = dialog.getByRole("row").filter({ hasText: formatPhoneForUI(setup.requisitePhones[0]) });
+  await expect(mismatchedRequisiteRow).toContainText(/1\s?000,00\s?₽/);
+  await expect(mismatchedRequisiteRow).toContainText(/3\s?000,00\s?₽/);
+  await expect(mismatchedRequisiteRow).toContainText(/-2\s?000,00\s?₽/);
+  await expect(mismatchedRequisiteRow).toContainText(/-600,00\s?₽/);
+
+  const csvOnlyRow = dialog.getByRole("row").filter({ hasText: formatPhoneForUI(setup.csvOnlyPhone) });
+  await expect(csvOnlyRow).toContainText("Только CSV");
+  await expect(csvOnlyRow).toContainText(/1\s?500\s?000,00\s?₽/);
+  await csvOnlyRow.getByRole("button", { name: formatPhoneForUI(setup.csvOnlyPhone) }).click();
+  await expect(page.getByRole("menuitem", { name: "Есть в CSV, но нет в смене" })).toBeVisible();
 });
 
 async function loginUI(page: Page, login: string, password: string, targetURL: RegExp) {
@@ -89,18 +108,19 @@ async function createTraderUI(page: Page, input: { login: string; workerName: st
   const fields = dialog.locator("input");
   await fields.nth(0).fill(input.login);
   await fields.nth(1).fill(traderPassword);
-  await fields.nth(2).fill(input.workerName);
-  await fields.nth(3).fill("0.75");
+  await fields.nth(2).fill("0.75");
   await dialog.getByRole("button", { name: "Сохранить" }).click();
   await expect(dialog).toBeHidden();
 }
 
-async function createRequisiteUI(page: Page, input: { phone: string; traderLogin: string }) {
+async function createRequisiteUI(page: Page, input: { phone: string; traderLogin: string; proxy: string }) {
   await page.getByRole("button", { name: "Добавить реквизит" }).click();
   const dialog = page.getByRole("dialog", { name: "Добавить реквизит" });
   await dialog.locator("input").nth(0).fill(input.phone);
-  await dialog.locator("input").nth(1).fill("127.0.0.1:9000");
-  await dialog.locator("select").nth(1).selectOption({ label: input.traderLogin });
+  await dialog.locator("input").nth(1).fill(input.proxy);
+  await dialog.getByRole("button", { name: "Не назначен" }).click();
+  await dialog.getByPlaceholder("Найти").fill(input.traderLogin);
+  await dialog.getByRole("option", { name: input.traderLogin }).click();
   await dialog.getByRole("button", { name: "Сохранить" }).click();
   await expect(dialog).toBeHidden();
 }
@@ -114,12 +134,15 @@ async function takeRequisiteUI(page: Page) {
   await expect(dialog).toBeHidden();
 }
 
-async function addTurnoverUI(page: Page, amount: string, comment: string) {
-  await page.getByRole("button", { name: "Оборот" }).first().click();
-  const dialog = page.getByRole("dialog", { name: "Добавить оборот" });
-  await dialog.locator("input").fill(amount);
-  await dialog.locator("textarea").fill(comment);
-  await dialog.getByRole("button", { name: "Добавить" }).click();
+async function closeRequisiteUI(page: Page, input: { inbound: string; outbound: string; balance: string; comment: string }) {
+  await page.getByRole("button", { name: "Закрыть" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Закрыть реквизит" });
+  const fields = dialog.locator("input");
+  await fields.nth(0).fill(input.inbound);
+  await fields.nth(1).fill(input.outbound);
+  await fields.nth(2).fill(input.balance);
+  await dialog.locator("textarea").fill(input.comment);
+  await dialog.getByRole("button", { name: "Закрыть реквизит" }).click();
   await expect(dialog).toBeHidden();
 }
 
@@ -127,9 +150,11 @@ async function createPaidPayoutUI(page: Page, amount: string, bank: string, dest
   await page.goto("/trader/payouts");
   await page.getByRole("button", { name: "Добавить выплату" }).click();
   const createDialog = page.getByRole("dialog", { name: "Ручная выплата" });
-  await createDialog.locator("input").nth(0).fill(bank);
-  await createDialog.locator("input").nth(1).fill(destination);
-  await createDialog.locator("input").nth(2).fill(amount);
+  await createDialog.getByRole("button", { name: "Выберите банк" }).click();
+  await createDialog.getByPlaceholder("Найти банк").fill(bank);
+  await createDialog.getByRole("option", { name: bank }).click();
+  await createDialog.locator("input").nth(0).fill(destination);
+  await createDialog.locator("input").nth(1).fill(amount);
   await createDialog.getByRole("button", { name: "Создать" }).click();
   await expect(createDialog).toBeHidden();
 
@@ -188,6 +213,7 @@ async function prepareMismatchShiftWithReport(request: APIRequestContext, id: st
   const proxyPrefix = `${Number(phoneSeed.slice(0, 2))}.${Number(phoneSeed.slice(2, 4))}.${Number(phoneSeed.slice(4, 6))}`;
   const inboundComment = "E2E accepted invoice mismatch";
   const outboundComment = "E2E accepted payout mismatch";
+  const csvOnlyPhone = `+7988${phoneSeed}9`;
   const trader = await apiJSON<{ trader: { id: number } }>(request, cookieJar, "/teamlead/traders", {
     method: "POST",
     data: {
@@ -254,24 +280,47 @@ async function prepareMismatchShiftWithReport(request: APIRequestContext, id: st
     });
   }
 
-  const payout = await apiJSON<{ payout: { id: number } }>(request, cookieJar, "/trader/payouts", {
+  const firstPayout = await apiJSON<{ payout: { id: number } }>(request, cookieJar, "/trader/payouts", {
     method: "POST",
     data: {
       destinationBank: "E2E Bank",
       destinationRequisite: "2200000000000000",
-      amountMinor: 200000,
+      amountMinor: 100000,
     },
   });
-  for (const [index, shiftRequisite] of shiftRequisites.entries()) {
-    await apiJSON(request, cookieJar, `/trader/payouts/${payout.payout.id}/transfers`, {
-      method: "POST",
-      data: {
-        sourceShiftRequisiteId: shiftRequisite.id,
-        amountMinor: shiftRequisite.outbound,
-        comment: `E2E payout transfer ${index + 1}`,
-      },
-    });
-  }
+  await apiJSON(request, cookieJar, `/trader/payouts/${firstPayout.payout.id}/transfers`, {
+    method: "POST",
+    data: {
+      sourceShiftRequisiteId: shiftRequisites[0].id,
+      amountMinor: 100000,
+      comment: "E2E payout transfer source mismatch",
+    },
+  });
+
+  const secondPayout = await apiJSON<{ payout: { id: number } }>(request, cookieJar, "/trader/payouts", {
+    method: "POST",
+    data: {
+      destinationBank: "E2E Bank",
+      destinationRequisite: "2200000000000001",
+      amountMinor: 80000,
+    },
+  });
+  await apiJSON(request, cookieJar, `/trader/payouts/${secondPayout.payout.id}/transfers`, {
+    method: "POST",
+    data: {
+      sourceShiftRequisiteId: shiftRequisites[1].id,
+      amountMinor: 60000,
+      comment: "E2E payout transfer matching source",
+    },
+  });
+  await apiJSON(request, cookieJar, `/trader/payouts/${secondPayout.payout.id}/transfers`, {
+    method: "POST",
+    data: {
+      sourceShiftRequisiteId: shiftRequisites[2].id,
+      amountMinor: 20000,
+      comment: "E2E payout transfer second source mismatch",
+    },
+  });
 
   for (const shiftRequisite of shiftRequisites) {
     await apiJSON(request, cookieJar, `/trader/shift-requisites/${shiftRequisite.id}/close`, {
@@ -291,9 +340,10 @@ async function prepareMismatchShiftWithReport(request: APIRequestContext, id: st
     cookieJar,
     "/trader/inbound/import",
     traderCSVRows(workerName, [
-      { innerId: `e2e-in-mis-${id}-1`, amount: 3000, status: "hand_success" },
-      { innerId: `e2e-in-mis-${id}-2`, amount: 2500, status: "hand_success" },
-      { innerId: `e2e-in-mis-${id}-3`, amount: 1500, status: "hand_success" },
+      { innerId: `e2e-in-mis-${id}-1`, amount: 3000, status: "hand_success", requisitePhone: requisites[0].phone },
+      { innerId: `e2e-in-mis-${id}-2`, amount: 2500, status: "hand_success", requisitePhone: requisites[1].phone },
+      { innerId: `e2e-in-mis-${id}-3`, amount: 1500, status: "hand_success", requisitePhone: requisites[2].phone },
+      { innerId: `e2e-in-mis-${id}-csv-only`, amount: 1500000, status: "hand_success", requisitePhone: csvOnlyPhone },
     ]),
   );
   await apiUpload(
@@ -301,8 +351,9 @@ async function prepareMismatchShiftWithReport(request: APIRequestContext, id: st
     cookieJar,
     "/trader/outbound/import",
     traderCSVRows(workerName, [
-      { innerId: `e2e-out-mis-${id}-1`, amount: 1000, status: "hand_success" },
-      { innerId: `e2e-out-mis-${id}-2`, amount: 800, status: "hand_success" },
+      { innerId: `e2e-out-mis-${id}-1`, amount: 1000, status: "hand_success", requisitePhone: requisites[0].phone },
+      { innerId: `e2e-out-mis-${id}-2`, amount: 800, status: "hand_success", requisitePhone: requisites[1].phone },
+      { innerId: `e2e-out-mis-${id}-csv-only`, amount: 500, status: "hand_success", requisitePhone: csvOnlyPhone },
     ]),
   );
 
@@ -345,6 +396,7 @@ async function prepareMismatchShiftWithReport(request: APIRequestContext, id: st
     inboundComment,
     outboundComment,
     requisitePhones,
+    csvOnlyPhone,
   };
 }
 
@@ -403,13 +455,14 @@ function traderCSV(workerName: string, innerId: string, amount: number, status: 
   return traderCSVRows(workerName, [{ innerId, amount, status }]);
 }
 
-function traderCSVRows(workerName: string, rows: Array<{ innerId: string; amount: number; status: string }>) {
+function traderCSVRows(workerName: string, rows: Array<{ innerId: string; amount: number; status: string; requisitePhone?: string }>) {
   return [
     "id|innerId|requisite|requisitePhone|deviceName|methodType|methodName|amount|courseWorker|currency|status|createdAt|closedAt|updatedAt|oldAmount|receipt|orderComment|requisiteId|workerName|workerAmount|workerProfit|ordered|counted|initials",
-    ...rows.map(
-      (row, index) =>
-        `${row.innerId}|${row.innerId}|7999111111${index}|7999111111${index}|device-${index + 1}|СБП|sbp|${row.amount}.0|91.20|RUB|${row.status}|28.05.2026 14:00:00|28.05.2026 14:05:00|28.05.2026 14:05:00|None|None|e2e|req-${index + 1}|${workerName}|${row.amount}.0|0.0|true|true|EE`,
-    ),
+    ...rows.map((row, index) => {
+      const requisitePhone = row.requisitePhone ?? `7999111111${index}`;
+      const requisiteRaw = requisitePhone.replace(/\D/g, "");
+      return `${row.innerId}|${row.innerId}|${requisiteRaw}|${requisiteRaw}|device-${index + 1}|СБП|sbp|${row.amount}.0|91.20|RUB|${row.status}|28.05.2026 14:00:00|28.05.2026 14:05:00|28.05.2026 14:05:00|None|None|e2e|req-${index + 1}|${workerName}|${row.amount}.0|0.0|true|true|EE`;
+    }),
     "",
   ].join("\n");
 }

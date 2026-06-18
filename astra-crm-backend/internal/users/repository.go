@@ -202,7 +202,7 @@ func mapTraderWriteError(err error) error {
 	}
 
 	switch pgErr.ConstraintName {
-	case "users_team_id_login_key":
+	case "users_login_key", "users_team_id_login_key":
 		return ErrDuplicateLogin
 	case "trader_profiles_external_worker_name_key":
 		return ErrDuplicateWorkerName

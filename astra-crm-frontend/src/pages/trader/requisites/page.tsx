@@ -2,7 +2,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
 import { AlertTriangle, CalendarDays, CheckCircle2, Eye, FileText, History, Plus, RefreshCw, Upload } from "lucide-react";
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { AcceptMismatchDialog, ImportCsvDialog, MismatchAlert } from "@/features/import-csv/ui/import-components";
@@ -15,7 +15,7 @@ import { OrderDashboard } from "@/widgets/order-dashboard/ui/order-dashboard";
 import { PageHeader } from "@/shared/ui/page-header";
 import { PeriodFilterBar } from "@/features/period-filter/ui/period-filter-bar";
 import { ReportReconciliationDetails } from "@/features/reconciliation/ui/report-reconciliation-details";
-import { RequisiteCell } from "@/entities/requisite/ui/requisite-cell";
+import { CopyToast, RequisitePhoneMenu } from "@/entities/requisite/ui/requisite-phone-menu";
 import { StatusBadge } from "@/entities/status/ui/status-badge";
 import { Button } from "@/shared/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
@@ -62,6 +62,13 @@ const closeRequisiteSchema = z.object({
   comment: z.string().optional(),
 });
 
+const correctRequisiteSchema = z.object({
+  inboundTurnover: z.string().min(1, "Введите оборот по оплатам").refine((value) => parseMoneyToMinor(value) >= 0, "Некорректная сумма"),
+  outboundTurnover: z.string().min(1, "Введите оборот по выплатам").refine((value) => parseMoneyToMinor(value) >= 0, "Некорректная сумма"),
+  closingBalance: z.string().min(1, "Введите остаток").refine((value) => parseMoneyToMinor(value) >= 0, "Некорректная сумма"),
+  comment: z.string().trim().min(1, "Укажите причину корректировки"),
+});
+
 const payoutSchema = z.object({
   destinationBank: z.string().min(1, "Введите банк"),
   destinationRequisite: z.string().min(1, "Введите реквизит получателя"),
@@ -78,11 +85,13 @@ const TRADER_PERIOD_FILTER_STORAGE_KEY = "astra-crm:trader-period-filter";
 type TraderRequisiteTab = "current" | "future" | "history";
 
 export function TraderRequisitesPage() {
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<TraderRequisiteTab>("current");
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
   const [futurePagination, setFuturePagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
   const [historyPagination, setHistoryPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
   const [selectedRequisite, setSelectedRequisite] = useState<ShiftRequisite | null>(null);
+  const [copiedMessage, setCopiedMessage] = useState<string | null>(null);
   const requisitesQuery = useQuery({ queryKey: queryKeys.trader.requisites(), queryFn: api.traderShift.requisites });
   const futureRequisitesQuery = useQuery({
     queryKey: queryKeys.trader.futureRequisites,
@@ -94,15 +103,28 @@ export function TraderRequisitesPage() {
     queryFn: api.traderShift.historicalRequisites,
     enabled: activeTab === "history",
   });
+  const copyToClipboard = useCallback((value: string | undefined | null, label: string) => {
+    if (!value) return;
+    void navigator.clipboard?.writeText(value);
+    setCopiedMessage(`${label} скопирован`);
+  }, []);
+
+  useEffect(() => {
+    if (!copiedMessage) return;
+    const timeout = window.setTimeout(() => setCopiedMessage(null), 1800);
+    return () => window.clearTimeout(timeout);
+  }, [copiedMessage]);
+
+  useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: ["trader", "requisites"] });
+  }, [activeTab, queryClient]);
 
   const currentColumns = useMemo<ColumnDef<ShiftRequisite>[]>(
     () => [
       {
         accessorKey: "phone",
         header: "Реквизит",
-        cell: ({ row }) => (
-          <RequisiteCell phone={row.original.phone} method={row.original.bankName} proxy={row.original.proxy} />
-        ),
+        cell: ({ row }) => <RequisitePhoneMenu item={row.original} onCopy={copyToClipboard} />,
       },
       { accessorKey: "bankName", header: "Банк" },
       {
@@ -120,22 +142,84 @@ export function TraderRequisitesPage() {
           );
         },
       },
-      { accessorKey: "cardNumber", header: "Карта", cell: ({ row }) => formatCardNumber(row.original.cardNumber) },
-      { accessorKey: "holderName", header: "Держатель", cell: ({ row }) => row.original.holderName ?? "—" },
-      {
-        accessorKey: "inboundTurnoverMinor",
-        header: () => <div className="text-right">Оплаты</div>,
-        cell: ({ row }) => <MoneyCell valueMinor={row.original.inboundTurnoverMinor || row.original.latestTurnoverMinor} />,
-      },
       {
         accessorKey: "targetTurnoverMinor",
-        header: () => <div className="text-right">Цель</div>,
+        header: () => <div className="text-right">Лимит</div>,
         cell: ({ row }) => <MoneyCell valueMinor={row.original.targetTurnoverMinor} />,
       },
       {
         id: "progress",
         header: "Прогресс",
         cell: ({ row }) => shiftRequisiteProgressLabel(row.original),
+      },
+      {
+        accessorKey: "status",
+        header: "Статус",
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
+      },
+      {
+        id: "work",
+        header: "",
+        cell: ({ row }) => <ShiftRequisiteActions item={row.original} />,
+      },
+    ],
+    [copyToClipboard],
+  );
+  const futureColumns = useMemo<ColumnDef<ShiftRequisite>[]>(
+    () => [
+      {
+        accessorKey: "assignedForDate",
+        header: "Дата",
+        cell: ({ row }) => formatDateOnly(row.original.assignedForDate),
+      },
+      {
+        accessorKey: "phone",
+        header: "Реквизит",
+        cell: ({ row }) => <RequisitePhoneMenu item={row.original} onCopy={copyToClipboard} />,
+      },
+      {
+        accessorKey: "employeeComment",
+        header: "Комментарий",
+        cell: ({ row }) => (
+          <span className="block max-w-[260px] truncate text-sm text-muted-foreground" title={row.original.employeeComment ?? ""}>
+            {row.original.employeeComment || "—"}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "targetTurnoverMinor",
+        header: () => <div className="text-right">Лимит</div>,
+        cell: ({ row }) => <MoneyCell valueMinor={row.original.targetTurnoverMinor} />,
+      },
+      {
+        accessorKey: "assignmentStatus",
+        header: "Статус",
+        cell: ({ row }) => <StatusBadge status={row.original.assignmentStatus} />,
+      },
+    ],
+    [copyToClipboard],
+  );
+  const historyColumns = useMemo<ColumnDef<ShiftRequisite>[]>(
+    () => [
+      {
+        accessorKey: "assignedForDate",
+        header: "Дата",
+        cell: ({ row }) => formatDateOnly(row.original.assignedForDate),
+      },
+      {
+        accessorKey: "phone",
+        header: "Реквизит",
+        cell: ({ row }) => <RequisitePhoneMenu item={row.original} onCopy={copyToClipboard} />,
+      },
+      {
+        accessorKey: "inboundTurnoverMinor",
+        header: () => <div className="text-right">Оплаты</div>,
+        cell: ({ row }) => <MoneyCell valueMinor={row.original.inboundTurnoverMinor} />,
+      },
+      {
+        accessorKey: "targetTurnoverMinor",
+        header: () => <div className="text-right">Лимит</div>,
+        cell: ({ row }) => <MoneyCell valueMinor={row.original.targetTurnoverMinor} />,
       },
       {
         accessorKey: "outboundTurnoverMinor",
@@ -158,82 +242,7 @@ export function TraderRequisitesPage() {
         cell: ({ row }) => <ShiftRequisiteActions item={row.original} />,
       },
     ],
-    [],
-  );
-  const futureColumns = useMemo<ColumnDef<ShiftRequisite>[]>(
-    () => [
-      {
-        accessorKey: "assignedForDate",
-        header: "Дата",
-        cell: ({ row }) => formatDateOnly(row.original.assignedForDate),
-      },
-      {
-        accessorKey: "phone",
-        header: "Реквизит",
-        cell: ({ row }) => (
-          <RequisiteCell phone={row.original.phone} method={row.original.bankName} proxy={row.original.proxy} />
-        ),
-      },
-      {
-        accessorKey: "employeeComment",
-        header: "Комментарий",
-        cell: ({ row }) => (
-          <span className="block max-w-[260px] truncate text-sm text-muted-foreground" title={row.original.employeeComment ?? ""}>
-            {row.original.employeeComment || "—"}
-          </span>
-        ),
-      },
-      {
-        accessorKey: "targetTurnoverMinor",
-        header: () => <div className="text-right">Целевой оборот</div>,
-        cell: ({ row }) => <MoneyCell valueMinor={row.original.targetTurnoverMinor} />,
-      },
-      {
-        accessorKey: "assignmentStatus",
-        header: "Статус",
-        cell: ({ row }) => <StatusBadge status={row.original.assignmentStatus} />,
-      },
-    ],
-    [],
-  );
-  const historyColumns = useMemo<ColumnDef<ShiftRequisite>[]>(
-    () => [
-      {
-        accessorKey: "assignedForDate",
-        header: "Дата",
-        cell: ({ row }) => formatDateOnly(row.original.assignedForDate),
-      },
-      {
-        accessorKey: "phone",
-        header: "Реквизит",
-        cell: ({ row }) => (
-          <RequisiteCell phone={row.original.phone} method={row.original.bankName} proxy={row.original.proxy} />
-        ),
-      },
-      { accessorKey: "cardNumber", header: "Карта", cell: ({ row }) => formatCardNumber(row.original.cardNumber) },
-      { accessorKey: "holderName", header: "Держатель", cell: ({ row }) => row.original.holderName ?? "—" },
-      {
-        accessorKey: "inboundTurnoverMinor",
-        header: () => <div className="text-right">Оборот</div>,
-        cell: ({ row }) => <MoneyCell valueMinor={row.original.inboundTurnoverMinor} />,
-      },
-      {
-        accessorKey: "targetTurnoverMinor",
-        header: () => <div className="text-right">Цель</div>,
-        cell: ({ row }) => <MoneyCell valueMinor={row.original.targetTurnoverMinor} />,
-      },
-      {
-        accessorKey: "closingBalanceMinor",
-        header: () => <div className="text-right">Остаток</div>,
-        cell: ({ row }) => <MoneyCell valueMinor={row.original.closingBalanceMinor} />,
-      },
-      {
-        accessorKey: "status",
-        header: "Статус",
-        cell: ({ row }) => <StatusBadge status={row.original.status} />,
-      },
-    ],
-    [],
+    [copyToClipboard],
   );
 
   return (
@@ -272,6 +281,7 @@ export function TraderRequisitesPage() {
         />
       ) : null}
       <ShiftRequisiteInteractionDialog item={selectedRequisite} onClose={() => setSelectedRequisite(null)} />
+      <CopyToast message={copiedMessage} />
     </div>
   );
 }
@@ -323,12 +333,26 @@ function formatDateOnly(value: string | null | undefined) {
   return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 }
 
+function moneyInputValue(valueMinor: number) {
+  return (valueMinor / 100).toFixed(2).replace(".", ",");
+}
+
+function canCorrectTurnovers(item: ShiftRequisite) {
+  return item.status === "worked_pending_review" || item.status === "worked_discrepancy";
+}
+
+function canReturnToWork(item: ShiftRequisite) {
+  return item.status === "worked_pending_review" || item.status === "worked_discrepancy" || item.status === "blocked" || item.status === "correction";
+}
+
 function ShiftRequisiteActions({ item }: { item: ShiftRequisite }) {
   return (
     <div className="flex justify-end gap-2">
       {item.status === "assigned" ? <TakeRequisiteDialog item={item} /> : null}
       {item.status === "in_work" || item.status === "correction" ? <EditDetailsDialog item={item} /> : null}
       {item.status === "in_work" || item.status === "correction" ? <CloseRequisiteDialog item={item} /> : null}
+      {canCorrectTurnovers(item) ? <CorrectRequisiteDialog item={item} /> : null}
+      {canReturnToWork(item) ? <ReturnRequisiteToWorkButton item={item} /> : null}
     </div>
   );
 }
@@ -531,5 +555,94 @@ function CloseRequisiteDialog({ item }: { item: ShiftRequisite }) {
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function CorrectRequisiteDialog({ item }: { item: ShiftRequisite }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const form = useForm<z.infer<typeof correctRequisiteSchema>>({
+    resolver: zodResolver(correctRequisiteSchema),
+    defaultValues: {
+      inboundTurnover: moneyInputValue(item.inboundTurnoverMinor || item.latestTurnoverMinor),
+      outboundTurnover: moneyInputValue(item.outboundTurnoverMinor),
+      closingBalance: moneyInputValue(item.closingBalanceMinor),
+      comment: "",
+    },
+  });
+  const mutation = useMutation({
+    mutationFn: api.traderShift.correctRequisite,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["trader"] });
+      setOpen(false);
+      form.reset();
+    },
+  });
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button type="button" variant="outline" size="sm">
+          Коррекция
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle className="text-base font-semibold">Корректировка оборотов</DialogTitle>
+          <DialogDescription>Исправьте финальные значения по реквизиту и укажите причину корректировки.</DialogDescription>
+        </DialogHeader>
+        <form
+          className="space-y-4"
+          onSubmit={form.handleSubmit((values) =>
+            mutation.mutate({
+              shiftRequisiteId: item.id,
+              inboundTurnoverMinor: parseMoneyToMinor(values.inboundTurnover),
+              outboundTurnoverMinor: parseMoneyToMinor(values.outboundTurnover),
+              closingBalanceMinor: parseMoneyToMinor(values.closingBalance),
+              comment: values.comment.trim(),
+            }),
+          )}
+        >
+          <FormField label="Оборот по оплатам" error={form.formState.errors.inboundTurnover?.message}>
+            <Input {...form.register("inboundTurnover")} />
+          </FormField>
+          <FormField label="Оборот по выплатам" error={form.formState.errors.outboundTurnover?.message}>
+            <Input {...form.register("outboundTurnover")} />
+          </FormField>
+          <FormField label="Остаток" error={form.formState.errors.closingBalance?.message}>
+            <Input {...form.register("closingBalance")} />
+          </FormField>
+          <FormField label="Комментарий" error={form.formState.errors.comment?.message}>
+            <Textarea {...form.register("comment")} />
+          </FormField>
+          <Button type="submit" disabled={mutation.isPending}>
+            Сохранить корректировку
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ReturnRequisiteToWorkButton({ item }: { item: ShiftRequisite }) {
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: api.traderShift.returnRequisiteToWork,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["trader"] });
+    },
+  });
+
+  return (
+    <ConfirmDialog
+      trigger={
+        <Button type="button" variant="outline" size="sm" disabled={mutation.isPending}>
+          В работу
+        </Button>
+      }
+      title="Вернуть реквизит в работу"
+      description="Реквизит снова станет активным в текущей смене. Его можно будет закрыть заново после правок."
+      confirmText="Вернуть"
+      onConfirm={() => mutation.mutate(item.id)}
+    />
   );
 }

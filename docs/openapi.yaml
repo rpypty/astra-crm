@@ -268,7 +268,7 @@ components:
         shiftStatus: { type: string, enum: [open, closing, closed, closed_with_discrepancy] }
         takenAt: { type: string, format: date-time }
         releasedAt: { type: string, format: date-time }
-        requisiteStatus: { type: string, enum: [active, worked, correction, released, blocked] }
+        requisiteStatus: { type: string, enum: [active, worked, worked_pending_review, worked_verified, worked_discrepancy, correction, released, blocked] }
         inboundTurnoverMinor: { type: integer, format: int64 }
         outboundTurnoverMinor: { type: integer, format: int64 }
         targetTurnoverMinor: { type: integer, format: int64, minimum: 0 }
@@ -423,7 +423,7 @@ components:
         shiftRequisiteId: { type: integer, format: int64 }
         cardNumber: { type: string }
         holderName: { type: string }
-        shiftRequisiteStatus: { type: string, enum: [active, worked, correction, released, blocked] }
+        shiftRequisiteStatus: { type: string, enum: [active, worked, worked_pending_review, worked_verified, worked_discrepancy, correction, released, blocked] }
         takenAt: { type: string, format: date-time }
         inboundTurnoverMinor: { type: integer, format: int64 }
         outboundTurnoverMinor: { type: integer, format: int64 }
@@ -450,7 +450,7 @@ components:
         holderName: { type: string }
         takenAt: { type: string, format: date-time }
         releasedAt: { type: string, format: date-time }
-        status: { type: string, enum: [active, worked, correction, released, blocked] }
+        status: { type: string, enum: [active, worked, worked_pending_review, worked_verified, worked_discrepancy, correction, released, blocked] }
         inboundTurnoverMinor: { type: integer, format: int64 }
         outboundTurnoverMinor: { type: integer, format: int64 }
         closingBalanceMinor: { type: integer, format: int64, minimum: 0 }
@@ -510,6 +510,14 @@ components:
         closingBalanceMinor: { type: integer, format: int64, minimum: 0 }
         blocked: { type: boolean }
         comment: { type: string }
+    CorrectShiftRequisiteRequest:
+      type: object
+      required: [inboundTurnoverMinor, outboundTurnoverMinor, closingBalanceMinor, comment]
+      properties:
+        inboundTurnoverMinor: { type: integer, format: int64, minimum: 0 }
+        outboundTurnoverMinor: { type: integer, format: int64, minimum: 0 }
+        closingBalanceMinor: { type: integer, format: int64, minimum: 0 }
+        comment: { type: string, minLength: 1 }
     CloseChecklist:
       type: object
       required: [shift, inboundImported, inboundOk, outboundImported, outboundOk, allRequisitesClosed, openRequisiteCount, allPayoutsFullyPaid, unpaidPayoutCount, canClose]
@@ -557,6 +565,8 @@ components:
         traderId: { type: integer, format: int64 }
         sourceShiftRequisiteId: { type: integer, format: int64 }
         sourceRequisiteId: { type: integer, format: int64 }
+        sourcePhone: { type: string }
+        sourceBankName: { type: string }
         amountMinor: { type: integer, format: int64 }
         createdBy: { type: integer, format: int64 }
         createdAt: { type: string, format: date-time }
@@ -619,7 +629,7 @@ components:
         total: { type: integer, format: int64 }
     OrderDashboardSummary:
       type: object
-      required: [totalAmountMinor, totalCount, successAmountMinor, successCount, failedAmountMinor, failedCount, unknownAmountMinor, unknownCount]
+      required: [totalAmountMinor, totalCount, successAmountMinor, successCount, failedAmountMinor, failedCount, unknownAmountMinor, unknownCount, blockedBalanceMinor]
       properties:
         totalAmountMinor: { type: integer, format: int64 }
         totalCount: { type: integer, format: int64 }
@@ -629,6 +639,7 @@ components:
         failedCount: { type: integer, format: int64 }
         unknownAmountMinor: { type: integer, format: int64 }
         unknownCount: { type: integer, format: int64 }
+        blockedBalanceMinor: { type: integer, format: int64 }
     OrderStatusBreakdownItem:
       type: object
       required: [rawStatus, normalizedStatus, amountMinor, count]
@@ -1390,6 +1401,39 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ShiftRequisiteResponse" }
         default: { $ref: "#/components/responses/Error" }
+  /trader/shift-requisites/{shiftRequisiteId}/correction:
+    post:
+      parameters:
+        - name: shiftRequisiteId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CorrectShiftRequisiteRequest" }
+      responses:
+        "200":
+          description: Shift requisite turnovers corrected and reconciled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ShiftRequisiteResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/shift-requisites/{shiftRequisiteId}/return-to-work:
+    post:
+      parameters:
+        - name: shiftRequisiteId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Shift requisite returned to work
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ShiftRequisiteResponse" }
+        default: { $ref: "#/components/responses/Error" }
   /trader/shift/current/close:
     post:
       responses:
@@ -1415,6 +1459,15 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/PayoutResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/payouts/history:
+    get:
+      responses:
+        "200":
+          description: Historical manual payout orders
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PayoutsResponse" }
         default: { $ref: "#/components/responses/Error" }
   /trader/payouts/{payoutId}:
     parameters:
@@ -1461,6 +1514,23 @@ paths:
               schema: { $ref: "#/components/schemas/TransferResponse" }
         default: { $ref: "#/components/responses/Error" }
   /trader/payouts/{payoutId}/transfers/{transferId}:
+    patch:
+      parameters:
+        - name: payoutId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: transferId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Payout transfer updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TransferResponse" }
+        default: { $ref: "#/components/responses/Error" }
     delete:
       parameters:
         - name: payoutId

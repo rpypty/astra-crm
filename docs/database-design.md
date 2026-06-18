@@ -43,7 +43,7 @@ CREATE TABLE users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at TIMESTAMPTZ,
-    UNIQUE (team_id, login)
+    UNIQUE (login)
 );
 ```
 

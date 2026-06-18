@@ -1,0 +1,3 @@
+id|foreignId|innerId|requisite|requisitePhone|deviceName|methodType|methodName|amount|course|courseWorker|currency|status|createdAt|closedAt|updatedAt|oldAmount|hadDispute|receipt|orderComment|workerName|workerAmount
+100|f-100|in-100|2200000000000000|79990000000|device-1|C2C|card|3001.0|91.25|91.20|RUB|hand_success|28.05.2026 11:21:35|None|28.05.2026 12:00:00|None|false|None|first order|Bliss_OP2|3001.0
+101|f-101|in-101|79991111111|79991111111|device-2|СБП|sbp|3068.50|None|91.30|RUB|corrected|28.05.2026 13:00:00|28.05.2026 13:20:00|None|3000.0|true|receipt-101|None|Bliss_OP3|3068.50

@@ -109,6 +109,44 @@ func TestServiceAddTransferRunsMutationHook(t *testing.T) {
 	}
 }
 
+func TestServicePatchTransferAuditsMutationAndRunsHook(t *testing.T) {
+	store := &fakeStore{}
+	auditService := &fakeAuditService{}
+	hook := &fakeMutationHook{}
+	service := NewService(store, auditService, hook)
+
+	comment := "исправили источник"
+	transfer, err := service.PatchTransfer(context.Background(), PatchTransferParams{
+		ActorID:                1,
+		TeamID:                 2,
+		TraderID:               3,
+		PayoutID:               40,
+		TransferID:             50,
+		SourceShiftRequisiteID: 21,
+		AmountMinor:            60000,
+		Comment:                &comment,
+	})
+	if err != nil {
+		t.Fatalf("PatchTransfer() error = %v", err)
+	}
+
+	if transfer.AmountMinor != 60000 {
+		t.Fatalf("transfer amount = %d, want 60000", transfer.AmountMinor)
+	}
+	if store.updateTransferRecord.SourceShiftRequisiteID != 21 {
+		t.Fatalf("source shift requisite id = %d, want 21", store.updateTransferRecord.SourceShiftRequisiteID)
+	}
+	if len(auditService.events) != 1 {
+		t.Fatalf("audit events count = %d, want 1", len(auditService.events))
+	}
+	if auditService.events[0].Action != audit.ActionManualPayoutTransferUpdated {
+		t.Fatalf("audit action = %q, want %q", auditService.events[0].Action, audit.ActionManualPayoutTransferUpdated)
+	}
+	if !hook.called || hook.teamID != 2 || hook.traderID != 3 || hook.shiftID != 10 {
+		t.Fatalf("hook call = called:%v team:%d trader:%d shift:%d, want true/2/3/10", hook.called, hook.teamID, hook.traderID, hook.shiftID)
+	}
+}
+
 func TestServicePatchOrderRejectsAmountBelowTransferredSum(t *testing.T) {
 	service := NewService(&fakeStore{
 		updateErr: ErrOrderUpdateRejected,
@@ -128,13 +166,18 @@ func TestServicePatchOrderRejectsAmountBelowTransferredSum(t *testing.T) {
 }
 
 type fakeStore struct {
-	createRecord   CreateOrderRecord
-	updateRecord   UpdateOrderRecord
-	updateErr      error
-	transferRecord AddTransferRecord
+	createRecord         CreateOrderRecord
+	updateRecord         UpdateOrderRecord
+	updateErr            error
+	transferRecord       AddTransferRecord
+	updateTransferRecord UpdateTransferRecord
 }
 
 func (s *fakeStore) ListOrders(ctx context.Context, teamID int64, traderID int64) ([]Order, error) {
+	return nil, nil
+}
+
+func (s *fakeStore) ListOrderHistory(ctx context.Context, teamID int64, traderID int64) ([]Order, error) {
 	return nil, nil
 }
 
@@ -215,6 +258,25 @@ func (s *fakeStore) AddTransfer(ctx context.Context, params AddTransferRecord) (
 
 func (s *fakeStore) DeleteTransfer(ctx context.Context, teamID int64, traderID int64, payoutID int64, transferID int64) (Transfer, error) {
 	return Transfer{ID: transferID, TeamID: teamID, ShiftID: 10, TraderID: traderID, ManualPayoutOrderID: payoutID}, nil
+}
+
+func (s *fakeStore) UpdateTransfer(ctx context.Context, params UpdateTransferRecord) (Transfer, error) {
+	s.updateTransferRecord = params
+	return Transfer{
+		ID:                     params.TransferID,
+		TeamID:                 params.TeamID,
+		ManualPayoutOrderID:    params.PayoutID,
+		ShiftID:                10,
+		TraderID:               params.TraderID,
+		SourceShiftRequisiteID: params.SourceShiftRequisiteID,
+		SourceRequisiteID:      4,
+		SourcePhone:            "+79021001008",
+		SourceBankName:         "Газпромбанк",
+		AmountMinor:            params.AmountMinor,
+		CreatedBy:              1,
+		CreatedAt:              time.Date(2026, 6, 8, 11, 0, 0, 0, time.UTC),
+		Comment:                params.Comment,
+	}, nil
 }
 
 func (s *fakeStore) ListTransfers(ctx context.Context, teamID int64, traderID int64, payoutID int64) ([]Transfer, error) {

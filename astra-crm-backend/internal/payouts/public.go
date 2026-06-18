@@ -26,6 +26,8 @@ type PublicTransfer struct {
 	TraderID               int64     `json:"traderId"`
 	SourceShiftRequisiteID int64     `json:"sourceShiftRequisiteId"`
 	SourceRequisiteID      int64     `json:"sourceRequisiteId"`
+	SourcePhone            string    `json:"sourcePhone,omitempty"`
+	SourceBankName         string    `json:"sourceBankName,omitempty"`
 	AmountMinor            int64     `json:"amountMinor"`
 	CreatedBy              int64     `json:"createdBy"`
 	CreatedAt              time.Time `json:"createdAt"`
@@ -68,6 +70,8 @@ func PublicTransferFromDomain(transfer Transfer) PublicTransfer {
 		TraderID:               transfer.TraderID,
 		SourceShiftRequisiteID: transfer.SourceShiftRequisiteID,
 		SourceRequisiteID:      transfer.SourceRequisiteID,
+		SourcePhone:            transfer.SourcePhone,
+		SourceBankName:         transfer.SourceBankName,
 		AmountMinor:            transfer.AmountMinor,
 		CreatedBy:              transfer.CreatedBy,
 		CreatedAt:              transfer.CreatedAt,

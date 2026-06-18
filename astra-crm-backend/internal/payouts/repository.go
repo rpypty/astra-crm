@@ -44,6 +44,23 @@ func (r *Repository) ListOrders(ctx context.Context, teamID int64, traderID int6
 	return items, nil
 }
 
+func (r *Repository) ListOrderHistory(ctx context.Context, teamID int64, traderID int64) ([]Order, error) {
+	rows, err := r.queries.ListPayoutOrderHistoryForTrader(ctx, db.ListPayoutOrderHistoryForTraderParams{
+		TeamID:   teamID,
+		TraderID: traderID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]Order, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fromHistoryOrderRow(row))
+	}
+
+	return items, nil
+}
+
 func (r *Repository) GetOrder(ctx context.Context, teamID int64, traderID int64, payoutID int64) (Order, error) {
 	row, err := r.queries.GetPayoutOrderForTrader(ctx, db.GetPayoutOrderForTraderParams{
 		TeamID:   teamID,
@@ -133,6 +150,26 @@ func (r *Repository) AddTransfer(ctx context.Context, params AddTransferRecord) 
 	return fromAddTransferRow(row), nil
 }
 
+func (r *Repository) UpdateTransfer(ctx context.Context, params UpdateTransferRecord) (Transfer, error) {
+	row, err := r.queries.UpdatePayoutTransfer(ctx, db.UpdatePayoutTransferParams{
+		TeamID:                 params.TeamID,
+		TraderID:               params.TraderID,
+		PayoutID:               params.PayoutID,
+		TransferID:             params.TransferID,
+		SourceShiftRequisiteID: params.SourceShiftRequisiteID,
+		AmountMinor:            params.AmountMinor,
+		Comment:                textValue(params.Comment),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Transfer{}, ErrTransferRejected
+	}
+	if err != nil {
+		return Transfer{}, err
+	}
+
+	return fromUpdateTransferRow(row), nil
+}
+
 func (r *Repository) DeleteTransfer(ctx context.Context, teamID int64, traderID int64, payoutID int64, transferID int64) (Transfer, error) {
 	row, err := r.queries.DeletePayoutTransfer(ctx, db.DeletePayoutTransferParams{
 		TeamID:     teamID,
@@ -162,7 +199,7 @@ func (r *Repository) ListTransfers(ctx context.Context, teamID int64, traderID i
 
 	items := make([]Transfer, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, fromDBTransfer(row))
+		items = append(items, fromListTransferRow(row))
 	}
 
 	return items, nil
@@ -195,7 +232,35 @@ type AddTransferRecord struct {
 	Comment                *string
 }
 
+type UpdateTransferRecord struct {
+	TeamID                 int64
+	TraderID               int64
+	PayoutID               int64
+	TransferID             int64
+	SourceShiftRequisiteID int64
+	AmountMinor            int64
+	Comment                *string
+}
+
 func fromListOrderRow(row db.ListPayoutOrdersForCurrentShiftRow) Order {
+	return Order{
+		ID:                   row.ID,
+		TeamID:               row.TeamID,
+		ShiftID:              row.ShiftID,
+		TraderID:             row.TraderID,
+		DestinationBank:      row.DestinationBank,
+		DestinationRequisite: row.DestinationRequisite,
+		AmountMinor:          row.AmountMinor,
+		PaidAmountMinor:      row.PaidAmountMinor,
+		RemainingAmountMinor: row.RemainingAmountMinor,
+		Status:               row.Status,
+		CreatedAt:            row.CreatedAt.Time,
+		UpdatedAt:            row.UpdatedAt.Time,
+		DeletedAt:            timePtr(row.DeletedAt),
+	}
+}
+
+func fromHistoryOrderRow(row db.ListPayoutOrderHistoryForTraderRow) Order {
 	return Order{
 		ID:                   row.ID,
 		TeamID:               row.TeamID,
@@ -283,6 +348,24 @@ func fromDBTransfer(row db.ManualPayoutTransfer) Transfer {
 	}
 }
 
+func fromListTransferRow(row db.ListPayoutTransfersRow) Transfer {
+	return Transfer{
+		ID:                     row.ID,
+		TeamID:                 row.TeamID,
+		ManualPayoutOrderID:    row.ManualPayoutOrderID,
+		ShiftID:                row.ShiftID,
+		TraderID:               row.TraderID,
+		SourceShiftRequisiteID: row.SourceShiftRequisiteID,
+		SourceRequisiteID:      row.SourceRequisiteID,
+		SourcePhone:            row.SourcePhone,
+		SourceBankName:         row.SourceBankName,
+		AmountMinor:            row.AmountMinor,
+		CreatedBy:              row.CreatedBy,
+		CreatedAt:              row.CreatedAt.Time,
+		Comment:                textPtr(row.Comment),
+	}
+}
+
 func fromAddTransferRow(row db.AddPayoutTransferRow) Transfer {
 	return Transfer{
 		ID:                     row.ID,
@@ -292,6 +375,26 @@ func fromAddTransferRow(row db.AddPayoutTransferRow) Transfer {
 		TraderID:               row.TraderID,
 		SourceShiftRequisiteID: row.SourceShiftRequisiteID,
 		SourceRequisiteID:      row.SourceRequisiteID,
+		SourcePhone:            row.SourcePhone,
+		SourceBankName:         row.SourceBankName,
+		AmountMinor:            row.AmountMinor,
+		CreatedBy:              row.CreatedBy,
+		CreatedAt:              row.CreatedAt.Time,
+		Comment:                textPtr(row.Comment),
+	}
+}
+
+func fromUpdateTransferRow(row db.UpdatePayoutTransferRow) Transfer {
+	return Transfer{
+		ID:                     row.ID,
+		TeamID:                 row.TeamID,
+		ManualPayoutOrderID:    row.ManualPayoutOrderID,
+		ShiftID:                row.ShiftID,
+		TraderID:               row.TraderID,
+		SourceShiftRequisiteID: row.SourceShiftRequisiteID,
+		SourceRequisiteID:      row.SourceRequisiteID,
+		SourcePhone:            row.SourcePhone,
+		SourceBankName:         row.SourceBankName,
 		AmountMinor:            row.AmountMinor,
 		CreatedBy:              row.CreatedBy,
 		CreatedAt:              row.CreatedAt.Time,
@@ -308,6 +411,8 @@ func fromDeleteTransferRow(row db.DeletePayoutTransferRow) Transfer {
 		TraderID:               row.TraderID,
 		SourceShiftRequisiteID: row.SourceShiftRequisiteID,
 		SourceRequisiteID:      row.SourceRequisiteID,
+		SourcePhone:            row.SourcePhone,
+		SourceBankName:         row.SourceBankName,
 		AmountMinor:            row.AmountMinor,
 		CreatedBy:              row.CreatedBy,
 		CreatedAt:              row.CreatedAt.Time,

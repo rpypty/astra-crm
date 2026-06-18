@@ -79,17 +79,18 @@ type TraderRequisiteTab = "current" | "future" | "history";
 
 export function TraderAnalyticsPage() {
   const [periodFilter, setPeriodFilter] = usePersistentPeriodFilter(TRADER_PERIOD_FILTER_STORAGE_KEY);
+  const confirmedPeriodFilter = useMemo(() => ({ ...periodFilter, confirmedOnly: true }), [periodFilter]);
   const profileQuery = useQuery({
     queryKey: queryKeys.trader.profile(periodFilter),
     queryFn: () => api.traderProfile.get(periodFilter),
   });
   const inboundDashboardQuery = useQuery({
-    queryKey: queryKeys.trader.dashboard("inbound", periodFilter),
-    queryFn: () => api.orders.dashboard("trader", "inbound", periodFilter),
+    queryKey: queryKeys.trader.dashboard("inbound", confirmedPeriodFilter),
+    queryFn: () => api.orders.dashboard("trader", "inbound", confirmedPeriodFilter),
   });
   const outboundDashboardQuery = useQuery({
-    queryKey: queryKeys.trader.dashboard("outbound", periodFilter),
-    queryFn: () => api.orders.dashboard("trader", "outbound", periodFilter),
+    queryKey: queryKeys.trader.dashboard("outbound", confirmedPeriodFilter),
+    queryFn: () => api.orders.dashboard("trader", "outbound", confirmedPeriodFilter),
   });
 
   return (

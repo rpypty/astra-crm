@@ -1,4 +1,4 @@
-export { CopyToast, CopyableInlineValue, RequisitePhoneMenu } from "./copy";
+export { CopyToast, CopyableInlineValue, RequisitePhoneMenu } from "@/entities/requisite/ui/requisite-phone-menu";
 export { AssignmentHistoryViewer, ConfirmActionDialog, RequisiteCommentDialog, RequisiteFormDialog } from "./forms";
 export { TeamleadRequisiteTabs } from "./navigation";
 export { PlanEventsDialog, PlanRequisiteDialog, assignmentProgressLabel, formatDateOnly, invalidateRequisiteWorkQueries, isPlanCancellable } from "./planning";

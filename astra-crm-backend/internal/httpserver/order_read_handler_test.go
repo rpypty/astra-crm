@@ -39,7 +39,7 @@ func TestOrderReadHandlerTraderOrdersPassesScopeAndFilters(t *testing.T) {
 	handler := NewOrderReadHandler(service)
 
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/api/v1/trader/inbound/orders?dateFrom=2026-06-01&dateTo=2026-06-09&traderId=99&workerName=Bliss&requisite=7900&methodType=sbp&status=success&amountFrom=100&amountTo=500&page=2&pageSize=25&sort=amount_desc", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/trader/inbound/orders?dateFrom=2026-06-01&dateTo=2026-06-09&traderId=99&workerName=Bliss&requisite=7900&methodType=sbp&status=success&amountFrom=100&amountTo=500&confirmedOnly=true&page=2&pageSize=25&sort=amount_desc", nil)
 	request = request.WithContext(ContextWithCurrentUser(request.Context(), users.User{
 		ID:     3,
 		TeamID: 2,
@@ -64,6 +64,9 @@ func TestOrderReadHandlerTraderOrdersPassesScopeAndFilters(t *testing.T) {
 	assertOrderFilterInt64(t, service.traderListFilters.AmountTo, 500, "amountTo")
 	if service.traderListFilters.Page != 2 || service.traderListFilters.PageSize != 25 || service.traderListFilters.Sort != orders.SortAmountDesc {
 		t.Fatalf("pagination/sort = %d/%d/%q, want 2/25/amount_desc", service.traderListFilters.Page, service.traderListFilters.PageSize, service.traderListFilters.Sort)
+	}
+	if !service.traderListFilters.ConfirmedOnly {
+		t.Fatal("confirmedOnly = false, want true")
 	}
 	if service.traderListFilters.DateFrom == nil || service.traderListFilters.DateFrom.Format("2006-01-02") != "2026-06-01" {
 		t.Fatalf("dateFrom = %v, want 2026-06-01", service.traderListFilters.DateFrom)
@@ -107,12 +110,13 @@ func TestOrderReadHandlerTeamleadDashboardReturnsWarningsAndImportHistory(t *tes
 	service := &fakeOrderReadService{
 		dashboard: orders.Dashboard{
 			Summary: orders.Summary{
-				TotalAmountMinor:   30000,
-				TotalCount:         3,
-				SuccessAmountMinor: 10000,
-				SuccessCount:       1,
-				UnknownAmountMinor: 20000,
-				UnknownCount:       2,
+				TotalAmountMinor:    30000,
+				TotalCount:          3,
+				SuccessAmountMinor:  10000,
+				SuccessCount:        1,
+				UnknownAmountMinor:  20000,
+				UnknownCount:        2,
+				BlockedBalanceMinor: 7000,
 			},
 			StatusBreakdown: []orders.StatusBreakdownItem{
 				{
@@ -164,7 +168,9 @@ func TestOrderReadHandlerTeamleadDashboardReturnsWarningsAndImportHistory(t *tes
 	if !strings.Contains(response.Body.String(), `"unknownStatuses":["manual_review"]`) {
 		t.Fatalf("response does not include unknown statuses: %s", response.Body.String())
 	}
-	if !strings.Contains(response.Body.String(), `"fileName":"orders.csv"`) || !strings.Contains(response.Body.String(), `"totalAmountMinor":30000`) {
+	if !strings.Contains(response.Body.String(), `"fileName":"orders.csv"`) ||
+		!strings.Contains(response.Body.String(), `"totalAmountMinor":30000`) ||
+		!strings.Contains(response.Body.String(), `"blockedBalanceMinor":7000`) {
 		t.Fatalf("response does not include dashboard payload: %s", response.Body.String())
 	}
 }

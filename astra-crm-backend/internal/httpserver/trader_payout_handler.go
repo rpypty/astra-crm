@@ -13,11 +13,13 @@ import (
 
 type TraderPayoutService interface {
 	ListOrders(ctx context.Context, teamID int64, traderID int64) ([]payouts.Order, error)
+	ListOrderHistory(ctx context.Context, teamID int64, traderID int64) ([]payouts.Order, error)
 	GetOrder(ctx context.Context, teamID int64, traderID int64, payoutID int64) (payouts.Order, []payouts.Transfer, error)
 	CreateOrder(ctx context.Context, params payouts.CreateOrderParams) (payouts.Order, error)
 	PatchOrder(ctx context.Context, params payouts.PatchOrderParams) (payouts.Order, error)
 	CancelOrder(ctx context.Context, actorID int64, teamID int64, traderID int64, payoutID int64) error
 	AddTransfer(ctx context.Context, params payouts.AddTransferParams) (payouts.Transfer, error)
+	PatchTransfer(ctx context.Context, params payouts.PatchTransferParams) (payouts.Transfer, error)
 	DeleteTransfer(ctx context.Context, actorID int64, teamID int64, traderID int64, payoutID int64, transferID int64) error
 }
 
@@ -64,6 +66,12 @@ type addPayoutTransferRequest struct {
 	Comment                *string `json:"comment"`
 }
 
+type patchPayoutTransferRequest struct {
+	SourceShiftRequisiteID int64   `json:"sourceShiftRequisiteId"`
+	AmountMinor            int64   `json:"amountMinor"`
+	Comment                *string `json:"comment"`
+}
+
 func (h *TraderPayoutHandler) List(w http.ResponseWriter, r *http.Request) {
 	actor, ok := CurrentUser(r.Context())
 	if !ok {
@@ -76,6 +84,28 @@ func (h *TraderPayoutHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items, err := h.service.ListOrders(r.Context(), actor.TeamID, actor.ID)
+	if err != nil {
+		RespondError(w, mapPayoutError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, payoutOrdersResponse{
+		Items: payouts.PublicOrders(items),
+	})
+}
+
+func (h *TraderPayoutHandler) History(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	items, err := h.service.ListOrderHistory(r.Context(), actor.TeamID, actor.ID)
 	if err != nil {
 		RespondError(w, mapPayoutError(err))
 		return
@@ -292,6 +322,55 @@ func (h *TraderPayoutHandler) DeleteTransfer(w http.ResponseWriter, r *http.Requ
 	WriteJSON(w, http.StatusOK, HealthResponse{Status: "ok"})
 }
 
+func (h *TraderPayoutHandler) PatchTransfer(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	payoutID, ok := payoutIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+	transferID, ok := transferIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var request patchPayoutTransferRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	if fields := validatePatchPayoutTransferRequest(request); len(fields) > 0 {
+		RespondError(w, ValidationError(fields))
+		return
+	}
+
+	transfer, err := h.service.PatchTransfer(r.Context(), payouts.PatchTransferParams{
+		ActorID:                actor.ID,
+		TeamID:                 actor.TeamID,
+		TraderID:               actor.ID,
+		PayoutID:               payoutID,
+		TransferID:             transferID,
+		SourceShiftRequisiteID: request.SourceShiftRequisiteID,
+		AmountMinor:            request.AmountMinor,
+		Comment:                request.Comment,
+	})
+	if err != nil {
+		RespondError(w, mapPayoutError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, payoutTransferResponse{
+		Transfer: payouts.PublicTransferFromDomain(transfer),
+	})
+}
+
 func payoutIDFromRequest(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	raw := chi.URLParam(r, "payoutId")
 	id, err := strconv.ParseInt(raw, 10, 64)
@@ -349,6 +428,18 @@ func validatePatchPayoutOrderRequest(request patchPayoutOrderRequest) map[string
 }
 
 func validateAddPayoutTransferRequest(request addPayoutTransferRequest) map[string]string {
+	fields := map[string]string{}
+	if request.SourceShiftRequisiteID <= 0 {
+		fields["sourceShiftRequisiteId"] = "Некорректный ID реквизита смены"
+	}
+	if request.AmountMinor <= 0 {
+		fields["amountMinor"] = "Сумма перевода должна быть положительной"
+	}
+
+	return fields
+}
+
+func validatePatchPayoutTransferRequest(request patchPayoutTransferRequest) map[string]string {
 	fields := map[string]string{}
 	if request.SourceShiftRequisiteID <= 0 {
 		fields["sourceShiftRequisiteId"] = "Некорректный ID реквизита смены"

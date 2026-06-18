@@ -2,6 +2,8 @@ package users
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,6 +101,9 @@ func TestTraderServiceResetPasswordUpdatesHashAndAudits(t *testing.T) {
 	}
 	if auditService.event.Action != audit.ActionUserPasswordReset {
 		t.Fatalf("audit action = %q, want %q", auditService.event.Action, audit.ActionUserPasswordReset)
+	}
+	if strings.Contains(fmt.Sprint(auditService.event.After), result.TemporaryPassword) {
+		t.Fatal("temporary password leaked to audit payload")
 	}
 }
 

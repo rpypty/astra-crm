@@ -178,18 +178,32 @@ func (s *Service) TraderProfile(ctx context.Context, teamID int64, traderID int6
 		return TraderProfile{}, fmt.Errorf("readmodels: repository is not configured")
 	}
 
-	row := s.pool.QueryRow(ctx, `
-WITH current_shift AS (
-	SELECT id
-	FROM trader_shifts
-	WHERE team_id = $1
-	  AND trader_id = $2
-	  AND status IN ('open', 'closing')
-	ORDER BY started_at DESC, id DESC
-	LIMIT 1
-),
-current_period AS (
+	row := s.pool.QueryRow(ctx, traderProfileQuery, teamID, traderID, dateValue(filters.DateFrom), dateValue(filters.DateTo))
+
+	var profile TraderProfile
+	if err := row.Scan(
+		&profile.ID,
+		&profile.Login,
+		&profile.SalaryRateBps,
+		&profile.ExternalWorkerName,
+		&profile.CurrentShiftSuccessInboundMinor,
+		&profile.CurrentShiftSalaryMinor,
+		&profile.PeriodID,
+		&profile.PeriodTitle,
+		&profile.PeriodSuccessInboundMinor,
+		&profile.PeriodSalaryMinor,
+	); err != nil {
+		return TraderProfile{}, fmt.Errorf("get trader profile readmodel: %w", err)
+	}
+
+	return profile, nil
+}
+
+const traderProfileQuery = `
+WITH current_period AS (
 	SELECT id,
+		date_from,
+		date_to,
 		'Период ' || to_char(date_from, 'DD.MM.YYYY') || ' - ' || to_char(date_to, 'DD.MM.YYYY') AS title
 	FROM accounting_periods
 	WHERE team_id = $1
@@ -216,26 +230,37 @@ selected_period AS (
 ),
 shift_success AS (
 	SELECT COALESCE(sum(amount_minor), 0)::bigint AS amount_minor
-	FROM order_scope_items
-	WHERE team_id = $1
-	  AND scope_type = 'trader_shift'
-	  AND shift_id = (SELECT id FROM current_shift)
-	  AND direction = 'inbound'
-	  AND is_active = TRUE
-	  AND normalized_status IN ('success', 'corrected')
+	FROM order_scope_items osi
+	JOIN trader_shifts ts ON ts.id = osi.shift_id
+	WHERE osi.team_id = $1
+	  AND osi.scope_type = 'trader_shift'
+	  AND osi.trader_id = $2
+	  AND osi.direction = 'inbound'
+	  AND osi.is_active = TRUE
+	  AND osi.normalized_status IN ('success', 'corrected')
+	  AND ts.status IN ('closed', 'closed_with_discrepancy')
+	  AND ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment')
+	  AND osi.created_at_external::date = current_date
 ),
 period_success AS (
 	SELECT COALESCE(sum(amount_minor), 0)::bigint AS amount_minor
-	FROM order_scope_items
-	WHERE team_id = $1
-	  AND scope_type = 'teamlead_period'
-	  AND trader_id = $2
-	  AND direction = 'inbound'
-	  AND is_active = TRUE
-	  AND normalized_status IN ('success', 'corrected')
-	  AND (($3::date IS NOT NULL OR $4::date IS NOT NULL) OR accounting_period_id = (SELECT id FROM current_period))
-	  AND ($3::date IS NULL OR created_at_external::date >= $3::date)
-	  AND ($4::date IS NULL OR created_at_external::date <= $4::date)
+	FROM order_scope_items osi
+	JOIN trader_shifts ts ON ts.id = osi.shift_id
+	WHERE osi.team_id = $1
+	  AND osi.scope_type = 'trader_shift'
+	  AND osi.trader_id = $2
+	  AND osi.direction = 'inbound'
+	  AND osi.is_active = TRUE
+	  AND osi.normalized_status IN ('success', 'corrected')
+	  AND ts.status IN ('closed', 'closed_with_discrepancy')
+	  AND ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment')
+	  AND (
+		  $3::date IS NOT NULL
+		  OR $4::date IS NOT NULL
+		  OR osi.created_at_external::date BETWEEN (SELECT date_from FROM current_period) AND (SELECT date_to FROM current_period)
+	  )
+	  AND ($3::date IS NULL OR osi.created_at_external::date >= $3::date)
+	  AND ($4::date IS NULL OR osi.created_at_external::date <= $4::date)
 )
 SELECT
 	u.id,
@@ -253,26 +278,7 @@ JOIN trader_profiles tp ON tp.user_id = u.id
 WHERE u.team_id = $1
   AND u.id = $2
   AND u.role = 'trader'
-  AND u.deleted_at IS NULL`, teamID, traderID, dateValue(filters.DateFrom), dateValue(filters.DateTo))
-
-	var profile TraderProfile
-	if err := row.Scan(
-		&profile.ID,
-		&profile.Login,
-		&profile.SalaryRateBps,
-		&profile.ExternalWorkerName,
-		&profile.CurrentShiftSuccessInboundMinor,
-		&profile.CurrentShiftSalaryMinor,
-		&profile.PeriodID,
-		&profile.PeriodTitle,
-		&profile.PeriodSuccessInboundMinor,
-		&profile.PeriodSalaryMinor,
-	); err != nil {
-		return TraderProfile{}, fmt.Errorf("get trader profile readmodel: %w", err)
-	}
-
-	return profile, nil
-}
+  AND u.deleted_at IS NULL`
 
 func dateValue(value *time.Time) pgtype.Date {
 	if value == nil {

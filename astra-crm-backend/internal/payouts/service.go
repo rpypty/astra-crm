@@ -13,11 +13,13 @@ var ErrInvalidInput = errors.New("invalid payout input")
 
 type Store interface {
 	ListOrders(ctx context.Context, teamID int64, traderID int64) ([]Order, error)
+	ListOrderHistory(ctx context.Context, teamID int64, traderID int64) ([]Order, error)
 	GetOrder(ctx context.Context, teamID int64, traderID int64, payoutID int64) (Order, error)
 	CreateOrder(ctx context.Context, params CreateOrderRecord) (Order, error)
 	UpdateOrder(ctx context.Context, params UpdateOrderRecord) (Order, error)
 	CancelOrder(ctx context.Context, teamID int64, traderID int64, payoutID int64) (Order, error)
 	AddTransfer(ctx context.Context, params AddTransferRecord) (Transfer, error)
+	UpdateTransfer(ctx context.Context, params UpdateTransferRecord) (Transfer, error)
 	DeleteTransfer(ctx context.Context, teamID int64, traderID int64, payoutID int64, transferID int64) (Transfer, error)
 	ListTransfers(ctx context.Context, teamID int64, traderID int64, payoutID int64) ([]Transfer, error)
 }
@@ -77,8 +79,23 @@ type AddTransferParams struct {
 	Comment                *string
 }
 
+type PatchTransferParams struct {
+	ActorID                int64
+	TeamID                 int64
+	TraderID               int64
+	PayoutID               int64
+	TransferID             int64
+	SourceShiftRequisiteID int64
+	AmountMinor            int64
+	Comment                *string
+}
+
 func (s *Service) ListOrders(ctx context.Context, teamID int64, traderID int64) ([]Order, error) {
 	return s.store.ListOrders(ctx, teamID, traderID)
+}
+
+func (s *Service) ListOrderHistory(ctx context.Context, teamID int64, traderID int64) ([]Order, error) {
+	return s.store.ListOrderHistory(ctx, teamID, traderID)
 }
 
 func (s *Service) GetOrder(ctx context.Context, teamID int64, traderID int64, payoutID int64) (Order, []Transfer, error) {
@@ -233,6 +250,44 @@ func (s *Service) AddTransfer(ctx context.Context, params AddTransferParams) (Tr
 		TeamID:     params.TeamID,
 		ActorID:    params.ActorID,
 		Action:     audit.ActionManualPayoutTransferAdded,
+		EntityType: "manual_payout_transfer",
+		EntityID:   strconv.FormatInt(transfer.ID, 10),
+		After:      PublicTransferFromDomain(transfer),
+		Comment:    comment,
+	}); err != nil {
+		return Transfer{}, err
+	}
+
+	if err := s.afterManualPayoutChanged(ctx, transfer.TeamID, transfer.TraderID, transfer.ShiftID); err != nil {
+		return Transfer{}, err
+	}
+
+	return transfer, nil
+}
+
+func (s *Service) PatchTransfer(ctx context.Context, params PatchTransferParams) (Transfer, error) {
+	if params.ActorID <= 0 || params.TeamID <= 0 || params.TraderID <= 0 || params.PayoutID <= 0 || params.TransferID <= 0 || params.SourceShiftRequisiteID <= 0 || params.AmountMinor <= 0 {
+		return Transfer{}, ErrInvalidInput
+	}
+
+	comment := cleanOptionalString(params.Comment)
+	transfer, err := s.store.UpdateTransfer(ctx, UpdateTransferRecord{
+		TeamID:                 params.TeamID,
+		TraderID:               params.TraderID,
+		PayoutID:               params.PayoutID,
+		TransferID:             params.TransferID,
+		SourceShiftRequisiteID: params.SourceShiftRequisiteID,
+		AmountMinor:            params.AmountMinor,
+		Comment:                comment,
+	})
+	if err != nil {
+		return Transfer{}, err
+	}
+
+	if err := s.writeAudit(ctx, audit.Event{
+		TeamID:     params.TeamID,
+		ActorID:    params.ActorID,
+		Action:     audit.ActionManualPayoutTransferUpdated,
 		EntityType: "manual_payout_transfer",
 		EntityID:   strconv.FormatInt(transfer.ID, 10),
 		After:      PublicTransferFromDomain(transfer),

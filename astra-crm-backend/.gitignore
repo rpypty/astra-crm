@@ -5,6 +5,7 @@
 bin/
 build/
 dist/
+/api
 
 coverage.out
 *.test

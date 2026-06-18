@@ -48,6 +48,7 @@ type DataTableProps<TData> = {
   emptyTitle?: string;
   emptyDescription?: string;
   pageSizeOptions?: number[];
+  getRowClassName?: (row: TData) => string | undefined;
 };
 
 export function DataTable<TData>({
@@ -69,6 +70,7 @@ export function DataTable<TData>({
   emptyTitle = "Нет данных",
   emptyDescription,
   pageSizeOptions = [8, 15, 25, 50],
+  getRowClassName,
 }: DataTableProps<TData>) {
   const [searchDraft, setSearchDraft] = useState(search ?? "");
   const pageCount = Math.max(1, Math.ceil(rowCount / pagination.pageSize));
@@ -204,6 +206,7 @@ export function DataTable<TData>({
                   className={cn(
                     "border-b border-border last:border-0 hover:bg-slate-50",
                     onRowClick && "cursor-pointer",
+                    getRowClassName?.(row.original),
                   )}
                   onClick={(event) => {
                     if (shouldSkipRowClick(event)) return;

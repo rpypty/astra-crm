@@ -37,14 +37,15 @@ type PublicDashboard struct {
 }
 
 type PublicSummary struct {
-	TotalAmountMinor   int64 `json:"totalAmountMinor"`
-	TotalCount         int64 `json:"totalCount"`
-	SuccessAmountMinor int64 `json:"successAmountMinor"`
-	SuccessCount       int64 `json:"successCount"`
-	FailedAmountMinor  int64 `json:"failedAmountMinor"`
-	FailedCount        int64 `json:"failedCount"`
-	UnknownAmountMinor int64 `json:"unknownAmountMinor"`
-	UnknownCount       int64 `json:"unknownCount"`
+	TotalAmountMinor    int64 `json:"totalAmountMinor"`
+	TotalCount          int64 `json:"totalCount"`
+	SuccessAmountMinor  int64 `json:"successAmountMinor"`
+	SuccessCount        int64 `json:"successCount"`
+	FailedAmountMinor   int64 `json:"failedAmountMinor"`
+	FailedCount         int64 `json:"failedCount"`
+	UnknownAmountMinor  int64 `json:"unknownAmountMinor"`
+	UnknownCount        int64 `json:"unknownCount"`
+	BlockedBalanceMinor int64 `json:"blockedBalanceMinor"`
 }
 
 type PublicStatusBreakdownItem struct {
@@ -131,14 +132,15 @@ func PublicDashboardFromDomain(dashboard Dashboard) PublicDashboard {
 
 	return PublicDashboard{
 		Summary: PublicSummary{
-			TotalAmountMinor:   dashboard.Summary.TotalAmountMinor,
-			TotalCount:         dashboard.Summary.TotalCount,
-			SuccessAmountMinor: dashboard.Summary.SuccessAmountMinor,
-			SuccessCount:       dashboard.Summary.SuccessCount,
-			FailedAmountMinor:  dashboard.Summary.FailedAmountMinor,
-			FailedCount:        dashboard.Summary.FailedCount,
-			UnknownAmountMinor: dashboard.Summary.UnknownAmountMinor,
-			UnknownCount:       dashboard.Summary.UnknownCount,
+			TotalAmountMinor:    dashboard.Summary.TotalAmountMinor,
+			TotalCount:          dashboard.Summary.TotalCount,
+			SuccessAmountMinor:  dashboard.Summary.SuccessAmountMinor,
+			SuccessCount:        dashboard.Summary.SuccessCount,
+			FailedAmountMinor:   dashboard.Summary.FailedAmountMinor,
+			FailedCount:         dashboard.Summary.FailedCount,
+			UnknownAmountMinor:  dashboard.Summary.UnknownAmountMinor,
+			UnknownCount:        dashboard.Summary.UnknownCount,
+			BlockedBalanceMinor: dashboard.Summary.BlockedBalanceMinor,
 		},
 		StatusBreakdown: breakdown,
 		UnknownStatuses: unknownStatuses,

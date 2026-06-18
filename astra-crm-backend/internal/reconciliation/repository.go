@@ -64,8 +64,17 @@ func (r *Repository) RecalculateTraderInbound(ctx context.Context, record Recalc
 	}
 
 	diff := actualAmount - expected.ExpectedAmountMinor
+	requisiteMismatchCount, err := queries.CountTraderInboundRequisiteMismatches(ctx, db.CountTraderInboundRequisiteMismatchesParams{
+		TeamID:   record.TeamID,
+		TraderID: record.TraderID,
+		ShiftID:  record.ShiftID,
+	})
+	if err != nil {
+		return Run{}, err
+	}
+
 	status := StatusMismatch
-	if diff == 0 {
+	if diff == 0 && requisiteMismatchCount == 0 {
 		status = StatusMatched
 	}
 
@@ -93,6 +102,23 @@ func (r *Repository) RecalculateTraderInbound(ctx context.Context, record Recalc
 		if err := createTotalMismatchItem(ctx, tx, run.ID, expected.ExpectedAmountMinor, actualAmount, diff, "Trader invoice CSV total differs from closed requisite turnover"); err != nil {
 			return Run{}, err
 		}
+	}
+
+	if _, err := queries.CreateTraderInboundRequisiteMismatchItems(ctx, db.CreateTraderInboundRequisiteMismatchItemsParams{
+		RunID:    run.ID,
+		TeamID:   record.TeamID,
+		TraderID: record.TraderID,
+		ShiftID:  record.ShiftID,
+	}); err != nil {
+		return Run{}, err
+	}
+
+	if err := queries.UpdateTraderInboundRequisiteReviewStatuses(ctx, db.UpdateTraderInboundRequisiteReviewStatusesParams{
+		TeamID:   record.TeamID,
+		TraderID: record.TraderID,
+		ShiftID:  record.ShiftID,
+	}); err != nil {
+		return Run{}, err
 	}
 
 	if err := queries.UpdateTraderShiftInboundReconciliationStatus(ctx, db.UpdateTraderShiftInboundReconciliationStatusParams{
@@ -147,10 +173,6 @@ func (r *Repository) RecalculateTraderOutbound(ctx context.Context, record Recal
 	}
 
 	diff := actualAmount - expected.ExpectedAmountMinor
-	status := StatusMismatch
-	if diff == 0 {
-		status = StatusMatched
-	}
 
 	run, err := queries.CreateTraderOutboundReconciliationRun(ctx, db.CreateTraderOutboundReconciliationRunParams{
 		TeamID:              record.TeamID,
@@ -165,7 +187,7 @@ func (r *Repository) RecalculateTraderOutbound(ctx context.Context, record Recal
 		FailedCount:         expected.FailedCount,
 		TotalAmountMinor:    expected.TotalAmountMinor,
 		TotalCount:          expected.TotalCount,
-		Status:              status,
+		Status:              StatusMismatch,
 	})
 	if err != nil {
 		return Run{}, err
@@ -177,12 +199,27 @@ func (r *Repository) RecalculateTraderOutbound(ctx context.Context, record Recal
 		}
 	}
 
-	if err := queries.CreateTraderOutboundUnpaidPayoutItems(ctx, db.CreateTraderOutboundUnpaidPayoutItemsParams{
+	itemIDs, err := queries.CreateTraderOutboundReconciliationItems(ctx, db.CreateTraderOutboundReconciliationItemsParams{
 		RunID:    run.ID,
 		TeamID:   record.TeamID,
 		TraderID: record.TraderID,
 		ShiftID:  record.ShiftID,
-	}); err != nil {
+	})
+	if err != nil {
+		return Run{}, err
+	}
+
+	status := StatusMismatch
+	if diff == 0 && len(itemIDs) == 0 {
+		status = StatusMatched
+	}
+
+	run, err = queries.UpdateReconciliationRunStatus(ctx, db.UpdateReconciliationRunStatusParams{
+		Status: status,
+		RunID:  run.ID,
+		TeamID: record.TeamID,
+	})
+	if err != nil {
 		return Run{}, err
 	}
 

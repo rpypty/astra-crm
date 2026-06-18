@@ -8,11 +8,13 @@ const (
 	StatusClosed                = "closed"
 	StatusClosedWithDiscrepancy = "closed_with_discrepancy"
 
-	RequisiteStatusActive     = "active"
-	RequisiteStatusReleased   = "released"
-	RequisiteStatusWorked     = "worked"
-	RequisiteStatusCorrection = "correction"
-	RequisiteStatusBlocked    = "blocked"
+	RequisiteStatusActive      = "active"
+	RequisiteStatusReleased    = "released"
+	RequisiteStatusWorked      = "worked_pending_review"
+	RequisiteStatusVerified    = "worked_verified"
+	RequisiteStatusDiscrepancy = "worked_discrepancy"
+	RequisiteStatusCorrection  = "correction"
+	RequisiteStatusBlocked     = "blocked"
 )
 
 type Shift struct {
@@ -97,4 +99,46 @@ type CloseChecklist struct {
 	AllPayoutsFullyPaid bool
 	UnpaidPayoutCount   int64
 	CanClose            bool
+}
+
+type ShiftReportReconciliation struct {
+	ID                  int64
+	Status              string
+	ExpectedAmountMinor int64
+	ActualAmountMinor   int64
+	DiffAmountMinor     int64
+	Comment             *string
+	CreatedAt           time.Time
+}
+
+type ShiftReportRow struct {
+	RowKey                string
+	ShiftRequisiteID      *int64
+	RequisiteID           *int64
+	Phone                 string
+	MethodType            string
+	BankCode              string
+	BankName              string
+	Proxy                 *string
+	EmployeeComment       *string
+	CardNumber            *string
+	HolderName            *string
+	Status                string
+	InboundTurnoverMinor  int64
+	OutboundTurnoverMinor int64
+	ClosingBalanceMinor   int64
+	TargetTurnoverMinor   int64
+	CSVInboundMinor       int64
+	CSVOutboundMinor      int64
+	InboundDiffMinor      int64
+	OutboundDiffMinor     int64
+	HasMismatch           bool
+	CSVOnly               bool
+}
+
+type ShiftReportDetails struct {
+	Shift    Shift
+	Inbound  *ShiftReportReconciliation
+	Outbound *ShiftReportReconciliation
+	Rows     []ShiftReportRow
 }

@@ -1,0 +1,3 @@
+id|innerId|requisite|requisitePhone|deviceName|methodType|methodName|amount|courseWorker|currency|status|createdAt|closedAt|updatedAt|oldAmount|receipt|orderComment|requisiteId|workerName|workerAmount|workerProfit|ordered|counted|initials
+200|tr-200|2200000000000000|79990000000|device-1|C2C|card|3001.0|91.20|RUB|auto_decline|28.05.2026 14:00:00|None|None|None|None|None|req-1|Bliss_OP2|3001.0|50.0|true|false|AB
+201|tr-201|79991111111|79991111111|device-2|СБП|sbp|10.25|91.10|RUB|manual_review|28.05.2026 15:00:00|None|28.05.2026 15:05:00|None|None|unknown status|req-2|Bliss_OP2|10.25|1.0|None|None|None

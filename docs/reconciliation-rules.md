@@ -122,7 +122,7 @@ Expected amount:
 expected_amount = sum(active payout CSV order amounts)
 ```
 
-Actual amount:
+Actual amount for the report total:
 
 ```text
 actual_amount = sum(manual_payout_transfers.amount for shift)
@@ -136,10 +136,42 @@ diff_amount = actual_amount - expected_amount
 
 Important: actual amount is based on intermediate transfers, not manual payout order headers.
 
+Important: payout CSV contains the recipient requisite, not the source requisite that sent money.
+Therefore payout CSV must not be compared to shift requisites row-by-row by recipient requisite.
+
+Source requisite control:
+
+```text
+closed_outbound_turnover per shift_requisite
+vs
+sum(manual_payout_transfers.amount grouped by source_shift_requisite_id)
+```
+
+If these values differ:
+
+- show mismatch on the concrete source requisite;
+- issue type may be `source_requisite_outbound_mismatch`;
+- this mismatch affects outbound reconciliation status.
+
+Payout order control:
+
+```text
+successful CSV payout amounts
+vs
+manual_payout_orders.amount
+vs
+sum(manual_payout_transfers.amount) per manual payout
+```
+
+Do not treat recipient bank/requisite difference as a reconciliation mismatch.
+Recipient fields are display/debug context only.
+
 Matched:
 
 ```text
 diff_amount == 0
+and no source requisite mismatch
+and no payout order mismatch
 ```
 
 Mismatch:

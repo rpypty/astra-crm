@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
-import { CalendarDays, Copy, Eye, FileText, History, Pencil, Plus, UserRound, X } from "lucide-react";
+import { CalendarDays, Copy, Eye, FileText, History, Pencil, Plus, RefreshCw, UserRound, X } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { Bar, CartesianGrid, Cell, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -78,7 +78,6 @@ const traderSchema = z
     id: z.number().optional(),
     login: z.string().min(1, "Введите логин"),
     password: z.string().optional(),
-    externalWorkerName: z.string().min(1, "Введите external worker name"),
     salaryPercent: z.coerce.number().min(0, "Минимум 0").max(100, "Максимум 100"),
     status: z.enum(["active", "disabled"]),
   })
@@ -103,7 +102,7 @@ const planSchema = z.object({
   requisiteId: z.string().min(1, "Выберите реквизит"),
   traderId: z.string().min(1, "Выберите трейдера"),
   assignedForDate: z.string().min(1, "Выберите дату"),
-  targetTurnover: z.string().min(1, "Введите целевой оборот").refine((value) => parseMoneyToMinor(value) > 0, "Сумма должна быть больше 0"),
+  targetTurnover: z.string().min(1, "Введите лимит").refine((value) => parseMoneyToMinor(value) > 0, "Сумма должна быть больше 0"),
   comment: z.string().optional(),
 });
 
@@ -119,6 +118,8 @@ type RequisiteReportTarget = {
 };
 
 const TEAMLEAD_PERIOD_FILTER_STORAGE_KEY = "astra-crm:teamlead-period-filter";
+const GENERATED_TRADER_PASSWORD_LENGTH = 14;
+const GENERATED_TRADER_PASSWORD_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%";
 
 export function TeamleadTradersPage() {
   const queryClient = useQueryClient();
@@ -160,7 +161,7 @@ export function TeamleadTradersPage() {
       {
         accessorKey: "login",
         header: "Логин",
-        cell: ({ row }) => <UserCell login={row.original.login} secondary={row.original.externalWorkerName} />,
+        cell: ({ row }) => <UserCell login={row.original.login} />,
       },
       {
         accessorKey: "salaryRateBps",
@@ -187,6 +188,14 @@ export function TeamleadTradersPage() {
   );
 
   const data = tradersQuery.data ?? [];
+  const openTraderForm = useCallback(
+    (trader: Trader | null) => {
+      saveMutation.reset();
+      setEditingTrader(trader);
+      setFormOpen(true);
+    },
+    [saveMutation],
+  );
 
   return (
     <div className="space-y-6">
@@ -197,8 +206,7 @@ export function TeamleadTradersPage() {
           <Button
             type="button"
             onClick={() => {
-              setEditingTrader(null);
-              setFormOpen(true);
+              openTraderForm(null);
             }}
           >
             <Plus className="h-4 w-4" />
@@ -226,21 +234,26 @@ export function TeamleadTradersPage() {
         emptyTitle="Сотрудников пока нет"
         emptyDescription="Добавьте первого трейдера для работы со сменами."
         onRowClick={(row) => {
-          setEditingTrader(row);
-          setFormOpen(true);
+          openTraderForm(row);
         }}
         actions={[
           {
             label: "Редактировать",
             onSelect: (row) => {
-              setEditingTrader(row);
-              setFormOpen(true);
+              openTraderForm(row);
             },
           },
-          { label: "Сбросить пароль", onSelect: (row) => resetPasswordMutation.mutate(row.id) },
+          {
+            label: "Сбросить пароль",
+            onSelect: (row) => {
+              resetPasswordMutation.reset();
+              resetPasswordMutation.mutate(row.id);
+            },
+          },
           { label: "Отключить", destructive: true, onSelect: (row) => setArchiveTrader(row) },
         ]}
       />
+      <MutationErrorAlert error={resetPasswordMutation.error ?? archiveMutation.error} />
       <ConfirmActionDialog
         open={Boolean(archiveTrader)}
         onOpenChange={(open) => !open && setArchiveTrader(null)}
@@ -248,7 +261,10 @@ export function TeamleadTradersPage() {
         description="Трейдер потеряет доступ к CRM. Действие будет записано в аудит."
         confirmText="Отключить"
         onConfirm={() => {
-          if (archiveTrader) archiveMutation.mutate(archiveTrader.id);
+          if (archiveTrader) {
+            archiveMutation.reset();
+            archiveMutation.mutate(archiveTrader.id);
+          }
           setArchiveTrader(null);
         }}
       />
@@ -257,12 +273,12 @@ export function TeamleadTradersPage() {
         onOpenChange={setFormOpen}
         trader={editingTrader}
         isSaving={saveMutation.isPending}
+        error={saveMutation.error instanceof Error ? saveMutation.error.message : null}
         onSubmit={(values) =>
           saveMutation.mutate({
             id: values.id,
-            login: values.login,
+            login: editingTrader?.login ?? values.login,
             password: values.password,
-            externalWorkerName: values.externalWorkerName,
             salaryRateBps: percentToBps(values.salaryPercent),
             status: values.status,
           })
@@ -278,47 +294,77 @@ function TraderFormDialog({
   onOpenChange,
   trader,
   isSaving,
+  error,
   onSubmit,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   trader: Trader | null;
   isSaving: boolean;
+  error: string | null;
   onSubmit: (values: TraderForm) => void;
 }) {
   const form = useForm<TraderForm>({
     resolver: zodResolver(traderSchema),
-    values: trader
-      ? {
-          id: trader.id,
-          login: trader.login,
-          password: "",
-          externalWorkerName: trader.externalWorkerName,
-          salaryPercent: bpsToPercent(trader.salaryRateBps),
-          status: trader.status,
-        }
-      : { login: "", password: "", externalWorkerName: "", salaryPercent: 0.5, status: "active" },
+    defaultValues: { login: "", password: "", salaryPercent: 0.5, status: "active" },
   });
+
+  useEffect(() => {
+    if (!open) return;
+
+    form.reset(
+      trader
+        ? {
+            id: trader.id,
+            login: trader.login,
+            password: "",
+            salaryPercent: bpsToPercent(trader.salaryRateBps),
+            status: trader.status,
+          }
+        : {
+            login: "",
+            password: generateTraderPassword(),
+            salaryPercent: 0.5,
+            status: "active",
+          },
+    );
+  }, [form, open, trader]);
+
+  const regeneratePassword = useCallback(() => {
+    form.setValue("password", generateTraderPassword(), { shouldDirty: true, shouldValidate: true });
+  }, [form]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="left-auto right-0 top-0 h-screen w-[min(520px,100vw)] translate-x-0 translate-y-0 rounded-none">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold">{trader ? "Редактировать трейдера" : "Добавить трейдера"}</DialogTitle>
-          <DialogDescription>{trader ? "Пароль на форме редактирования не показывается." : "Пароль нужен только при создании."}</DialogDescription>
+          <DialogDescription>
+            {trader ? "Логин и пароль на форме редактирования не меняются." : "Пароль можно оставить сгенерированным или задать вручную."}
+          </DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
+          {error ? <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
           <FormField label="Логин" error={form.formState.errors.login?.message}>
-            <Input {...form.register("login")} />
+            <Input {...form.register("login")} readOnly={Boolean(trader)} className={trader ? "bg-muted" : undefined} />
           </FormField>
           {!trader ? (
             <FormField label="Пароль" error={form.formState.errors.password?.message}>
-              <Input type="password" {...form.register("password")} />
+              <div className="flex gap-2">
+                <Input type="text" autoComplete="new-password" {...form.register("password")} />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label="Сгенерировать новый пароль"
+                  title="Сгенерировать новый пароль"
+                  onClick={regeneratePassword}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </div>
             </FormField>
           ) : null}
-          <FormField label="External worker name" error={form.formState.errors.externalWorkerName?.message}>
-            <Input {...form.register("externalWorkerName")} />
-          </FormField>
           <FormField label="Ставка, %" error={form.formState.errors.salaryPercent?.message}>
             <Input type="number" step="0.01" {...form.register("salaryPercent")} />
           </FormField>
@@ -340,6 +386,29 @@ function TraderFormDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function MutationErrorAlert({ error }: { error: unknown }) {
+  if (!error) return null;
+
+  return (
+    <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+      {error instanceof Error ? error.message : "Не удалось выполнить действие"}
+    </div>
+  );
+}
+
+function generateTraderPassword() {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi?.getRandomValues) {
+    const values = new Uint32Array(GENERATED_TRADER_PASSWORD_LENGTH);
+    cryptoApi.getRandomValues(values);
+    return Array.from(values, (value) => GENERATED_TRADER_PASSWORD_CHARS[value % GENERATED_TRADER_PASSWORD_CHARS.length]).join("");
+  }
+
+  return Array.from({ length: GENERATED_TRADER_PASSWORD_LENGTH }, () => {
+    return GENERATED_TRADER_PASSWORD_CHARS[Math.floor(Math.random() * GENERATED_TRADER_PASSWORD_CHARS.length)];
+  }).join("");
 }
 
 function GeneratedPasswordDialog({ password, onClose }: { password: string | null; onClose: () => void }) {

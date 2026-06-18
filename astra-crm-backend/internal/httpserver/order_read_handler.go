@@ -219,6 +219,11 @@ func orderFiltersFromRequest(w http.ResponseWriter, r *http.Request) (orders.Fil
 		RespondError(w, ValidationError(fields))
 		return orders.Filters{}, false
 	}
+	confirmedOnly, ok := optionalBool(query.Get("confirmedOnly"), "confirmedOnly", fields)
+	if !ok {
+		RespondError(w, ValidationError(fields))
+		return orders.Filters{}, false
+	}
 	page, ok := optionalPositiveInt64(query.Get("page"), "page", fields)
 	if !ok {
 		RespondError(w, ValidationError(fields))
@@ -231,20 +236,37 @@ func orderFiltersFromRequest(w http.ResponseWriter, r *http.Request) (orders.Fil
 	}
 
 	return orders.Filters{
-		DateFrom:   dateFrom,
-		DateTo:     dateTo,
-		TraderID:   traderID,
-		TraderIDs:  traderIDs,
-		WorkerName: optionalCleanString(query.Get("workerName")),
-		Requisite:  optionalCleanString(query.Get("requisite")),
-		MethodType: optionalCleanString(query.Get("methodType")),
-		Status:     optionalCleanString(query.Get("status")),
-		AmountFrom: amountFrom,
-		AmountTo:   amountTo,
-		Page:       page,
-		PageSize:   pageSize,
-		Sort:       strings.TrimSpace(query.Get("sort")),
+		DateFrom:      dateFrom,
+		DateTo:        dateTo,
+		TraderID:      traderID,
+		TraderIDs:     traderIDs,
+		WorkerName:    optionalCleanString(query.Get("workerName")),
+		Requisite:     optionalCleanString(query.Get("requisite")),
+		MethodType:    optionalCleanString(query.Get("methodType")),
+		Status:        optionalCleanString(query.Get("status")),
+		AmountFrom:    amountFrom,
+		AmountTo:      amountTo,
+		ConfirmedOnly: confirmedOnly,
+		Page:          page,
+		PageSize:      pageSize,
+		Sort:          strings.TrimSpace(query.Get("sort")),
 	}, true
+}
+
+func optionalBool(raw string, field string, fields map[string]string) (bool, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false, true
+	}
+	switch raw {
+	case "true", "1":
+		return true, true
+	case "false", "0":
+		return false, true
+	default:
+		fields[field] = "Ожидается true или false"
+		return false, false
+	}
 }
 
 func optionalInt64List(rawValues []string, field string, fields map[string]string) ([]int64, bool) {
