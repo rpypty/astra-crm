@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
 	"github.com/ashpak/astra-crm-backend/internal/users"
@@ -104,6 +105,13 @@ type PlanParams struct {
 	Comment             *string
 }
 
+type ListParams struct {
+	Search   string
+	BankCode string
+	Status   string
+	TraderID string
+}
+
 func (s *Service) Create(ctx context.Context, params CreateParams) (RequisiteDetails, error) {
 	phone, ok := normalizePhone(params.Phone)
 	methodType := cleanMethodType(params.MethodType)
@@ -177,8 +185,25 @@ func (s *Service) Create(ctx context.Context, params CreateParams) (RequisiteDet
 	return details, nil
 }
 
-func (s *Service) List(ctx context.Context, teamID int64) ([]RequisiteDetails, error) {
-	return s.store.ListDetails(ctx, teamID)
+func (s *Service) List(ctx context.Context, teamID int64, params ListParams) ([]RequisiteDetails, error) {
+	items, err := s.store.ListDetails(ctx, teamID)
+	if err != nil {
+		return nil, err
+	}
+
+	filters := normalizeListParams(params)
+	if filters.Search == "" && filters.BankCode == "" && filters.Status == "" && filters.TraderID == "" {
+		return items, nil
+	}
+
+	result := make([]RequisiteDetails, 0, len(items))
+	for _, item := range items {
+		if requisiteMatchesListParams(item, filters) {
+			result = append(result, item)
+		}
+	}
+
+	return result, nil
 }
 
 func (s *Service) Get(ctx context.Context, teamID int64, requisiteID int64) (RequisiteDetails, error) {
@@ -558,6 +583,81 @@ func validStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeListParams(params ListParams) ListParams {
+	return ListParams{
+		Search:   strings.TrimSpace(params.Search),
+		BankCode: normalizeBankCode(params.BankCode),
+		Status:   strings.TrimSpace(params.Status),
+		TraderID: strings.TrimSpace(params.TraderID),
+	}
+}
+
+func requisiteMatchesListParams(item RequisiteDetails, params ListParams) bool {
+	if params.BankCode != "" && params.BankCode != "all" && item.BankCode != params.BankCode {
+		return false
+	}
+	if params.Status != "" && params.Status != "all" && item.Status != params.Status {
+		return false
+	}
+	if params.TraderID != "" && params.TraderID != "all" {
+		if params.TraderID == "unassigned" {
+			if item.AssignedTraderID != nil {
+				return false
+			}
+		} else if item.AssignedTraderID == nil || strconv.FormatInt(*item.AssignedTraderID, 10) != params.TraderID {
+			return false
+		}
+	}
+	if params.Search == "" {
+		return true
+	}
+
+	return requisiteMatchesSearch(item, params.Search)
+}
+
+func requisiteMatchesSearch(item RequisiteDetails, search string) bool {
+	query := strings.ToLower(strings.TrimSpace(search))
+	queryDigits := digitsOnly(query)
+	if queryDigits != "" && strings.Contains(digitsOnly(item.Phone), queryDigits) {
+		return true
+	}
+	if queryDigits != "" && item.CardNumber != nil && strings.Contains(digitsOnly(*item.CardNumber), queryDigits) {
+		return true
+	}
+
+	for _, value := range []string{
+		item.Phone,
+		item.BankName,
+		valueOrEmpty(item.Proxy),
+		valueOrEmpty(item.EmployeeComment),
+		valueOrEmpty(item.HolderName),
+		valueOrEmpty(item.CardNumber),
+	} {
+		if strings.Contains(strings.ToLower(value), query) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func digitsOnly(value string) string {
+	var builder strings.Builder
+	for _, char := range value {
+		if unicode.IsDigit(char) {
+			builder.WriteRune(char)
+		}
+	}
+	return builder.String()
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func normalizePhone(value string) (string, bool) {

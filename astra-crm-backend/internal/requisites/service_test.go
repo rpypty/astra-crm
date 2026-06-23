@@ -128,12 +128,102 @@ func TestServiceCreatePlanAllowsPastDateForTestBackfill(t *testing.T) {
 	}
 }
 
+func TestServiceListFiltersByBackendParams(t *testing.T) {
+	traderID := int64(84)
+	store := &fakeStore{
+		listItems: []RequisiteDetails{
+			{
+				Requisite: Requisite{
+					ID:       1,
+					Phone:    "79021002004",
+					BankCode: "sber",
+					BankName: "Сбер",
+					Status:   StatusActive,
+				},
+				AssignedTraderID: &traderID,
+			},
+			{
+				Requisite: Requisite{
+					ID:       2,
+					Phone:    "+7 (903) 748-12-97",
+					BankCode: "ozon",
+					BankName: "Ozon Банк",
+					Status:   StatusActive,
+				},
+			},
+			{
+				Requisite: Requisite{
+					ID:       3,
+					Phone:    "79001002000",
+					BankCode: "sber",
+					BankName: "Сбер",
+					Status:   StatusArchived,
+				},
+			},
+		},
+	}
+	service := NewService(store, nil, nil)
+
+	items, err := service.List(context.Background(), 2, ListParams{
+		Search: "1002",
+		Status: StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(items) != 1 || items[0].ID != 1 {
+		t.Fatalf("List() by phone digits returned ids %v, want [1]", requisiteIDs(items))
+	}
+
+	items, err = service.List(context.Background(), 2, ListParams{
+		Search: "1297",
+	})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(items) != 1 || items[0].ID != 2 {
+		t.Fatalf("List() by formatted phone substring returned ids %v, want [2]", requisiteIDs(items))
+	}
+
+	items, err = service.List(context.Background(), 2, ListParams{
+		BankCode: "sber",
+		TraderID: "84",
+		Status:   StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(items) != 1 || items[0].ID != 1 {
+		t.Fatalf("List() by bank/trader/status returned ids %v, want [1]", requisiteIDs(items))
+	}
+
+	items, err = service.List(context.Background(), 2, ListParams{
+		TraderID: "unassigned",
+		Status:   StatusActive,
+	})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(items) != 1 || items[0].ID != 2 {
+		t.Fatalf("List() by unassigned returned ids %v, want [2]", requisiteIDs(items))
+	}
+}
+
+func requisiteIDs(items []RequisiteDetails) []int64 {
+	result := make([]int64, 0, len(items))
+	for _, item := range items {
+		result = append(result, item.ID)
+	}
+	return result
+}
+
 type fakeStore struct {
 	created           CreateRecord
 	updated           UpdateRecord
 	assigned          AssignRecord
 	createdPlan       CreatePlanRecord
 	details           RequisiteDetails
+	listItems         []RequisiteDetails
 	assignWasReassign bool
 }
 
@@ -167,7 +257,7 @@ func (s *fakeStore) GetDetails(ctx context.Context, teamID int64, requisiteID in
 }
 
 func (s *fakeStore) ListDetails(ctx context.Context, teamID int64) ([]RequisiteDetails, error) {
-	return nil, nil
+	return s.listItems, nil
 }
 
 func (s *fakeStore) Update(ctx context.Context, params UpdateRecord) (Requisite, error) {

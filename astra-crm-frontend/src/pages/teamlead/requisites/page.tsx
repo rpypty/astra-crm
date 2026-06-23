@@ -160,6 +160,11 @@ export function TeamleadRequisitesPage() {
     queryKey: queryKeys.teamlead.requisites({ search: deferredSearch, bankCode, status, traderId }),
     queryFn: () => api.requisites.list({ search: deferredSearch, bankCode, status, traderId }),
   });
+  const planningRequisitesQuery = useQuery({
+    queryKey: queryKeys.teamlead.requisites({ status: "active", scope: "planning-suggest" }),
+    queryFn: () => api.requisites.list({ status: "active" }),
+    enabled: planOpen,
+  });
   const activityQuery = useQuery({
     queryKey: queryKeys.teamlead.requisiteActivity,
     queryFn: api.requisites.activity,
@@ -715,7 +720,7 @@ export function TeamleadRequisitesPage() {
         }}
         plan={editingPlan}
         initialRequisiteId={initialPlanRequisiteId}
-        requisites={(requisitesQuery.data ?? []).filter((requisite) => requisite.status === "active")}
+        requisites={(planningRequisitesQuery.data ?? []).filter(isRequisiteAvailableForPlanning)}
         traders={tradersQuery.data ?? []}
         isSaving={savePlanMutation.isPending}
         error={savePlanMutation.error instanceof Error ? savePlanMutation.error.message : null}
@@ -763,4 +768,8 @@ function ActivityTurnoverRow({ label, value }: { label: string; value: number })
       <span className="whitespace-nowrap font-medium tabular-nums">{formatMoneyMinor(value)}</span>
     </div>
   );
+}
+
+function isRequisiteAvailableForPlanning(requisite: Requisite) {
+  return requisite.status === "active" && requisite.assignmentStatus !== "blocked";
 }

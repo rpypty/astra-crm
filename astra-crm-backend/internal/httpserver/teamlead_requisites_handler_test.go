@@ -165,6 +165,7 @@ func withRequisiteID(ctx context.Context, id string) context.Context {
 type fakeTeamleadRequisiteService struct {
 	createParams requisites.CreateParams
 	createResult requisites.RequisiteDetails
+	listParams   requisites.ListParams
 	listResult   []requisites.RequisiteDetails
 	history      []requisites.Assignment
 }
@@ -174,7 +175,8 @@ func (s *fakeTeamleadRequisiteService) Create(ctx context.Context, params requis
 	return s.createResult, nil
 }
 
-func (s *fakeTeamleadRequisiteService) List(ctx context.Context, teamID int64) ([]requisites.RequisiteDetails, error) {
+func (s *fakeTeamleadRequisiteService) List(ctx context.Context, teamID int64, params requisites.ListParams) ([]requisites.RequisiteDetails, error) {
+	s.listParams = params
 	return s.listResult, nil
 }
 

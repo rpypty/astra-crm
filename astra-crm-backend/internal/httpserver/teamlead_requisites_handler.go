@@ -15,7 +15,7 @@ import (
 
 type TeamleadRequisiteService interface {
 	Create(ctx context.Context, params requisites.CreateParams) (requisites.RequisiteDetails, error)
-	List(ctx context.Context, teamID int64) ([]requisites.RequisiteDetails, error)
+	List(ctx context.Context, teamID int64, params requisites.ListParams) ([]requisites.RequisiteDetails, error)
 	Get(ctx context.Context, teamID int64, requisiteID int64) (requisites.RequisiteDetails, error)
 	Patch(ctx context.Context, params requisites.PatchParams) (requisites.RequisiteDetails, error)
 	Delete(ctx context.Context, actorID int64, teamID int64, requisiteID int64) error
@@ -109,7 +109,12 @@ func (h *TeamleadRequisitesHandler) List(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	items, err := h.service.List(r.Context(), actor.TeamID)
+	items, err := h.service.List(r.Context(), actor.TeamID, requisites.ListParams{
+		Search:   r.URL.Query().Get("search"),
+		BankCode: r.URL.Query().Get("bankCode"),
+		Status:   r.URL.Query().Get("status"),
+		TraderID: r.URL.Query().Get("traderId"),
+	})
 	if err != nil {
 		RespondError(w, mapRequisiteError(err))
 		return

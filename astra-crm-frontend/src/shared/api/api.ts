@@ -186,8 +186,8 @@ export const api = {
 
   requisites: {
     async list(filters?: { search?: string; bankCode?: string; status?: string; traderId?: string }) {
-      const response = await apiClient.get<RequisitesListResponse>("/teamlead/requisites");
-      return response.items.map(toRequisite).filter((requisite) => filterRequisite(requisite, filters));
+      const response = await apiClient.get<RequisitesListResponse>(`/teamlead/requisites${queryString(filters ?? {})}`);
+      return response.items.map(toRequisite);
     },
     async save(input: {
       id?: number;
@@ -997,22 +997,6 @@ function filterTrader(trader: Trader, filters?: { search?: string; status?: stri
     !search || trader.login.toLowerCase().includes(search) || trader.externalWorkerName.toLowerCase().includes(search);
   const matchesStatus = !filters?.status || filters.status === "all" || trader.status === filters.status;
   return matchesSearch && matchesStatus;
-}
-
-function filterRequisite(requisite: Requisite, filters?: { search?: string; bankCode?: string; status?: string; traderId?: string }) {
-  const search = filters?.search?.trim().toLowerCase();
-  const matchesSearch =
-    !search ||
-    [requisite.phone, requisite.bankName, requisite.proxy, requisite.employeeComment ?? "", requisite.holderName ?? "", requisite.cardNumber ?? ""].some(
-      (value) => value.toLowerCase().includes(search),
-    );
-  const matchesBank = !filters?.bankCode || filters.bankCode === "all" || requisite.bankCode === filters.bankCode;
-  const matchesStatus = !filters?.status || filters.status === "all" || requisite.status === filters.status;
-  const matchesTrader =
-    !filters?.traderId ||
-    filters.traderId === "all" ||
-    String(requisite.assignedTraderId ?? "unassigned") === filters.traderId;
-  return matchesSearch && matchesBank && matchesStatus && matchesTrader;
 }
 
 function filterOrder(order: Order, filters?: { search?: string; status?: string }) {

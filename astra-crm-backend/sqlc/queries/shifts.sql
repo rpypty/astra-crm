@@ -295,10 +295,9 @@ WITH crm_requisites AS (
         COALESCE(sr.outbound_turnover_minor, 0)::bigint AS outbound_turnover_minor,
         COALESCE(sr.closing_balance_minor, 0)::bigint AS closing_balance_minor,
         COALESCE(ra.target_turnover_minor, 0)::bigint AS target_turnover_minor,
-        COALESCE(
-            NULLIF(right(regexp_replace(r.phone, '[^0-9]', '', 'g'), 10), ''),
-            'requisite:' || r.id::text
-        ) AS match_key
+        ('crm:' || sr.id::text) AS match_key,
+        NULLIF(right(regexp_replace(r.phone, '[^0-9]', '', 'g'), 10), '') AS phone_match_key,
+        NULLIF(regexp_replace(COALESCE(NULLIF(sr.card_number, ''), NULLIF(r.card_number, ''), ''), '[^0-9]', '', 'g'), '') AS card_match_key
     FROM shift_requisites sr
     JOIN trader_shifts ts ON ts.id = sr.shift_id
     JOIN requisites r ON r.id = sr.requisite_id
@@ -308,24 +307,63 @@ WITH crm_requisites AS (
       AND sr.shift_id = sqlc.arg(shift_id)
       AND ts.team_id = sqlc.arg(team_id)
 ),
-csv_inbound AS (
+crm_match_keys AS (
+    SELECT shift_requisite_id, 'phone:' || phone_match_key AS lookup_key, match_key
+    FROM crm_requisites
+    WHERE phone_match_key IS NOT NULL
+    UNION ALL
+    SELECT shift_requisite_id, 'card:' || card_match_key AS lookup_key, match_key
+    FROM crm_requisites
+    WHERE card_match_key IS NOT NULL
+),
+unique_crm_match_keys AS (
+    SELECT lookup_key, min(match_key) AS match_key
+    FROM crm_match_keys
+    GROUP BY lookup_key
+    HAVING count(DISTINCT shift_requisite_id) = 1
+),
+csv_inbound_source AS (
     SELECT
-        COALESCE(
-            NULLIF(right(regexp_replace(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), ''), '[^0-9]', '', 'g'), 10), ''),
-            'csv:' || lower(btrim(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), 'unknown')))
-        ) AS match_key,
-        max(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''))) AS csv_requisite,
-        COALESCE(sum(CASE WHEN normalized_status IN ('success', 'corrected') THEN amount_minor ELSE 0 END), 0)::bigint AS csv_inbound_minor
+        COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, '')) AS csv_requisite,
+        regexp_replace(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), ''), '[^0-9]', '', 'g') AS csv_digits,
+        normalized_status,
+        amount_minor
     FROM order_scope_items
     WHERE team_id = sqlc.arg(team_id)
       AND scope_type = 'trader_shift'
       AND shift_id = sqlc.arg(shift_id)
       AND direction = 'inbound'
       AND is_active = TRUE
-    GROUP BY COALESCE(
-        NULLIF(right(regexp_replace(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), ''), '[^0-9]', '', 'g'), 10), ''),
-        'csv:' || lower(btrim(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), 'unknown')))
-    )
+),
+csv_inbound_resolved AS (
+    SELECT
+        source.csv_requisite,
+        source.normalized_status,
+        source.amount_minor,
+        COALESCE(
+            phone_match.match_key,
+            card_match.match_key,
+            CASE
+                WHEN length(source.csv_digits) BETWEEN 10 AND 11 THEN 'csv_phone:' || right(source.csv_digits, 10)
+                WHEN length(source.csv_digits) >= 12 THEN 'csv_card:' || source.csv_digits
+                ELSE 'csv:' || lower(btrim(COALESCE(source.csv_requisite, 'unknown')))
+            END
+        ) AS match_key
+    FROM csv_inbound_source source
+    LEFT JOIN unique_crm_match_keys phone_match
+        ON length(source.csv_digits) BETWEEN 10 AND 11
+       AND phone_match.lookup_key = 'phone:' || right(source.csv_digits, 10)
+    LEFT JOIN unique_crm_match_keys card_match
+        ON length(source.csv_digits) >= 12
+       AND card_match.lookup_key = 'card:' || source.csv_digits
+),
+csv_inbound AS (
+    SELECT
+        match_key,
+        max(csv_requisite) AS csv_requisite,
+        COALESCE(sum(CASE WHEN normalized_status IN ('success', 'corrected') THEN amount_minor ELSE 0 END), 0)::bigint AS csv_inbound_minor
+    FROM csv_inbound_resolved
+    GROUP BY match_key
 ),
 payout_transfer_outbound AS (
     SELECT

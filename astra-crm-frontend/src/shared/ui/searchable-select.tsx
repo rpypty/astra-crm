@@ -39,10 +39,11 @@ export function SearchableSelect({
   const filteredOptions = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return options;
+    const queryDigits = digitsOnly(query);
 
     return options.filter((option) => {
       const haystack = `${option.label} ${option.searchText ?? ""}`.toLowerCase();
-      return haystack.includes(query);
+      return haystack.includes(query) || (queryDigits !== "" && digitsOnly(haystack).includes(queryDigits));
     });
   }, [options, search]);
 
@@ -137,4 +138,8 @@ export function SearchableSelect({
       ) : null}
     </div>
   );
+}
+
+function digitsOnly(value: string) {
+  return value.replace(/\D/g, "");
 }
