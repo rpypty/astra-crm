@@ -9,6 +9,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/migrate ./cmd/migrate
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/seed ./cmd/seed
+RUN CGO_ENABLED=0 GOOS=linux go build -o /out/create-teamlead-user ./cmd/create-teamlead-user
 
 FROM alpine:3.21
 
@@ -17,6 +18,7 @@ WORKDIR /app
 COPY --from=build /out/api /app/api
 COPY --from=build /out/migrate /app/migrate
 COPY --from=build /out/seed /app/seed
+COPY --from=build /out/create-teamlead-user /app/create-teamlead-user
 COPY migrations /app/migrations
 
 EXPOSE 8080

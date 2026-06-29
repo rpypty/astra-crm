@@ -1,0 +1,99 @@
+#!/usr/bin/env sh
+set -eu
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  ./create-user-teamlead -u "test_lead" -p "password"
+
+Required:
+  -u, --username   Teamlead login.
+  -p, --password   Teamlead password.
+
+Optional:
+  -t, --team        Team name. If omitted, the command uses the only active team
+                   or creates "Default P2P Team" when there are no teams.
+  --env-file       Compose env file path.
+  --compose-file   Compose file path. Defaults to ../../docker-compose.yml.
+USAGE
+}
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
+
+username=""
+password=""
+team_name=""
+compose_file="${COMPOSE_FILE_PATH:-$repo_root/docker-compose.yml}"
+env_file="${ENV_FILE:-}"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -u|--username)
+      [ "$#" -ge 2 ] || { echo "error: $1 requires a value" >&2; usage >&2; exit 2; }
+      username=$2
+      shift 2
+      ;;
+    -p|--password)
+      [ "$#" -ge 2 ] || { echo "error: $1 requires a value" >&2; usage >&2; exit 2; }
+      password=$2
+      shift 2
+      ;;
+    -t|--team)
+      [ "$#" -ge 2 ] || { echo "error: $1 requires a value" >&2; usage >&2; exit 2; }
+      team_name=$2
+      shift 2
+      ;;
+    --env-file)
+      [ "$#" -ge 2 ] || { echo "error: $1 requires a value" >&2; usage >&2; exit 2; }
+      env_file=$2
+      shift 2
+      ;;
+    --compose-file)
+      [ "$#" -ge 2 ] || { echo "error: $1 requires a value" >&2; usage >&2; exit 2; }
+      compose_file=$2
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "error: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [ -z "$username" ]; then
+  echo "error: -u/--username is required" >&2
+  usage >&2
+  exit 2
+fi
+
+if [ -z "$password" ]; then
+  echo "error: -p/--password is required" >&2
+  usage >&2
+  exit 2
+fi
+
+if [ ! -f "$compose_file" ]; then
+  echo "error: compose file not found: $compose_file" >&2
+  exit 2
+fi
+
+compose_args="-f $compose_file"
+if [ -n "$env_file" ]; then
+  if [ ! -f "$env_file" ]; then
+    echo "error: env file not found: $env_file" >&2
+    exit 2
+  fi
+  compose_args="--env-file $env_file $compose_args"
+fi
+
+docker compose $compose_args run --build --rm --no-deps -T \
+  -e "TEAMLEAD_LOGIN=$username" \
+  -e "TEAMLEAD_PASSWORD=$password" \
+  -e "TEAM_NAME=$team_name" \
+  backend /app/create-teamlead-user

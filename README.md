@@ -44,7 +44,7 @@
 
 ## Local Dev Stack
 
-1. Скопируй `.env.example` в `.env` при необходимости изменить порты или пароли.
+1. Скопируй `.env.example` в `.env`.
 2. Запусти локальный stack:
 
 ```bash
@@ -70,6 +70,35 @@ trader_oleg / demo123
 ```
 
 OpenAPI contract лежит в `docs/openapi.yaml`.
+
+### Чистая локальная база
+
+Для отдельной чистой базы создай отдельный env-файл, например `.env.clean`, на базе
+`.env.example` и поменяй значения:
+
+```env
+POSTGRES_DB=astra_crm_clean
+POSTGRES_PORT=55433
+BACKEND_PORT=8081
+FRONTEND_PORT=5174
+```
+
+Итоговый `DATABASE_URL` собирается внутри compose из `POSTGRES_DB`,
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_HOST`,
+`POSTGRES_INTERNAL_PORT` и `POSTGRES_SSLMODE`, поэтому отдельную строку
+подключения вручную синхронизировать не нужно.
+
+Запуск с отдельным project name создаст отдельный volume:
+
+```bash
+docker compose --env-file .env.clean -p astra_clean up --build
+```
+
+Удалить эту базу вместе с volume:
+
+```bash
+docker compose --env-file .env.clean -p astra_clean down -v
+```
 
 ## API Smoke
 
