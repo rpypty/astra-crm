@@ -240,6 +240,9 @@ export type components = {
   status: "open" | "closing" | "closed" | "closed_with_discrepancy";
   inboundReconciliationStatus: string;
   outboundReconciliationStatus: string;
+  tlReconciliationStatus: "not_checked" | "confirmed_by_tl" | "updated_by_tl" | "tl_discrepancy" | "tl_accepted";
+  lastTeamleadReconciliationId?: number;
+  tlReconciledAt?: string;
   closeComment?: string;
   createdAt: string;
   updatedAt: string;
@@ -473,6 +476,7 @@ export type components = {
   currency: string;
   rawStatus: string;
   normalizedStatus: "success" | "corrected" | "failed" | "cancelled" | "unknown";
+  tlReconciliationStatus: "not_checked" | "confirmed_by_tl" | "updated_by_tl" | "tl_discrepancy" | "tl_accepted";
   createdAtExternal: string;
   importBatchId: number;
 };
@@ -578,6 +582,120 @@ export type components = {
   page: number;
   pageSize: number;
   total: number;
+};
+    TeamleadReconciliationPipelineStep: {
+  stage: "normalization" | "matching" | "turnover_check" | "transaction_check" | "preview";
+  status: "matched" | "mismatch";
+  issuesCount: number;
+  directionsCount: number;
+};
+    TeamleadReconciliationSummary: {
+  rowsTotal?: number;
+  rowsInPeriod?: number;
+  successAmountMinor?: number;
+  successCount?: number;
+  failedAmountMinor?: number;
+  failedCount?: number;
+  totalAmountMinor?: number;
+  totalCount?: number;
+  crmAmountMinor?: number;
+  crmCount?: number;
+  diffAmountMinor?: number;
+};
+    TeamleadReconciliationPreview: {
+  [key: string]: {
+  createCount?: number;
+  updateCount?: number;
+  unchangedCount?: number;
+  blockedCount?: number;
+};
+};
+    TeamleadReconciliationApplyDirectionResult: {
+  direction: "inbound" | "outbound";
+  rowsApplied: number;
+  createdOrders: number;
+  updatedOrders: number;
+  confirmedOrders: number;
+  discrepancyOrders: number;
+};
+    TeamleadReconciliationApplyResult: {
+  runId: number;
+  createdOrders: number;
+  updatedOrders: number;
+  confirmedOrders: number;
+  discrepancyOrders: number;
+  directions: components["schemas"]["TeamleadReconciliationApplyDirectionResult"][];
+};
+    TeamleadReconciliationRun: {
+  id: number;
+  teamId: number;
+  dateFrom: string;
+  dateTo: string;
+  status: "draft" | "analyzing" | "matched" | "mismatch" | "apply_queued" | "applying" | "applied" | "apply_failed" | "rejected";
+  createdBy: number;
+  confirmedBy?: number;
+  rejectedBy?: number;
+  inboundImportBatchId?: number;
+  outboundImportBatchId?: number;
+  comment?: string;
+  mismatchCount: number;
+  conflictCount: number;
+  blockedCount: number;
+  pipeline?: components["schemas"]["TeamleadReconciliationPipelineStep"][];
+  inboundSummary?: components["schemas"]["TeamleadReconciliationSummary"];
+  outboundSummary?: components["schemas"]["TeamleadReconciliationSummary"];
+  preview?: components["schemas"]["TeamleadReconciliationPreview"];
+  applyResult?: components["schemas"]["TeamleadReconciliationApplyResult"];
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  analyzedAt?: string;
+  confirmedAt?: string;
+  rejectedAt?: string;
+  applyQueuedAt?: string;
+  appliedAt?: string;
+};
+    TeamleadReconciliationResponse: {
+  reconciliation: components["schemas"]["TeamleadReconciliationRun"];
+};
+    TeamleadReconciliationsResponse: {
+  items: components["schemas"]["TeamleadReconciliationRun"][];
+  page: number;
+  pageSize: number;
+  total: number;
+};
+    TeamleadReconciliationItem: {
+  id: number;
+  teamleadReconciliationId: number;
+  teamId: number;
+  direction: "inbound" | "outbound";
+  stage: string;
+  issueType: string;
+  severity: "info" | "warning" | "error" | "blocker";
+  externalOrderId?: number;
+  externalInnerId?: string;
+  traderId?: number;
+  requisiteId?: number;
+  shiftId?: number;
+  before?: {
+  [key: string]: unknown;
+};
+  after?: {
+  [key: string]: unknown;
+};
+  message?: string;
+  isBlocking: boolean;
+  appliedAt?: string;
+  createdAt: string;
+};
+    TeamleadReconciliationItemsResponse: {
+  items: components["schemas"]["TeamleadReconciliationItem"][];
+  page: number;
+  pageSize: number;
+  total: number;
+};
+    TeamleadReconciliationDecisionRequest: {
+  comment?: string;
 };
     ImportResult: {
   importBatchId: number;

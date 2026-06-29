@@ -211,6 +211,15 @@ func ParseCSV(reader io.Reader, options ParseOptions) (ParseResult, error) {
 	return result, nil
 }
 
+func ParseRawOrderRow(rowNumber int, raw map[string]string, options ParseOptions) (ParsedOrderRow, []ParseError) {
+	location := options.Location
+	if location == nil {
+		location = defaultLocation()
+	}
+
+	return parseOrderRow(rowNumber, raw, location, options)
+}
+
 func parseOrderRow(rowNumber int, raw map[string]string, location *time.Location, options ParseOptions) (ParsedOrderRow, []ParseError) {
 	var errorsList []ParseError
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/ashpak/astra-crm-backend/internal/pagination"
@@ -17,7 +18,7 @@ import (
 var (
 	ErrNotFound           = errors.New("requisite not found")
 	ErrAssignmentNotFound = errors.New("requisite assignment not found")
-	ErrPhoneBankDuplicate = errors.New("requisite phone and bank duplicate")
+	ErrPhoneBankDuplicate = errors.New("requisite identity duplicate")
 	ErrProxyDuplicate     = errors.New("requisite proxy duplicate")
 	ErrBankNotFound       = errors.New("requisite bank not found")
 )
@@ -229,6 +230,7 @@ func (r *Repository) Create(ctx context.Context, params CreateRecord) (Requisite
 		Phone:           params.Phone,
 		MethodType:      params.MethodType,
 		BankCode:        params.BankCode,
+		CardNumber:      pgtype.Text{String: params.CardNumber, Valid: true},
 		Proxy:           textValue(params.Proxy),
 		EmployeeComment: textValue(params.EmployeeComment),
 		CreatedBy:       params.CreatedBy,
@@ -241,6 +243,11 @@ func (r *Repository) Create(ctx context.Context, params CreateRecord) (Requisite
 }
 
 func (r *Repository) GetDetails(ctx context.Context, teamID int64, requisiteID int64) (RequisiteDetails, error) {
+	bankNames, err := r.activeBankNames(ctx)
+	if err != nil {
+		return RequisiteDetails{}, err
+	}
+
 	row, err := r.queries.GetRequisiteDetailsByIDForTeam(ctx, db.GetRequisiteDetailsByIDForTeamParams{
 		TeamID:      teamID,
 		RequisiteID: requisiteID,
@@ -252,12 +259,17 @@ func (r *Repository) GetDetails(ctx context.Context, teamID int64, requisiteID i
 		return RequisiteDetails{}, err
 	}
 
-	return fromDetailsRow(row), nil
+	return fromDetailsRow(row, bankNames), nil
 }
 
 func (r *Repository) ListDetails(ctx context.Context, teamID int64, params ListParams, page pagination.Params) (pagination.Result[RequisiteDetails], error) {
 	page = pagination.Normalize(page)
 	params = normalizeListParams(params)
+	bankNames, err := r.activeBankNames(ctx)
+	if err != nil {
+		return pagination.Result[RequisiteDetails]{}, err
+	}
+	bankSearchCodes := matchingBankCodes(bankNames, params.Search)
 	queryParams := db.ListRequisiteDetailsByTeamParams{
 		TeamID:               teamID,
 		BankCode:             params.BankCode,
@@ -265,6 +277,7 @@ func (r *Repository) ListDetails(ctx context.Context, teamID int64, params ListP
 		AvailableForPlanning: params.AvailableForPlanning,
 		TraderFilter:         params.TraderID,
 		Search:               params.Search,
+		BankSearchCodes:      bankSearchCodes,
 		SearchDigits:         digitsOnly(params.Search),
 		OffsetCount:          paginationOffset32(page),
 		LimitCount:           paginationLimit32(page),
@@ -276,7 +289,7 @@ func (r *Repository) ListDetails(ctx context.Context, teamID int64, params ListP
 
 	items := make([]RequisiteDetails, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, fromListDetailsRow(row))
+		items = append(items, fromListDetailsRow(row, bankNames))
 	}
 
 	total, err := r.queries.CountRequisiteDetailsByTeam(ctx, db.CountRequisiteDetailsByTeamParams{
@@ -286,6 +299,7 @@ func (r *Repository) ListDetails(ctx context.Context, teamID int64, params ListP
 		AvailableForPlanning: queryParams.AvailableForPlanning,
 		TraderFilter:         queryParams.TraderFilter,
 		Search:               queryParams.Search,
+		BankSearchCodes:      queryParams.BankSearchCodes,
 		SearchDigits:         queryParams.SearchDigits,
 	})
 	if err != nil {
@@ -302,6 +316,7 @@ func (r *Repository) Update(ctx context.Context, params UpdateRecord) (Requisite
 		Phone:           params.Phone,
 		MethodType:      params.MethodType,
 		BankCode:        params.BankCode,
+		CardNumber:      textValue(params.CardNumber),
 		Proxy:           textValue(params.Proxy),
 		EmployeeComment: textValue(params.EmployeeComment),
 		Status:          params.Status,
@@ -456,6 +471,10 @@ func (r *Repository) ListActiveAssignmentsByTrader(ctx context.Context, teamID i
 
 func (r *Repository) ListPlans(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[AssignmentWorkRow], error) {
 	page = pagination.Normalize(page)
+	bankNames, err := r.activeBankNames(ctx)
+	if err != nil {
+		return pagination.Result[AssignmentWorkRow]{}, err
+	}
 	rows, err := r.queries.ListTeamleadRequisitePlans(ctx, db.ListTeamleadRequisitePlansParams{
 		TeamID:      teamID,
 		OffsetCount: paginationOffset32(page),
@@ -467,7 +486,7 @@ func (r *Repository) ListPlans(ctx context.Context, teamID int64, page paginatio
 
 	items := make([]AssignmentWorkRow, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, fromPlanRow(row))
+		items = append(items, fromPlanRow(row, bankNames))
 	}
 
 	total, err := r.queries.CountTeamleadRequisitePlans(ctx, teamID)
@@ -481,15 +500,21 @@ func (r *Repository) ListPlans(ctx context.Context, teamID int64, page paginatio
 func (r *Repository) ListActivity(ctx context.Context, teamID int64, params ListParams, page pagination.Params) (pagination.Result[AssignmentWorkRow], error) {
 	page = pagination.Normalize(page)
 	params = normalizeListParams(params)
+	bankNames, err := r.activeBankNames(ctx)
+	if err != nil {
+		return pagination.Result[AssignmentWorkRow]{}, err
+	}
+	bankSearchCodes := matchingBankCodes(bankNames, params.Search)
 	rows, err := r.queries.ListTeamleadRequisiteActivity(ctx, db.ListTeamleadRequisiteActivityParams{
-		TeamID:       teamID,
-		BankCode:     params.BankCode,
-		Status:       params.Status,
-		TraderFilter: params.TraderID,
-		Search:       params.Search,
-		SearchDigits: digitsOnly(params.Search),
-		OffsetCount:  paginationOffset32(page),
-		LimitCount:   paginationLimit32(page),
+		TeamID:          teamID,
+		BankCode:        params.BankCode,
+		Status:          params.Status,
+		TraderFilter:    params.TraderID,
+		Search:          params.Search,
+		BankSearchCodes: bankSearchCodes,
+		SearchDigits:    digitsOnly(params.Search),
+		OffsetCount:     paginationOffset32(page),
+		LimitCount:      paginationLimit32(page),
 	})
 	if err != nil {
 		return pagination.Result[AssignmentWorkRow]{}, err
@@ -497,16 +522,17 @@ func (r *Repository) ListActivity(ctx context.Context, teamID int64, params List
 
 	items := make([]AssignmentWorkRow, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, fromActivityRow(row))
+		items = append(items, fromActivityRow(row, bankNames))
 	}
 
 	total, err := r.queries.CountTeamleadRequisiteActivity(ctx, db.CountTeamleadRequisiteActivityParams{
-		TeamID:       teamID,
-		BankCode:     params.BankCode,
-		Status:       params.Status,
-		TraderFilter: params.TraderID,
-		Search:       params.Search,
-		SearchDigits: digitsOnly(params.Search),
+		TeamID:          teamID,
+		BankCode:        params.BankCode,
+		Status:          params.Status,
+		TraderFilter:    params.TraderID,
+		Search:          params.Search,
+		BankSearchCodes: bankSearchCodes,
+		SearchDigits:    digitsOnly(params.Search),
 	})
 	if err != nil {
 		return pagination.Result[AssignmentWorkRow]{}, err
@@ -516,6 +542,10 @@ func (r *Repository) ListActivity(ctx context.Context, teamID int64, params List
 }
 
 func (r *Repository) Report(ctx context.Context, teamID int64, requisiteID int64) (RequisiteReport, error) {
+	bankNames, err := r.activeBankNames(ctx)
+	if err != nil {
+		return RequisiteReport{}, err
+	}
 	summaryRow, err := r.queries.GetRequisiteReportSummary(ctx, db.GetRequisiteReportSummaryParams{
 		TeamID:      teamID,
 		RequisiteID: requisiteID,
@@ -541,9 +571,35 @@ func (r *Repository) Report(ctx context.Context, teamID int64, requisiteID int64
 	}
 
 	return RequisiteReport{
-		Summary: fromReportSummaryRow(summaryRow),
+		Summary: fromReportSummaryRow(summaryRow, bankNames),
 		Shifts:  shifts,
 	}, nil
+}
+
+func (r *Repository) activeBankNames(ctx context.Context) (map[string]string, error) {
+	rows, err := r.queries.ListActiveBanks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make(map[string]string, len(rows))
+	for _, row := range rows {
+		names[row.Code] = row.Name
+	}
+	return names, nil
+}
+
+func matchingBankCodes(bankNames map[string]string, search string) []string {
+	query := strings.ToLower(strings.TrimSpace(search))
+	if query == "" {
+		return nil
+	}
+	codes := make([]string, 0)
+	for code, name := range bankNames {
+		if strings.Contains(strings.ToLower(name), query) || strings.Contains(strings.ToLower(code), query) {
+			codes = append(codes, code)
+		}
+	}
+	return codes
 }
 
 func (r *Repository) GetAssignment(ctx context.Context, teamID int64, assignmentID int64) (Assignment, error) {
@@ -646,6 +702,7 @@ type CreateRecord struct {
 	Phone           string
 	MethodType      string
 	BankCode        string
+	CardNumber      string
 	Proxy           *string
 	EmployeeComment *string
 	CreatedBy       int64
@@ -657,6 +714,7 @@ type UpdateRecord struct {
 	Phone           string
 	MethodType      string
 	BankCode        string
+	CardNumber      *string
 	Proxy           *string
 	EmployeeComment *string
 	Status          string
@@ -743,7 +801,7 @@ func fromUpdateRow(row db.UpdateRequisiteRow) Requisite {
 	}
 }
 
-func fromDetailsRow(row db.GetRequisiteDetailsByIDForTeamRow) RequisiteDetails {
+func fromDetailsRow(row db.GetRequisiteDetailsByIDForTeamRow, bankNames map[string]string) RequisiteDetails {
 	return RequisiteDetails{
 		Requisite: Requisite{
 			ID:              row.ID,
@@ -751,7 +809,7 @@ func fromDetailsRow(row db.GetRequisiteDetailsByIDForTeamRow) RequisiteDetails {
 			Phone:           row.Phone,
 			MethodType:      row.MethodType,
 			BankCode:        row.BankCode,
-			BankName:        row.BankName,
+			BankName:        bankNames[row.BankCode],
 			Proxy:           textPtr(row.Proxy),
 			EmployeeComment: textPtr(row.EmployeeComment),
 			HolderName:      textPtr(row.HolderName),
@@ -772,7 +830,7 @@ func fromDetailsRow(row db.GetRequisiteDetailsByIDForTeamRow) RequisiteDetails {
 	}
 }
 
-func fromListDetailsRow(row db.ListRequisiteDetailsByTeamRow) RequisiteDetails {
+func fromListDetailsRow(row db.ListRequisiteDetailsByTeamRow, bankNames map[string]string) RequisiteDetails {
 	return RequisiteDetails{
 		Requisite: Requisite{
 			ID:              row.ID,
@@ -780,7 +838,7 @@ func fromListDetailsRow(row db.ListRequisiteDetailsByTeamRow) RequisiteDetails {
 			Phone:           row.Phone,
 			MethodType:      row.MethodType,
 			BankCode:        row.BankCode,
-			BankName:        row.BankName,
+			BankName:        bankNames[row.BankCode],
 			Proxy:           textPtr(row.Proxy),
 			EmployeeComment: textPtr(row.EmployeeComment),
 			HolderName:      textPtr(row.HolderName),
@@ -822,14 +880,14 @@ func fromDBAssignment(row db.RequisiteAssignment) Assignment {
 	}
 }
 
-func fromPlanRow(row db.ListTeamleadRequisitePlansRow) AssignmentWorkRow {
+func fromPlanRow(row db.ListTeamleadRequisitePlansRow, bankNames map[string]string) AssignmentWorkRow {
 	return AssignmentWorkRow{
 		AssignmentID:          row.AssignmentID,
 		TeamID:                row.TeamID,
 		RequisiteID:           row.RequisiteID,
 		Phone:                 row.Phone,
 		BankCode:              row.BankCode,
-		BankName:              row.BankName,
+		BankName:              bankNames[row.BankCode],
 		Proxy:                 textPtr(row.Proxy),
 		TraderID:              row.TraderID,
 		TraderLogin:           row.TraderLogin,
@@ -848,14 +906,14 @@ func fromPlanRow(row db.ListTeamleadRequisitePlansRow) AssignmentWorkRow {
 	}
 }
 
-func fromActivityRow(row db.ListTeamleadRequisiteActivityRow) AssignmentWorkRow {
+func fromActivityRow(row db.ListTeamleadRequisiteActivityRow, bankNames map[string]string) AssignmentWorkRow {
 	return AssignmentWorkRow{
 		AssignmentID:          row.AssignmentID,
 		TeamID:                row.TeamID,
 		RequisiteID:           row.RequisiteID,
 		Phone:                 row.Phone,
 		BankCode:              row.BankCode,
-		BankName:              row.BankName,
+		BankName:              bankNames[row.BankCode],
 		Proxy:                 textPtr(row.Proxy),
 		TraderID:              row.TraderID,
 		TraderLogin:           row.TraderLogin,
@@ -891,14 +949,14 @@ func fromDBAssignmentEvent(row db.RequisiteAssignmentEvent) AssignmentEvent {
 	}
 }
 
-func fromReportSummaryRow(row db.GetRequisiteReportSummaryRow) RequisiteReportSummary {
+func fromReportSummaryRow(row db.GetRequisiteReportSummaryRow, bankNames map[string]string) RequisiteReportSummary {
 	return RequisiteReportSummary{
 		ID:                         row.ID,
 		TeamID:                     row.TeamID,
 		Phone:                      row.Phone,
 		MethodType:                 row.MethodType,
 		BankCode:                   row.BankCode,
-		BankName:                   row.BankName,
+		BankName:                   bankNames[row.BankCode],
 		Proxy:                      textPtr(row.Proxy),
 		EmployeeComment:            textPtr(row.EmployeeComment),
 		HolderName:                 textPtr(row.HolderName),
@@ -945,7 +1003,7 @@ func mapRequisiteWriteError(err error) error {
 	}
 
 	switch {
-	case pgErr.Code == "23505" && pgErr.ConstraintName == "uq_requisites_active_team_phone_bank":
+	case pgErr.Code == "23505" && (pgErr.ConstraintName == "uq_requisites_active_team_phone_bank" || pgErr.ConstraintName == "uq_requisites_active_identity"):
 		return ErrPhoneBankDuplicate
 	case pgErr.Code == "23505" && pgErr.ConstraintName == "uq_requisites_active_proxy_global":
 		return ErrProxyDuplicate

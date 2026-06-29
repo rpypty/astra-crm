@@ -104,13 +104,38 @@ CREATE TABLE requisites (
     id BIGSERIAL PRIMARY KEY,
     team_id BIGINT NOT NULL REFERENCES teams(id),
     phone TEXT NOT NULL,
+    bank_code TEXT NOT NULL REFERENCES banks(code),
+    card_number TEXT,
+    normalized_phone TEXT GENERATED ALWAYS AS (
+        CASE
+            WHEN length(regexp_replace(phone, '[^0-9]', '', 'g')) = 10
+                THEN '7' || regexp_replace(phone, '[^0-9]', '', 'g')
+            WHEN length(regexp_replace(phone, '[^0-9]', '', 'g')) = 11
+                AND left(regexp_replace(phone, '[^0-9]', '', 'g'), 1) = '8'
+                THEN '7' || right(regexp_replace(phone, '[^0-9]', '', 'g'), 10)
+            ELSE regexp_replace(phone, '[^0-9]', '', 'g')
+        END
+    ) STORED,
+    normalized_card_number TEXT GENERATED ALWAYS AS (
+        regexp_replace(COALESCE(card_number, ''), '[^0-9]', '', 'g')
+    ) STORED,
     method_type TEXT NOT NULL,
+    employee_comment TEXT,
     proxy TEXT,
+    holder_name TEXT,
+    details_filled_at TIMESTAMPTZ,
+    details_filled_by BIGINT REFERENCES users(id),
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled', 'archived')),
     created_by BIGINT NOT NULL REFERENCES users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at TIMESTAMPTZ
+    deleted_at TIMESTAMPTZ,
+    CHECK (normalized_phone <> ''),
+    CHECK (
+        (holder_name IS NULL AND details_filled_at IS NULL AND details_filled_by IS NULL)
+        OR
+        (holder_name IS NOT NULL AND details_filled_at IS NOT NULL AND details_filled_by IS NOT NULL)
+    )
 );
 ```
 
@@ -119,7 +144,15 @@ Indexes:
 ```sql
 CREATE INDEX idx_requisites_team_status ON requisites(team_id, status);
 CREATE INDEX idx_requisites_phone ON requisites(phone);
+CREATE UNIQUE INDEX uq_requisites_active_identity
+ON requisites(team_id, bank_code, normalized_phone, normalized_card_number)
+WHERE deleted_at IS NULL;
 ```
+
+Notes:
+
+- V2 requisite identity is `team_id + bank_code + normalized_phone + normalized_card_number`.
+- Existing historical rows may have an empty `normalized_card_number` until a card is backfilled.
 
 ---
 
@@ -171,6 +204,10 @@ CREATE TABLE trader_shifts (
         CHECK (inbound_reconciliation_status IN ('not_started', 'imported', 'matched', 'mismatch', 'accepted_with_comment')),
     outbound_reconciliation_status TEXT NOT NULL DEFAULT 'not_started'
         CHECK (outbound_reconciliation_status IN ('not_started', 'imported', 'matched', 'mismatch', 'accepted_with_comment')),
+    tl_reconciliation_status TEXT NOT NULL DEFAULT 'not_checked'
+        CHECK (tl_reconciliation_status IN ('not_checked', 'confirmed_by_tl', 'updated_by_tl', 'tl_discrepancy', 'tl_accepted')),
+    last_teamlead_reconciliation_id BIGINT,
+    tl_reconciled_at TIMESTAMPTZ,
     close_comment TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -210,6 +247,10 @@ CREATE TABLE shift_requisites (
     taken_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     released_at TIMESTAMPTZ,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'released')),
+    tl_reconciliation_status TEXT NOT NULL DEFAULT 'not_checked'
+        CHECK (tl_reconciliation_status IN ('not_checked', 'confirmed_by_tl', 'updated_by_tl', 'tl_discrepancy', 'tl_accepted')),
+    last_teamlead_reconciliation_id BIGINT,
+    tl_reconciled_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -467,6 +508,10 @@ CREATE TABLE external_orders (
     counted BOOLEAN,
     initials TEXT,
     last_import_batch_id BIGINT REFERENCES import_batches(id),
+    tl_reconciliation_status TEXT NOT NULL DEFAULT 'not_checked'
+        CHECK (tl_reconciliation_status IN ('not_checked', 'confirmed_by_tl', 'updated_by_tl', 'tl_discrepancy', 'tl_accepted')),
+    last_teamlead_reconciliation_id BIGINT,
+    tl_reconciled_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (team_id, direction, external_inner_id)
@@ -578,6 +623,92 @@ CREATE TABLE reconciliation_items (
     message TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+```
+
+---
+
+## teamlead_reconciliations
+
+```sql
+CREATE TABLE teamlead_reconciliations (
+    id BIGSERIAL PRIMARY KEY,
+    team_id BIGINT NOT NULL REFERENCES teams(id),
+    date_from DATE NOT NULL,
+    date_to DATE NOT NULL,
+    status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'analyzing', 'matched', 'mismatch', 'apply_queued', 'applying', 'applied', 'apply_failed', 'rejected')),
+    created_by BIGINT NOT NULL REFERENCES users(id),
+    confirmed_by BIGINT REFERENCES users(id),
+    rejected_by BIGINT REFERENCES users(id),
+    inbound_import_batch_id BIGINT REFERENCES import_batches(id),
+    outbound_import_batch_id BIGINT REFERENCES import_batches(id),
+    comment TEXT,
+    mismatch_count BIGINT NOT NULL DEFAULT 0,
+    conflict_count BIGINT NOT NULL DEFAULT 0,
+    blocked_count BIGINT NOT NULL DEFAULT 0,
+    pipeline_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+    inbound_summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    outbound_summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    preview_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    apply_result_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    analyzed_at TIMESTAMPTZ,
+    confirmed_at TIMESTAMPTZ,
+    rejected_at TIMESTAMPTZ,
+    apply_queued_at TIMESTAMPTZ,
+    applied_at TIMESTAMPTZ,
+    CHECK (date_to >= date_from),
+    CHECK (inbound_import_batch_id IS NOT NULL OR outbound_import_batch_id IS NOT NULL)
+);
+```
+
+Indexes:
+
+```sql
+CREATE INDEX idx_teamlead_reconciliations_team_created
+ON teamlead_reconciliations(team_id, created_at DESC, id DESC);
+
+CREATE INDEX idx_teamlead_reconciliations_team_period
+ON teamlead_reconciliations(team_id, date_from, date_to, created_at DESC, id DESC);
+```
+
+---
+
+## teamlead_reconciliation_items
+
+```sql
+CREATE TABLE teamlead_reconciliation_items (
+    id BIGSERIAL PRIMARY KEY,
+    teamlead_reconciliation_id BIGINT NOT NULL REFERENCES teamlead_reconciliations(id),
+    team_id BIGINT NOT NULL REFERENCES teams(id),
+    direction TEXT NOT NULL CHECK (direction IN ('inbound', 'outbound')),
+    stage TEXT NOT NULL CHECK (stage IN ('normalization', 'matching', 'turnover_check', 'transaction_check', 'preview', 'apply')),
+    issue_type TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('info', 'warning', 'error', 'blocker')),
+    external_order_id BIGINT REFERENCES external_orders(id),
+    external_inner_id TEXT,
+    trader_id BIGINT REFERENCES users(id),
+    requisite_id BIGINT REFERENCES requisites(id),
+    shift_id BIGINT REFERENCES trader_shifts(id),
+    before_json JSONB,
+    after_json JSONB,
+    message TEXT,
+    is_blocking BOOLEAN NOT NULL DEFAULT FALSE,
+    applied_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+Indexes:
+
+```sql
+CREATE INDEX idx_teamlead_reconciliation_items_run
+ON teamlead_reconciliation_items(teamlead_reconciliation_id, id);
+
+CREATE INDEX idx_teamlead_reconciliation_items_filters
+ON teamlead_reconciliation_items(team_id, direction, stage, issue_type, severity, created_at DESC, id DESC);
 ```
 
 ---

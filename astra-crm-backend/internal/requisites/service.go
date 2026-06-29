@@ -69,6 +69,7 @@ type CreateParams struct {
 	Phone            string
 	MethodType       string
 	BankCode         string
+	CardNumber       string
 	Proxy            *string
 	EmployeeComment  *string
 	AssignedTraderID *int64
@@ -82,6 +83,7 @@ type PatchParams struct {
 	Phone           *string
 	MethodType      *string
 	BankCode        *string
+	CardNumber      *string
 	Proxy           *string
 	EmployeeComment *string
 	Status          *string
@@ -118,9 +120,10 @@ func (s *Service) Create(ctx context.Context, params CreateParams) (RequisiteDet
 	phone, ok := normalizePhone(params.Phone)
 	methodType := cleanMethodType(params.MethodType)
 	bankCode := normalizeBankCode(params.BankCode)
+	cardNumber, cardOK := normalizeCardNumber(params.CardNumber)
 	proxy := cleanOptionalString(params.Proxy)
 	employeeComment := cleanOptionalString(params.EmployeeComment)
-	if params.ActorID <= 0 || params.TeamID <= 0 || !ok || bankCode == "" {
+	if params.ActorID <= 0 || params.TeamID <= 0 || !ok || bankCode == "" || !cardOK {
 		return RequisiteDetails{}, ErrInvalidInput
 	}
 	if params.AssignedTraderID != nil {
@@ -138,6 +141,7 @@ func (s *Service) Create(ctx context.Context, params CreateParams) (RequisiteDet
 		Phone:           phone,
 		MethodType:      methodType,
 		BankCode:        bankCode,
+		CardNumber:      cardNumber,
 		Proxy:           proxy,
 		EmployeeComment: employeeComment,
 		CreatedBy:       params.ActorID,
@@ -223,6 +227,13 @@ func (s *Service) Patch(ctx context.Context, params PatchParams) (RequisiteDetai
 		}
 		next.BankCode = bankCode
 	}
+	if params.CardNumber != nil {
+		cardNumber, ok := normalizeCardNumber(*params.CardNumber)
+		if !ok {
+			return RequisiteDetails{}, ErrInvalidInput
+		}
+		next.CardNumber = &cardNumber
+	}
 	if params.Proxy != nil {
 		next.Proxy = cleanOptionalString(params.Proxy)
 	}
@@ -243,6 +254,7 @@ func (s *Service) Patch(ctx context.Context, params PatchParams) (RequisiteDetai
 		Phone:           next.Phone,
 		MethodType:      next.MethodType,
 		BankCode:        next.BankCode,
+		CardNumber:      next.CardNumber,
 		Proxy:           next.Proxy,
 		EmployeeComment: next.EmployeeComment,
 		Status:          next.Status,
@@ -673,4 +685,12 @@ func normalizePhone(value string) (string, bool) {
 		return "", false
 	}
 	return string(digits), true
+}
+
+func normalizeCardNumber(value string) (string, bool) {
+	digits := digitsOnly(value)
+	if len(digits) < 8 {
+		return "", false
+	}
+	return digits, true
 }

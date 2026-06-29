@@ -32,6 +32,15 @@ func (r *Repository) ApplyImport(ctx context.Context, record ApplyImportRecord) 
 		return ApplyResult{}, ErrRepositoryNotConfigured
 	}
 
+	importRowsJSON, err := batchImportRowsJSON(record.Rows)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	externalOrderRowsJSON, err := batchExternalOrderRowsJSON(record.Rows)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
 		return ApplyResult{}, err
@@ -60,33 +69,39 @@ func (r *Repository) ApplyImport(ctx context.Context, record ApplyImportRecord) 
 		return ApplyResult{}, err
 	}
 
-	type scopeLink struct {
-		importRowID     int64
-		externalOrderID int64
+	importRows, err := queries.BatchInsertImportRows(ctx, db.BatchInsertImportRowsParams{
+		ImportBatchID: batch.ID,
+		RowsJson:      importRowsJSON,
+	})
+	if err != nil {
+		return ApplyResult{}, err
 	}
-	scopeLinks := make([]scopeLink, 0, len(record.Rows))
+	if len(importRows) != len(record.Rows) {
+		return ApplyResult{}, fmt.Errorf("batch insert import rows: inserted %d rows, want %d", len(importRows), len(record.Rows))
+	}
+
+	externalOrders, err := queries.BatchUpsertExternalOrders(ctx, db.BatchUpsertExternalOrdersParams{
+		TeamID:            record.TeamID,
+		Direction:         record.Scope.Direction,
+		TraderID:          int8Value(record.Scope.TraderID),
+		LastImportBatchID: pgtype.Int8{Int64: batch.ID, Valid: true},
+		RowsJson:          externalOrderRowsJSON,
+	})
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	if len(externalOrders) != len(record.Rows) {
+		return ApplyResult{}, fmt.Errorf("batch upsert external orders: upserted %d rows, want %d", len(externalOrders), len(record.Rows))
+	}
+
 	createdOrders := int64(0)
 	updatedOrders := int64(0)
-	for _, parsedRow := range record.Rows {
-		importRow, err := insertImportRow(ctx, queries, batch.ID, parsedRow)
-		if err != nil {
-			return ApplyResult{}, err
-		}
-
-		externalOrder, err := upsertExternalOrder(ctx, queries, record, batch.ID, parsedRow)
-		if err != nil {
-			return ApplyResult{}, err
-		}
+	for _, externalOrder := range externalOrders {
 		if externalOrder.Inserted {
 			createdOrders++
 		} else {
 			updatedOrders++
 		}
-
-		scopeLinks = append(scopeLinks, scopeLink{
-			importRowID:     importRow.ID,
-			externalOrderID: externalOrder.ID,
-		})
 	}
 
 	deactivated, err := deactivateScopeItems(ctx, queries, record)
@@ -99,10 +114,12 @@ func (r *Repository) ApplyImport(ctx context.Context, record ApplyImportRecord) 
 		return ApplyResult{}, err
 	}
 
-	for _, link := range scopeLinks {
-		if err := createScopeItem(ctx, queries, record, batch.ID, link.importRowID, link.externalOrderID); err != nil {
-			return ApplyResult{}, err
-		}
+	activeScopeItems, err := createScopeItemsBatch(ctx, queries, record, batch.ID)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	if len(activeScopeItems) != len(record.Rows) {
+		return ApplyResult{}, fmt.Errorf("batch create scope items: created %d rows, want %d", len(activeScopeItems), len(record.Rows))
 	}
 
 	appliedBatch, err := queries.MarkImportBatchApplied(ctx, batch.ID)
@@ -121,88 +138,110 @@ func (r *Repository) ApplyImport(ctx context.Context, record ApplyImportRecord) 
 		CreatedOrders:         createdOrders,
 		UpdatedOrders:         updatedOrders,
 		DeactivatedScopeItems: int64(len(deactivated)),
-		ActiveScopeItems:      int64(len(scopeLinks)),
+		ActiveScopeItems:      int64(len(activeScopeItems)),
 		SupersededBatches:     int64(len(superseded)),
 	}, nil
 }
 
-func insertImportRow(ctx context.Context, queries *db.Queries, batchID int64, parsedRow ParsedOrderRow) (db.ImportRow, error) {
-	rawPayload, err := json.Marshal(parsedRow.RawPayload)
-	if err != nil {
-		return db.ImportRow{}, err
-	}
-
-	return queries.InsertImportRow(ctx, db.InsertImportRowParams{
-		ImportBatchID:   batchID,
-		RowNumber:       int64(parsedRow.RowNumber),
-		ExternalID:      textValue(&parsedRow.ExternalID),
-		ExternalInnerID: textValue(&parsedRow.ExternalInnerID),
-		RawPayloadJson:  rawPayload,
-	})
+type batchImportRow struct {
+	RowNumber       int64             `json:"row_number"`
+	ExternalID      string            `json:"external_id"`
+	ExternalInnerID string            `json:"external_inner_id"`
+	RawPayloadJSON  map[string]string `json:"raw_payload_json"`
 }
 
-func upsertExternalOrder(ctx context.Context, queries *db.Queries, record ApplyImportRecord, batchID int64, parsedRow ParsedOrderRow) (db.UpsertExternalOrderRow, error) {
-	params, err := upsertExternalOrderParams(record, batchID, parsedRow)
-	if err != nil {
-		return db.UpsertExternalOrderRow{}, err
-	}
-
-	return queries.UpsertExternalOrder(ctx, params)
+type batchExternalOrderRow struct {
+	ExternalID          string     `json:"external_id"`
+	ExternalInnerID     string     `json:"external_inner_id"`
+	ExternalForeignID   *string    `json:"external_foreign_id"`
+	WorkerName          string     `json:"worker_name"`
+	RequisiteRaw        *string    `json:"requisite_raw"`
+	RequisitePhone      *string    `json:"requisite_phone"`
+	RequisiteExternalID *string    `json:"requisite_external_id"`
+	DeviceName          *string    `json:"device_name"`
+	MethodType          *string    `json:"method_type"`
+	MethodName          *string    `json:"method_name"`
+	AmountMinor         int64      `json:"amount_minor"`
+	Currency            string     `json:"currency"`
+	Course              *string    `json:"course"`
+	CourseWorker        *string    `json:"course_worker"`
+	WorkerAmount        *string    `json:"worker_amount"`
+	WorkerProfit        *string    `json:"worker_profit"`
+	RawStatus           string     `json:"raw_status"`
+	NormalizedStatus    string     `json:"normalized_status"`
+	CreatedAtExternal   time.Time  `json:"created_at_external"`
+	ClosedAtExternal    *time.Time `json:"closed_at_external"`
+	UpdatedAtExternal   *time.Time `json:"updated_at_external"`
+	OldAmountMinor      *int64     `json:"old_amount_minor"`
+	HadDispute          *bool      `json:"had_dispute"`
+	Receipt             *string    `json:"receipt"`
+	OrderComment        *string    `json:"order_comment"`
+	Ordered             *bool      `json:"ordered"`
+	Counted             *bool      `json:"counted"`
+	Initials            *string    `json:"initials"`
 }
 
-func upsertExternalOrderParams(record ApplyImportRecord, batchID int64, parsedRow ParsedOrderRow) (db.UpsertExternalOrderParams, error) {
-	course, err := numericValue(parsedRow.Course)
-	if err != nil {
-		return db.UpsertExternalOrderParams{}, fmt.Errorf("course: %w", err)
+func batchImportRowsJSON(rows []ParsedOrderRow) ([]byte, error) {
+	payload := make([]batchImportRow, 0, len(rows))
+	for _, row := range rows {
+		payload = append(payload, batchImportRow{
+			RowNumber:       int64(row.RowNumber),
+			ExternalID:      row.ExternalID,
+			ExternalInnerID: row.ExternalInnerID,
+			RawPayloadJSON:  row.RawPayload,
+		})
 	}
-	courseWorker, err := numericValue(parsedRow.CourseWorker)
-	if err != nil {
-		return db.UpsertExternalOrderParams{}, fmt.Errorf("courseWorker: %w", err)
-	}
-	workerAmount, err := numericValue(parsedRow.WorkerAmount)
-	if err != nil {
-		return db.UpsertExternalOrderParams{}, fmt.Errorf("workerAmount: %w", err)
-	}
-	workerProfit, err := numericValue(parsedRow.WorkerProfit)
-	if err != nil {
-		return db.UpsertExternalOrderParams{}, fmt.Errorf("workerProfit: %w", err)
-	}
+	return json.Marshal(payload)
+}
 
-	return db.UpsertExternalOrderParams{
-		TeamID:              record.TeamID,
-		Direction:           record.Scope.Direction,
-		ExternalID:          parsedRow.ExternalID,
-		ExternalInnerID:     parsedRow.ExternalInnerID,
-		ExternalForeignID:   textValue(parsedRow.ExternalForeignID),
-		WorkerName:          parsedRow.WorkerName,
-		TraderID:            int8Value(record.Scope.TraderID),
-		RequisiteRaw:        textValue(parsedRow.RequisiteRaw),
-		RequisitePhone:      textValue(parsedRow.RequisitePhone),
-		RequisiteExternalID: textValue(parsedRow.RequisiteExternalID),
-		RequisiteID:         pgtype.Int8{},
-		DeviceName:          textValue(parsedRow.DeviceName),
-		MethodType:          textValue(parsedRow.MethodType),
-		MethodName:          textValue(parsedRow.MethodName),
-		AmountMinor:         parsedRow.AmountMinor,
-		Currency:            parsedRow.Currency,
-		Course:              course,
-		CourseWorker:        courseWorker,
-		WorkerAmount:        workerAmount,
-		WorkerProfit:        workerProfit,
-		RawStatus:           parsedRow.RawStatus,
-		NormalizedStatus:    parsedRow.NormalizedStatus,
-		CreatedAtExternal:   timeValue(parsedRow.CreatedAtExternal),
-		ClosedAtExternal:    timePtrValue(parsedRow.ClosedAtExternal),
-		UpdatedAtExternal:   timePtrValue(parsedRow.UpdatedAtExternal),
-		OldAmountMinor:      int8Value(parsedRow.OldAmountMinor),
-		HadDispute:          boolValue(parsedRow.HadDispute),
-		Receipt:             textValue(parsedRow.Receipt),
-		OrderComment:        textValue(parsedRow.OrderComment),
-		Ordered:             boolValue(parsedRow.Ordered),
-		Counted:             boolValue(parsedRow.Counted),
-		Initials:            textValue(parsedRow.Initials),
-		LastImportBatchID:   pgtype.Int8{Int64: batchID, Valid: true},
-	}, nil
+func batchExternalOrderRowsJSON(rows []ParsedOrderRow) ([]byte, error) {
+	payload := make([]batchExternalOrderRow, 0, len(rows))
+	for _, row := range rows {
+		if _, err := numericValue(row.Course); err != nil {
+			return nil, fmt.Errorf("course: %w", err)
+		}
+		if _, err := numericValue(row.CourseWorker); err != nil {
+			return nil, fmt.Errorf("courseWorker: %w", err)
+		}
+		if _, err := numericValue(row.WorkerAmount); err != nil {
+			return nil, fmt.Errorf("workerAmount: %w", err)
+		}
+		if _, err := numericValue(row.WorkerProfit); err != nil {
+			return nil, fmt.Errorf("workerProfit: %w", err)
+		}
+
+		payload = append(payload, batchExternalOrderRow{
+			ExternalID:          row.ExternalID,
+			ExternalInnerID:     row.ExternalInnerID,
+			ExternalForeignID:   row.ExternalForeignID,
+			WorkerName:          row.WorkerName,
+			RequisiteRaw:        row.RequisiteRaw,
+			RequisitePhone:      row.RequisitePhone,
+			RequisiteExternalID: row.RequisiteExternalID,
+			DeviceName:          row.DeviceName,
+			MethodType:          row.MethodType,
+			MethodName:          row.MethodName,
+			AmountMinor:         row.AmountMinor,
+			Currency:            row.Currency,
+			Course:              row.Course,
+			CourseWorker:        row.CourseWorker,
+			WorkerAmount:        row.WorkerAmount,
+			WorkerProfit:        row.WorkerProfit,
+			RawStatus:           row.RawStatus,
+			NormalizedStatus:    row.NormalizedStatus,
+			CreatedAtExternal:   row.CreatedAtExternal,
+			ClosedAtExternal:    row.ClosedAtExternal,
+			UpdatedAtExternal:   row.UpdatedAtExternal,
+			OldAmountMinor:      row.OldAmountMinor,
+			HadDispute:          row.HadDispute,
+			Receipt:             row.Receipt,
+			OrderComment:        row.OrderComment,
+			Ordered:             row.Ordered,
+			Counted:             row.Counted,
+			Initials:            row.Initials,
+		})
+	}
+	return json.Marshal(payload)
 }
 
 func deactivateScopeItems(ctx context.Context, queries *db.Queries, record ApplyImportRecord) ([]int64, error) {
@@ -248,30 +287,24 @@ func supersedeImportBatches(ctx context.Context, queries *db.Queries, record App
 	}
 }
 
-func createScopeItem(ctx context.Context, queries *db.Queries, record ApplyImportRecord, batchID int64, importRowID int64, externalOrderID int64) error {
+func createScopeItemsBatch(ctx context.Context, queries *db.Queries, record ApplyImportRecord, batchID int64) ([]int64, error) {
 	switch record.Scope.Type {
 	case ScopeTypeTraderShift:
-		_, err := queries.CreateTraderShiftScopeItem(ctx, db.CreateTraderShiftScopeItemParams{
-			TeamID:          record.TeamID,
-			Direction:       record.Scope.Direction,
-			ShiftID:         int8Value(record.Scope.ShiftID),
-			ImportBatchID:   batchID,
-			ImportRowID:     importRowID,
-			ExternalOrderID: externalOrderID,
+		return queries.CreateTraderShiftScopeItemsBatch(ctx, db.CreateTraderShiftScopeItemsBatchParams{
+			TeamID:        record.TeamID,
+			Direction:     record.Scope.Direction,
+			ShiftID:       int8Value(record.Scope.ShiftID),
+			ImportBatchID: batchID,
 		})
-		return err
 	case ScopeTypeTeamleadPeriod:
-		_, err := queries.CreateTeamleadPeriodScopeItem(ctx, db.CreateTeamleadPeriodScopeItemParams{
+		return queries.CreateTeamleadPeriodScopeItemsBatch(ctx, db.CreateTeamleadPeriodScopeItemsBatchParams{
 			TeamID:             record.TeamID,
 			Direction:          record.Scope.Direction,
 			AccountingPeriodID: int8Value(record.Scope.AccountingPeriodID),
 			ImportBatchID:      batchID,
-			ImportRowID:        importRowID,
-			ExternalOrderID:    externalOrderID,
 		})
-		return err
 	default:
-		return fmt.Errorf("unsupported scope type: %s", record.Scope.Type)
+		return nil, fmt.Errorf("unsupported scope type: %s", record.Scope.Type)
 	}
 }
 
@@ -312,40 +345,12 @@ func int8Ptr(value pgtype.Int8) *int64 {
 	return &value.Int64
 }
 
-func textValue(value *string) pgtype.Text {
-	if value == nil {
-		return pgtype.Text{}
-	}
-
-	return pgtype.Text{String: *value, Valid: true}
-}
-
 func textPtr(value pgtype.Text) *string {
 	if !value.Valid {
 		return nil
 	}
 
 	return &value.String
-}
-
-func boolValue(value *bool) pgtype.Bool {
-	if value == nil {
-		return pgtype.Bool{}
-	}
-
-	return pgtype.Bool{Bool: *value, Valid: true}
-}
-
-func timeValue(value time.Time) pgtype.Timestamptz {
-	return pgtype.Timestamptz{Time: value, Valid: true}
-}
-
-func timePtrValue(value *time.Time) pgtype.Timestamptz {
-	if value == nil {
-		return pgtype.Timestamptz{}
-	}
-
-	return pgtype.Timestamptz{Time: *value, Valid: true}
 }
 
 func timePtr(value pgtype.Timestamptz) *time.Time {

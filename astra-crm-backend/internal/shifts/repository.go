@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"math"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 	"unicode"
 
@@ -11,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"golang.org/x/sync/errgroup"
 
 	db "github.com/ashpak/astra-crm-backend/sqlc/generated"
 )
@@ -144,33 +148,68 @@ func (r *Repository) TeamShiftReport(ctx context.Context, teamID int64, shiftID 
 }
 
 func (r *Repository) shiftReport(ctx context.Context, shift Shift) (ShiftReportDetails, error) {
-	rows, err := r.queries.ListShiftReportRows(ctx, db.ListShiftReportRowsParams{
-		TeamID:  shift.TeamID,
-		ShiftID: shift.ID,
+	var (
+		requisiteRows []db.ListShiftReportRequisitesRow
+		inboundRows   []db.ListShiftReportInboundScopeItemsRow
+		transferRows  []db.ListShiftReportOutboundTransfersRow
+		bankRows      []db.Bank
+		inbound       *ShiftReportReconciliation
+		outbound      *ShiftReportReconciliation
+	)
+	g, groupCtx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		var err error
+		requisiteRows, err = r.queries.ListShiftReportRequisites(groupCtx, db.ListShiftReportRequisitesParams{
+			TeamID:  shift.TeamID,
+			ShiftID: shift.ID,
+		})
+		return err
 	})
-	if err != nil {
+	g.Go(func() error {
+		var err error
+		inboundRows, err = r.queries.ListShiftReportInboundScopeItems(groupCtx, db.ListShiftReportInboundScopeItemsParams{
+			TeamID:  shift.TeamID,
+			ShiftID: pgtype.Int8{Int64: shift.ID, Valid: true},
+		})
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		transferRows, err = r.queries.ListShiftReportOutboundTransfers(groupCtx, db.ListShiftReportOutboundTransfersParams{
+			TeamID:  shift.TeamID,
+			ShiftID: shift.ID,
+		})
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		bankRows, err = r.queries.ListActiveBanks(groupCtx)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		inbound, err = r.latestReportReconciliation(groupCtx, shift.TeamID, shift.ID, "inbound")
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		outbound, err = r.latestReportReconciliation(groupCtx, shift.TeamID, shift.ID, "outbound")
+		return err
+	})
+	if err := g.Wait(); err != nil {
 		return ShiftReportDetails{}, err
-	}
-
-	inbound, err := r.latestReportReconciliation(ctx, shift.TeamID, shift.ID, "inbound")
-	if err != nil {
-		return ShiftReportDetails{}, err
-	}
-	outbound, err := r.latestReportReconciliation(ctx, shift.TeamID, shift.ID, "outbound")
-	if err != nil {
-		return ShiftReportDetails{}, err
-	}
-
-	items := make([]ShiftReportRow, 0, len(rows))
-	for _, row := range rows {
-		items = append(items, fromShiftReportRow(row))
 	}
 
 	return ShiftReportDetails{
 		Shift:    shift,
 		Inbound:  inbound,
 		Outbound: outbound,
-		Rows:     items,
+		Rows: buildShiftReportRows(
+			shiftReportRequisitesFromDB(requisiteRows),
+			shiftReportInboundItemsFromDB(inboundRows),
+			shiftReportOutboundTransfersFromDB(transferRows),
+			bankNamesByCode(bankRows),
+		),
 	}, nil
 }
 
@@ -222,16 +261,24 @@ func (r *Repository) ActiveAssignment(ctx context.Context, teamID int64, traderI
 
 func (r *Repository) AssignedRequisites(ctx context.Context, teamID int64, traderID int64, filters AssignedRequisitesFilters, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
 	page = pagination.Normalize(page)
+	bankRows, err := r.queries.ListActiveBanks(ctx)
+	if err != nil {
+		return pagination.Result[AssignedRequisite]{}, err
+	}
+	bankNames := bankNamesByCode(bankRows)
+	bankSearchCodes := matchingBankCodes(bankNames, filters.Search)
+
 	rows, err := r.queries.ListAssignedRequisitesForTrader(ctx, db.ListAssignedRequisitesForTraderParams{
-		TeamID:       teamID,
-		TraderID:     traderID,
-		Today:        currentBusinessDate(),
-		ExcludeID:    optionalInt8(filters.ExcludeID),
-		Statuses:     filters.Statuses,
-		Search:       filters.Search,
-		SearchDigits: digitsOnly(filters.Search),
-		OffsetCount:  paginationOffset32(page),
-		LimitCount:   paginationLimit32(page),
+		TeamID:          teamID,
+		TraderID:        traderID,
+		Today:           currentBusinessDate(),
+		ExcludeID:       optionalInt8(filters.ExcludeID),
+		Statuses:        filters.Statuses,
+		Search:          filters.Search,
+		BankSearchCodes: bankSearchCodes,
+		SearchDigits:    digitsOnly(filters.Search),
+		OffsetCount:     paginationOffset32(page),
+		LimitCount:      paginationLimit32(page),
 	})
 	if err != nil {
 		return pagination.Result[AssignedRequisite]{}, err
@@ -239,17 +286,18 @@ func (r *Repository) AssignedRequisites(ctx context.Context, teamID int64, trade
 
 	items := make([]AssignedRequisite, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, fromAssignedRow(row))
+		items = append(items, fromAssignedRow(row, bankNames))
 	}
 
 	total, err := r.queries.CountAssignedRequisitesForTrader(ctx, db.CountAssignedRequisitesForTraderParams{
-		TeamID:       teamID,
-		TraderID:     traderID,
-		Today:        currentBusinessDate(),
-		ExcludeID:    optionalInt8(filters.ExcludeID),
-		Statuses:     filters.Statuses,
-		Search:       filters.Search,
-		SearchDigits: digitsOnly(filters.Search),
+		TeamID:          teamID,
+		TraderID:        traderID,
+		Today:           currentBusinessDate(),
+		ExcludeID:       optionalInt8(filters.ExcludeID),
+		Statuses:        filters.Statuses,
+		Search:          filters.Search,
+		BankSearchCodes: bankSearchCodes,
+		SearchDigits:    digitsOnly(filters.Search),
 	})
 	if err != nil {
 		return pagination.Result[AssignedRequisite]{}, err
@@ -260,6 +308,12 @@ func (r *Repository) AssignedRequisites(ctx context.Context, teamID int64, trade
 
 func (r *Repository) FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
 	page = pagination.Normalize(page)
+	bankRows, err := r.queries.ListActiveBanks(ctx)
+	if err != nil {
+		return pagination.Result[AssignedRequisite]{}, err
+	}
+	bankNames := bankNamesByCode(bankRows)
+
 	rows, err := r.queries.ListFutureAssignedRequisitesForTrader(ctx, db.ListFutureAssignedRequisitesForTraderParams{
 		TeamID:      teamID,
 		TraderID:    traderID,
@@ -273,7 +327,7 @@ func (r *Repository) FutureAssignedRequisites(ctx context.Context, teamID int64,
 
 	items := make([]AssignedRequisite, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, fromFutureAssignedRow(row))
+		items = append(items, fromFutureAssignedRow(row, bankNames))
 	}
 
 	total, err := r.queries.CountFutureAssignedRequisitesForTrader(ctx, db.CountFutureAssignedRequisitesForTraderParams{
@@ -290,6 +344,12 @@ func (r *Repository) FutureAssignedRequisites(ctx context.Context, teamID int64,
 
 func (r *Repository) HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
 	page = pagination.Normalize(page)
+	bankRows, err := r.queries.ListActiveBanks(ctx)
+	if err != nil {
+		return pagination.Result[AssignedRequisite]{}, err
+	}
+	bankNames := bankNamesByCode(bankRows)
+
 	rows, err := r.queries.ListHistoricalAssignedRequisitesForTrader(ctx, db.ListHistoricalAssignedRequisitesForTraderParams{
 		TeamID:      teamID,
 		TraderID:    traderID,
@@ -303,7 +363,7 @@ func (r *Repository) HistoricalAssignedRequisites(ctx context.Context, teamID in
 
 	items := make([]AssignedRequisite, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, fromHistoricalAssignedRow(row))
+		items = append(items, fromHistoricalAssignedRow(row, bankNames))
 	}
 
 	total, err := r.queries.CountHistoricalAssignedRequisitesForTrader(ctx, db.CountHistoricalAssignedRequisitesForTraderParams{
@@ -334,6 +394,12 @@ func businessLocation() *time.Location {
 
 func (r *Repository) AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
 	page = pagination.Normalize(page)
+	bankRows, err := r.queries.ListActiveBanks(ctx)
+	if err != nil {
+		return pagination.Result[AssignedRequisite]{}, err
+	}
+	bankNames := bankNamesByCode(bankRows)
+
 	rows, err := r.queries.ListAssignedRequisitesForShift(ctx, db.ListAssignedRequisitesForShiftParams{
 		TeamID:      teamID,
 		TraderID:    traderID,
@@ -347,7 +413,7 @@ func (r *Repository) AssignedRequisitesByShift(ctx context.Context, teamID int64
 
 	items := make([]AssignedRequisite, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, fromAssignedShiftRow(row))
+		items = append(items, fromAssignedShiftRow(row, bankNames))
 	}
 
 	total, err := r.queries.CountAssignedRequisitesForShift(ctx, db.CountAssignedRequisitesForShiftParams{
@@ -364,6 +430,12 @@ func (r *Repository) AssignedRequisitesByShift(ctx context.Context, teamID int64
 
 func (r *Repository) AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
 	page = pagination.Normalize(page)
+	bankRows, err := r.queries.ListActiveBanks(ctx)
+	if err != nil {
+		return pagination.Result[AssignedRequisite]{}, err
+	}
+	bankNames := bankNamesByCode(bankRows)
+
 	rows, err := r.queries.ListAssignedRequisitesForTeamShift(ctx, db.ListAssignedRequisitesForTeamShiftParams{
 		TeamID:      teamID,
 		ShiftID:     shiftID,
@@ -376,7 +448,7 @@ func (r *Repository) AssignedRequisitesByTeamShift(ctx context.Context, teamID i
 
 	items := make([]AssignedRequisite, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, fromAssignedTeamShiftRow(row))
+		items = append(items, fromAssignedTeamShiftRow(row, bankNames))
 	}
 
 	total, err := r.queries.CountAssignedRequisitesForTeamShift(ctx, db.CountAssignedRequisitesForTeamShiftParams{
@@ -620,6 +692,12 @@ func (r *Repository) TurnoversByShiftRequisite(ctx context.Context, teamID int64
 
 func (r *Repository) InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64, page pagination.Params) (pagination.Result[InternalTransfer], error) {
 	page = pagination.Normalize(page)
+	bankRows, err := r.queries.ListActiveBanks(ctx)
+	if err != nil {
+		return pagination.Result[InternalTransfer]{}, err
+	}
+	bankNames := bankNamesByCode(bankRows)
+
 	rows, err := r.queries.ListInternalTransfersForShiftRequisite(ctx, db.ListInternalTransfersForShiftRequisiteParams{
 		TeamID:           teamID,
 		TraderID:         traderID,
@@ -633,7 +711,7 @@ func (r *Repository) InternalTransfersByShiftRequisite(ctx context.Context, team
 
 	items := make([]InternalTransfer, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, fromListInternalTransferRow(row))
+		items = append(items, fromListInternalTransferRow(row, bankNames))
 	}
 
 	total, err := r.queries.CountInternalTransfersForShiftRequisite(ctx, db.CountInternalTransfersForShiftRequisiteParams{
@@ -649,6 +727,12 @@ func (r *Repository) InternalTransfersByShiftRequisite(ctx context.Context, team
 }
 
 func (r *Repository) CreateInternalTransfer(ctx context.Context, params CreateInternalTransferRecord) (InternalTransfer, error) {
+	bankRows, err := r.queries.ListActiveBanks(ctx)
+	if err != nil {
+		return InternalTransfer{}, err
+	}
+	bankNames := bankNamesByCode(bankRows)
+
 	row, err := r.queries.CreateInternalTransfer(ctx, db.CreateInternalTransferParams{
 		TeamID:                      params.TeamID,
 		TraderID:                    params.TraderID,
@@ -665,10 +749,16 @@ func (r *Repository) CreateInternalTransfer(ctx context.Context, params CreateIn
 		return InternalTransfer{}, err
 	}
 
-	return fromCreateInternalTransferRow(row), nil
+	return fromCreateInternalTransferRow(row, bankNames), nil
 }
 
 func (r *Repository) CancelInternalTransfer(ctx context.Context, params CancelInternalTransferRecord) (InternalTransfer, error) {
+	bankRows, err := r.queries.ListActiveBanks(ctx)
+	if err != nil {
+		return InternalTransfer{}, err
+	}
+	bankNames := bankNamesByCode(bankRows)
+
 	row, err := r.queries.CancelInternalTransfer(ctx, db.CancelInternalTransferParams{
 		TeamID:      params.TeamID,
 		TraderID:    params.TraderID,
@@ -682,7 +772,7 @@ func (r *Repository) CancelInternalTransfer(ctx context.Context, params CancelIn
 		return InternalTransfer{}, err
 	}
 
-	return fromCancelInternalTransferRow(row), nil
+	return fromCancelInternalTransferRow(row, bankNames), nil
 }
 
 func (r *Repository) CurrentShiftChecklist(ctx context.Context, teamID int64, traderID int64) (CloseChecklist, error) {
@@ -801,6 +891,9 @@ func fromDBShift(row db.TraderShift) Shift {
 		Status:                       row.Status,
 		InboundReconciliationStatus:  row.InboundReconciliationStatus,
 		OutboundReconciliationStatus: row.OutboundReconciliationStatus,
+		TLStatus:                     row.TlReconciliationStatus,
+		LastTeamleadReconciliationID: int64Ptr(row.LastTeamleadReconciliationID),
+		TLReconciledAt:               timePtr(row.TlReconciledAt),
 		CloseComment:                 textPtr(row.CloseComment),
 		CreatedAt:                    row.CreatedAt.Time,
 		UpdatedAt:                    row.UpdatedAt.Time,
@@ -808,14 +901,14 @@ func fromDBShift(row db.TraderShift) Shift {
 	}
 }
 
-func fromAssignedRow(row db.ListAssignedRequisitesForTraderRow) AssignedRequisite {
+func fromAssignedRow(row db.ListAssignedRequisitesForTraderRow, bankNames map[string]string) AssignedRequisite {
 	return AssignedRequisite{
 		ID:                    row.ID,
 		TeamID:                row.TeamID,
 		Phone:                 row.Phone,
 		MethodType:            row.MethodType,
 		BankCode:              row.BankCode,
-		BankName:              row.BankName,
+		BankName:              bankNames[row.BankCode],
 		Proxy:                 textPtr(row.Proxy),
 		EmployeeComment:       textPtr(row.EmployeeComment),
 		Status:                row.Status,
@@ -835,14 +928,14 @@ func fromAssignedRow(row db.ListAssignedRequisitesForTraderRow) AssignedRequisit
 	}
 }
 
-func fromFutureAssignedRow(row db.ListFutureAssignedRequisitesForTraderRow) AssignedRequisite {
+func fromFutureAssignedRow(row db.ListFutureAssignedRequisitesForTraderRow, bankNames map[string]string) AssignedRequisite {
 	return AssignedRequisite{
 		ID:                    row.ID,
 		TeamID:                row.TeamID,
 		Phone:                 row.Phone,
 		MethodType:            row.MethodType,
 		BankCode:              row.BankCode,
-		BankName:              row.BankName,
+		BankName:              bankNames[row.BankCode],
 		Proxy:                 textPtr(row.Proxy),
 		EmployeeComment:       textPtr(row.EmployeeComment),
 		Status:                row.Status,
@@ -862,14 +955,14 @@ func fromFutureAssignedRow(row db.ListFutureAssignedRequisitesForTraderRow) Assi
 	}
 }
 
-func fromHistoricalAssignedRow(row db.ListHistoricalAssignedRequisitesForTraderRow) AssignedRequisite {
+func fromHistoricalAssignedRow(row db.ListHistoricalAssignedRequisitesForTraderRow, bankNames map[string]string) AssignedRequisite {
 	return AssignedRequisite{
 		ID:                    row.ID,
 		TeamID:                row.TeamID,
 		Phone:                 row.Phone,
 		MethodType:            row.MethodType,
 		BankCode:              row.BankCode,
-		BankName:              row.BankName,
+		BankName:              bankNames[row.BankCode],
 		Proxy:                 textPtr(row.Proxy),
 		EmployeeComment:       textPtr(row.EmployeeComment),
 		Status:                row.Status,
@@ -889,14 +982,14 @@ func fromHistoricalAssignedRow(row db.ListHistoricalAssignedRequisitesForTraderR
 	}
 }
 
-func fromAssignedShiftRow(row db.ListAssignedRequisitesForShiftRow) AssignedRequisite {
+func fromAssignedShiftRow(row db.ListAssignedRequisitesForShiftRow, bankNames map[string]string) AssignedRequisite {
 	return AssignedRequisite{
 		ID:                    row.ID,
 		TeamID:                row.TeamID,
 		Phone:                 row.Phone,
 		MethodType:            row.MethodType,
 		BankCode:              row.BankCode,
-		BankName:              row.BankName,
+		BankName:              bankNames[row.BankCode],
 		Proxy:                 textPtr(row.Proxy),
 		EmployeeComment:       textPtr(row.EmployeeComment),
 		Status:                row.Status,
@@ -916,14 +1009,14 @@ func fromAssignedShiftRow(row db.ListAssignedRequisitesForShiftRow) AssignedRequ
 	}
 }
 
-func fromAssignedTeamShiftRow(row db.ListAssignedRequisitesForTeamShiftRow) AssignedRequisite {
+func fromAssignedTeamShiftRow(row db.ListAssignedRequisitesForTeamShiftRow, bankNames map[string]string) AssignedRequisite {
 	return AssignedRequisite{
 		ID:                    row.ID,
 		TeamID:                row.TeamID,
 		Phone:                 row.Phone,
 		MethodType:            row.MethodType,
 		BankCode:              row.BankCode,
-		BankName:              row.BankName,
+		BankName:              bankNames[row.BankCode],
 		Proxy:                 textPtr(row.Proxy),
 		EmployeeComment:       textPtr(row.EmployeeComment),
 		Status:                row.Status,
@@ -959,31 +1052,321 @@ func fromCloseShiftRequisiteRow(row db.CloseShiftRequisiteRow) ShiftRequisite {
 	return fromShiftRequisiteFields(row.ID, row.TeamID, row.ShiftID, row.TraderID, row.RequisiteID, row.AssignmentID, row.CardNumber, row.HolderName, row.TakenAt, row.ReleasedAt, row.Status, row.InboundTurnoverMinor, row.OutboundTurnoverMinor, row.ClosingBalanceMinor, row.CreatedAt, row.UpdatedAt)
 }
 
-func fromShiftReportRow(row db.ListShiftReportRowsRow) ShiftReportRow {
-	return ShiftReportRow{
-		RowKey:                row.RowKey,
-		ShiftRequisiteID:      int64Ptr(row.ShiftRequisiteID),
-		RequisiteID:           int64Ptr(row.RequisiteID),
-		Phone:                 row.Phone,
-		MethodType:            row.MethodType,
-		BankCode:              row.BankCode,
-		BankName:              row.BankName,
-		Proxy:                 textPtr(row.Proxy),
-		EmployeeComment:       textPtr(row.EmployeeComment),
-		CardNumber:            textPtr(row.CardNumber),
-		HolderName:            textPtr(row.HolderName),
-		Status:                row.Status,
-		InboundTurnoverMinor:  row.InboundTurnoverMinor,
-		OutboundTurnoverMinor: row.OutboundTurnoverMinor,
-		ClosingBalanceMinor:   row.ClosingBalanceMinor,
-		TargetTurnoverMinor:   row.TargetTurnoverMinor,
-		CSVInboundMinor:       row.CsvInboundMinor,
-		CSVOutboundMinor:      row.CsvOutboundMinor,
-		InboundDiffMinor:      row.InboundDiffMinor,
-		OutboundDiffMinor:     row.OutboundDiffMinor,
-		HasMismatch:           row.HasMismatch,
-		CSVOnly:               row.CsvOnly,
+type shiftReportRequisiteRow struct {
+	ShiftRequisiteID       int64
+	RequisiteID            int64
+	Phone                  string
+	MethodType             string
+	BankCode               string
+	Proxy                  *string
+	EmployeeComment        *string
+	CardNumber             string
+	RequisiteCardNumber    *string
+	HolderName             string
+	Status                 string
+	TLReconciliationStatus string
+	InboundTurnoverMinor   int64
+	OutboundTurnoverMinor  int64
+	ClosingBalanceMinor    int64
+	TargetTurnoverMinor    int64
+}
+
+type shiftReportInboundItem struct {
+	CSVRequisite     string
+	NormalizedStatus string
+	AmountMinor      int64
+}
+
+type shiftReportOutboundTransfer struct {
+	SourceShiftRequisiteID int64
+	AmountMinor            int64
+}
+
+type shiftReportInboundAggregate struct {
+	CSVRequisite    string
+	CSVInboundMinor int64
+}
+
+func buildShiftReportRows(requisites []shiftReportRequisiteRow, inboundItems []shiftReportInboundItem, transfers []shiftReportOutboundTransfer, bankNames map[string]string) []ShiftReportRow {
+	crmByMatchKey := make(map[string]shiftReportRequisiteRow, len(requisites))
+	lookupCandidates := map[string]map[int64]string{}
+	for _, requisite := range requisites {
+		matchKey := crmMatchKey(requisite.ShiftRequisiteID)
+		crmByMatchKey[matchKey] = requisite
+
+		if phoneKey := rightDigits(requisite.Phone, 10); phoneKey != "" {
+			addReportLookupCandidate(lookupCandidates, "phone:"+phoneKey, requisite.ShiftRequisiteID, matchKey)
+		}
+		if cardKey := digitsOnly(firstNonEmpty(requisite.CardNumber, stringPtrValue(requisite.RequisiteCardNumber))); cardKey != "" {
+			addReportLookupCandidate(lookupCandidates, "card:"+cardKey, requisite.ShiftRequisiteID, matchKey)
+		}
 	}
+
+	uniqueLookup := make(map[string]string, len(lookupCandidates))
+	for lookupKey, candidates := range lookupCandidates {
+		if len(candidates) != 1 {
+			continue
+		}
+		for _, matchKey := range candidates {
+			uniqueLookup[lookupKey] = matchKey
+		}
+	}
+
+	inboundByMatchKey := map[string]shiftReportInboundAggregate{}
+	for _, item := range inboundItems {
+		matchKey := inboundReportMatchKey(item.CSVRequisite, uniqueLookup)
+		aggregate := inboundByMatchKey[matchKey]
+		if item.CSVRequisite > aggregate.CSVRequisite {
+			aggregate.CSVRequisite = item.CSVRequisite
+		}
+		if item.NormalizedStatus == "success" || item.NormalizedStatus == "corrected" {
+			aggregate.CSVInboundMinor += item.AmountMinor
+		}
+		inboundByMatchKey[matchKey] = aggregate
+	}
+
+	outboundByShiftRequisiteID := map[int64]int64{}
+	for _, transfer := range transfers {
+		outboundByShiftRequisiteID[transfer.SourceShiftRequisiteID] += transfer.AmountMinor
+	}
+
+	allKeys := map[string]bool{}
+	for key := range crmByMatchKey {
+		allKeys[key] = true
+	}
+	for key := range inboundByMatchKey {
+		allKeys[key] = true
+	}
+
+	rows := make([]ShiftReportRow, 0, len(allKeys))
+	for key := range allKeys {
+		requisite, hasCRM := crmByMatchKey[key]
+		inbound := inboundByMatchKey[key]
+		rows = append(rows, buildShiftReportRow(key, requisite, hasCRM, inbound, outboundByShiftRequisiteID, bankNames))
+	}
+
+	sort.SliceStable(rows, func(i, j int) bool {
+		left := rows[i]
+		right := rows[j]
+		if left.HasMismatch != right.HasMismatch {
+			return left.HasMismatch
+		}
+		if left.CSVOnly != right.CSVOnly {
+			return left.CSVOnly
+		}
+		leftDiff := absInt64(left.InboundDiffMinor) + absInt64(left.OutboundDiffMinor)
+		rightDiff := absInt64(right.InboundDiffMinor) + absInt64(right.OutboundDiffMinor)
+		if leftDiff != rightDiff {
+			return leftDiff > rightDiff
+		}
+		if left.Phone != right.Phone {
+			return left.Phone < right.Phone
+		}
+		return left.RowKey < right.RowKey
+	})
+
+	return rows
+}
+
+func buildShiftReportRow(matchKey string, requisite shiftReportRequisiteRow, hasCRM bool, inbound shiftReportInboundAggregate, outboundByShiftRequisiteID map[int64]int64, bankNames map[string]string) ShiftReportRow {
+	if !hasCRM {
+		csvInboundMinor := inbound.CSVInboundMinor
+		phone := inbound.CSVRequisite
+		if phone == "" {
+			phone = "Без реквизита"
+		}
+		return ShiftReportRow{
+			RowKey:           "csv:" + matchKey,
+			Phone:            phone,
+			Status:           "csv_only",
+			TLStatus:         "not_checked",
+			CSVInboundMinor:  csvInboundMinor,
+			InboundDiffMinor: -csvInboundMinor,
+			HasMismatch:      csvInboundMinor != 0,
+			CSVOnly:          true,
+		}
+	}
+
+	csvInboundMinor := inbound.CSVInboundMinor
+	csvOutboundMinor := outboundByShiftRequisiteID[requisite.ShiftRequisiteID]
+	inboundDiffMinor := requisite.InboundTurnoverMinor - csvInboundMinor
+	outboundDiffMinor := requisite.OutboundTurnoverMinor - csvOutboundMinor
+	return ShiftReportRow{
+		RowKey:                crmMatchKey(requisite.ShiftRequisiteID),
+		ShiftRequisiteID:      &requisite.ShiftRequisiteID,
+		RequisiteID:           &requisite.RequisiteID,
+		Phone:                 requisite.Phone,
+		MethodType:            requisite.MethodType,
+		BankCode:              requisite.BankCode,
+		BankName:              bankNames[requisite.BankCode],
+		Proxy:                 requisite.Proxy,
+		EmployeeComment:       requisite.EmployeeComment,
+		CardNumber:            &requisite.CardNumber,
+		HolderName:            &requisite.HolderName,
+		Status:                requisite.Status,
+		TLStatus:              defaultString(requisite.TLReconciliationStatus, "not_checked"),
+		InboundTurnoverMinor:  requisite.InboundTurnoverMinor,
+		OutboundTurnoverMinor: requisite.OutboundTurnoverMinor,
+		ClosingBalanceMinor:   requisite.ClosingBalanceMinor,
+		TargetTurnoverMinor:   requisite.TargetTurnoverMinor,
+		CSVInboundMinor:       csvInboundMinor,
+		CSVOutboundMinor:      csvOutboundMinor,
+		InboundDiffMinor:      inboundDiffMinor,
+		OutboundDiffMinor:     outboundDiffMinor,
+		HasMismatch:           inboundDiffMinor != 0 || outboundDiffMinor != 0,
+	}
+}
+
+func shiftReportRequisitesFromDB(rows []db.ListShiftReportRequisitesRow) []shiftReportRequisiteRow {
+	items := make([]shiftReportRequisiteRow, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, shiftReportRequisiteRow{
+			ShiftRequisiteID:       row.ShiftRequisiteID,
+			RequisiteID:            row.RequisiteID,
+			Phone:                  row.Phone,
+			MethodType:             row.MethodType,
+			BankCode:               row.BankCode,
+			Proxy:                  textPtr(row.Proxy),
+			EmployeeComment:        textPtr(row.EmployeeComment),
+			CardNumber:             row.CardNumber,
+			RequisiteCardNumber:    textPtr(row.RequisiteCardNumber),
+			HolderName:             row.HolderName,
+			Status:                 row.Status,
+			TLReconciliationStatus: row.TlReconciliationStatus,
+			InboundTurnoverMinor:   row.InboundTurnoverMinor,
+			OutboundTurnoverMinor:  row.OutboundTurnoverMinor,
+			ClosingBalanceMinor:    row.ClosingBalanceMinor,
+			TargetTurnoverMinor:    row.TargetTurnoverMinor,
+		})
+	}
+	return items
+}
+
+func shiftReportInboundItemsFromDB(rows []db.ListShiftReportInboundScopeItemsRow) []shiftReportInboundItem {
+	items := make([]shiftReportInboundItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, shiftReportInboundItem{
+			CSVRequisite:     row.CsvRequisite,
+			NormalizedStatus: row.NormalizedStatus,
+			AmountMinor:      row.AmountMinor,
+		})
+	}
+	return items
+}
+
+func shiftReportOutboundTransfersFromDB(rows []db.ListShiftReportOutboundTransfersRow) []shiftReportOutboundTransfer {
+	items := make([]shiftReportOutboundTransfer, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, shiftReportOutboundTransfer{
+			SourceShiftRequisiteID: row.SourceShiftRequisiteID,
+			AmountMinor:            row.AmountMinor,
+		})
+	}
+	return items
+}
+
+func bankNamesByCode(rows []db.Bank) map[string]string {
+	names := make(map[string]string, len(rows))
+	for _, row := range rows {
+		names[row.Code] = row.Name
+	}
+	return names
+}
+
+func matchingBankCodes(bankNames map[string]string, search string) []string {
+	search = strings.TrimSpace(strings.ToLower(search))
+	if search == "" {
+		return nil
+	}
+
+	codes := make([]string, 0)
+	for code, name := range bankNames {
+		lowerCode := strings.ToLower(code)
+		lowerName := strings.ToLower(name)
+		if strings.Contains(lowerCode, search) || strings.Contains(lowerName, search) {
+			codes = append(codes, code)
+		}
+	}
+	if len(codes) == 0 {
+		return nil
+	}
+	sort.Strings(codes)
+	return codes
+}
+
+func addReportLookupCandidate(candidates map[string]map[int64]string, lookupKey string, shiftRequisiteID int64, matchKey string) {
+	if candidates[lookupKey] == nil {
+		candidates[lookupKey] = map[int64]string{}
+	}
+	candidates[lookupKey][shiftRequisiteID] = matchKey
+}
+
+func inboundReportMatchKey(csvRequisite string, uniqueLookup map[string]string) string {
+	csvDigits := digitsOnly(csvRequisite)
+	if len(csvDigits) >= 10 && len(csvDigits) <= 11 {
+		phoneLookup := "phone:" + rightString(csvDigits, 10)
+		if matchKey, ok := uniqueLookup[phoneLookup]; ok {
+			return matchKey
+		}
+		return "csv_phone:" + rightString(csvDigits, 10)
+	}
+	if len(csvDigits) >= 12 {
+		cardLookup := "card:" + csvDigits
+		if matchKey, ok := uniqueLookup[cardLookup]; ok {
+			return matchKey
+		}
+		return "csv_card:" + csvDigits
+	}
+	return "csv:" + strings.ToLower(strings.TrimSpace(defaultString(csvRequisite, "unknown")))
+}
+
+func crmMatchKey(shiftRequisiteID int64) string {
+	return "crm:" + strconv.FormatInt(shiftRequisiteID, 10)
+}
+
+func rightDigits(value string, count int) string {
+	digits := digitsOnly(value)
+	if digits == "" {
+		return ""
+	}
+	return rightString(digits, count)
+}
+
+func rightString(value string, count int) string {
+	if len(value) <= count {
+		return value
+	}
+	return value[len(value)-count:]
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func stringPtrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func defaultString(value string, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func absInt64(value int64) int64 {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func fromDBReportReconciliation(row db.ReconciliationRun) *ShiftReportReconciliation {
@@ -1010,7 +1393,7 @@ func fromGetShiftRequisiteForTraderRow(row db.GetShiftRequisiteForTraderRow) Shi
 	return fromShiftRequisiteFields(row.ID, row.TeamID, row.ShiftID, row.TraderID, row.RequisiteID, row.AssignmentID, row.CardNumber, row.HolderName, row.TakenAt, row.ReleasedAt, row.Status, row.InboundTurnoverMinor, row.OutboundTurnoverMinor, row.ClosingBalanceMinor, row.CreatedAt, row.UpdatedAt)
 }
 
-func fromListInternalTransferRow(row db.ListInternalTransfersForShiftRequisiteRow) InternalTransfer {
+func fromListInternalTransferRow(row db.ListInternalTransfersForShiftRequisiteRow, bankNames map[string]string) InternalTransfer {
 	return InternalTransfer{
 		ID:                          row.ID,
 		TeamID:                      row.TeamID,
@@ -1020,12 +1403,12 @@ func fromListInternalTransferRow(row db.ListInternalTransfersForShiftRequisiteRo
 		SourceRequisiteID:           row.SourceRequisiteID,
 		SourcePhone:                 row.SourcePhone,
 		SourceBankCode:              row.SourceBankCode,
-		SourceBankName:              row.SourceBankName,
+		SourceBankName:              bankNames[row.SourceBankCode],
 		DestinationShiftRequisiteID: row.DestinationShiftRequisiteID,
 		DestinationRequisiteID:      row.DestinationRequisiteID,
 		DestinationPhone:            row.DestinationPhone,
 		DestinationBankCode:         row.DestinationBankCode,
-		DestinationBankName:         row.DestinationBankName,
+		DestinationBankName:         bankNames[row.DestinationBankCode],
 		AmountMinor:                 row.AmountMinor,
 		Status:                      row.Status,
 		CreatedBy:                   row.CreatedBy,
@@ -1036,7 +1419,7 @@ func fromListInternalTransferRow(row db.ListInternalTransfersForShiftRequisiteRo
 	}
 }
 
-func fromCreateInternalTransferRow(row db.CreateInternalTransferRow) InternalTransfer {
+func fromCreateInternalTransferRow(row db.CreateInternalTransferRow, bankNames map[string]string) InternalTransfer {
 	return InternalTransfer{
 		ID:                          row.ID,
 		TeamID:                      row.TeamID,
@@ -1046,12 +1429,12 @@ func fromCreateInternalTransferRow(row db.CreateInternalTransferRow) InternalTra
 		SourceRequisiteID:           row.SourceRequisiteID,
 		SourcePhone:                 row.SourcePhone,
 		SourceBankCode:              row.SourceBankCode,
-		SourceBankName:              row.SourceBankName,
+		SourceBankName:              bankNames[row.SourceBankCode],
 		DestinationShiftRequisiteID: row.DestinationShiftRequisiteID,
 		DestinationRequisiteID:      row.DestinationRequisiteID,
 		DestinationPhone:            row.DestinationPhone,
 		DestinationBankCode:         row.DestinationBankCode,
-		DestinationBankName:         row.DestinationBankName,
+		DestinationBankName:         bankNames[row.DestinationBankCode],
 		AmountMinor:                 row.AmountMinor,
 		Status:                      row.Status,
 		CreatedBy:                   row.CreatedBy,
@@ -1062,7 +1445,7 @@ func fromCreateInternalTransferRow(row db.CreateInternalTransferRow) InternalTra
 	}
 }
 
-func fromCancelInternalTransferRow(row db.CancelInternalTransferRow) InternalTransfer {
+func fromCancelInternalTransferRow(row db.CancelInternalTransferRow, bankNames map[string]string) InternalTransfer {
 	return InternalTransfer{
 		ID:                          row.ID,
 		TeamID:                      row.TeamID,
@@ -1072,12 +1455,12 @@ func fromCancelInternalTransferRow(row db.CancelInternalTransferRow) InternalTra
 		SourceRequisiteID:           row.SourceRequisiteID,
 		SourcePhone:                 row.SourcePhone,
 		SourceBankCode:              row.SourceBankCode,
-		SourceBankName:              row.SourceBankName,
+		SourceBankName:              bankNames[row.SourceBankCode],
 		DestinationShiftRequisiteID: row.DestinationShiftRequisiteID,
 		DestinationRequisiteID:      row.DestinationRequisiteID,
 		DestinationPhone:            row.DestinationPhone,
 		DestinationBankCode:         row.DestinationBankCode,
-		DestinationBankName:         row.DestinationBankName,
+		DestinationBankName:         bankNames[row.DestinationBankCode],
 		AmountMinor:                 row.AmountMinor,
 		Status:                      row.Status,
 		CreatedBy:                   row.CreatedBy,

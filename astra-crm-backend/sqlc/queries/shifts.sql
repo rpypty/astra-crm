@@ -1,5 +1,5 @@
 -- name: GetCurrentTraderShift :one
-SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at
 FROM trader_shifts
 WHERE team_id = sqlc.arg(team_id)
   AND trader_id = sqlc.arg(trader_id)
@@ -10,10 +10,10 @@ LIMIT 1;
 -- name: CreateTraderShift :one
 INSERT INTO trader_shifts (team_id, trader_id)
 VALUES (sqlc.arg(team_id), sqlc.arg(trader_id))
-RETURNING id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at;
+RETURNING id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at;
 
 -- name: ListTraderShiftHistory :many
-SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at
 FROM trader_shifts
 WHERE team_id = sqlc.arg(team_id)
   AND trader_id = sqlc.arg(trader_id)
@@ -30,7 +30,7 @@ WHERE team_id = sqlc.arg(team_id)
   AND status IN ('closed', 'closed_with_discrepancy');
 
 -- name: ListTeamShiftHistory :many
-SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at
 FROM trader_shifts
 WHERE team_id = sqlc.arg(team_id)
   AND status IN ('closed', 'closed_with_discrepancy')
@@ -45,7 +45,7 @@ WHERE team_id = sqlc.arg(team_id)
   AND status IN ('closed', 'closed_with_discrepancy');
 
 -- name: GetTraderShiftByIDForTrader :one
-SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at
 FROM trader_shifts
 WHERE team_id = sqlc.arg(team_id)
   AND trader_id = sqlc.arg(trader_id)
@@ -53,7 +53,7 @@ WHERE team_id = sqlc.arg(team_id)
 LIMIT 1;
 
 -- name: GetTraderShiftByIDForTeam :one
-SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at
 FROM trader_shifts
 WHERE team_id = sqlc.arg(team_id)
   AND id = sqlc.arg(shift_id)
@@ -88,7 +88,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.status,
@@ -107,7 +107,6 @@ SELECT
     COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN current_shift cs ON true
 LEFT JOIN LATERAL (
     SELECT sr.*
@@ -141,7 +140,10 @@ WHERE ra.team_id = sqlc.arg(team_id)
   AND (
       sqlc.arg(search)::text = ''
       OR lower(r.phone) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
-      OR lower(b.name) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR (
+          COALESCE(cardinality(sqlc.arg(bank_search_codes)::text[]), 0) > 0
+          AND r.bank_code = ANY(sqlc.arg(bank_search_codes)::text[])
+      )
       OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
       OR (
           sqlc.arg(search_digits)::text <> ''
@@ -168,7 +170,6 @@ WITH current_shift AS (
 SELECT count(*)::bigint
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN current_shift cs ON true
 LEFT JOIN LATERAL (
     SELECT sr.*
@@ -202,7 +203,10 @@ WHERE ra.team_id = sqlc.arg(team_id)
   AND (
       sqlc.arg(search)::text = ''
       OR lower(r.phone) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
-      OR lower(b.name) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR (
+          COALESCE(cardinality(sqlc.arg(bank_search_codes)::text[]), 0) > 0
+          AND r.bank_code = ANY(sqlc.arg(bank_search_codes)::text[])
+      )
       OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
       OR (
           sqlc.arg(search_digits)::text <> ''
@@ -220,7 +224,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.status,
@@ -239,7 +243,6 @@ SELECT
     0::bigint AS closing_balance_minor
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 WHERE ra.team_id = sqlc.arg(team_id)
   AND ra.trader_id = sqlc.arg(trader_id)
   AND ra.unassigned_at IS NULL
@@ -270,7 +273,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.status,
@@ -289,7 +292,6 @@ SELECT
     COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = sqlc.arg(team_id)
   AND ra.trader_id = sqlc.arg(trader_id)
@@ -338,7 +340,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.status,
@@ -358,7 +360,6 @@ SELECT
 FROM shift_requisites sr
 JOIN trader_shifts ts ON ts.id = sr.shift_id
 JOIN requisites r ON r.id = sr.requisite_id
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN requisite_assignments ra ON ra.id = sr.assignment_id
 WHERE sr.team_id = sqlc.arg(team_id)
   AND sr.trader_id = sqlc.arg(trader_id)
@@ -386,7 +387,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.status,
@@ -406,7 +407,6 @@ SELECT
 FROM shift_requisites sr
 JOIN trader_shifts ts ON ts.id = sr.shift_id
 JOIN requisites r ON r.id = sr.requisite_id
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN requisite_assignments ra ON ra.id = sr.assignment_id
 WHERE sr.team_id = sqlc.arg(team_id)
   AND sr.shift_id = sqlc.arg(shift_id)
@@ -447,166 +447,50 @@ WHERE sr.team_id = sqlc.arg(team_id)
   AND sr.trader_id = sqlc.arg(trader_id)
   AND ts.status IN ('open', 'closing');
 
--- name: ListShiftReportRows :many
-WITH crm_requisites AS (
-    SELECT
-        ('crm:' || sr.id::text) AS row_key,
-        sr.id AS shift_requisite_id,
-        sr.requisite_id,
-        r.phone,
-        r.method_type,
-        r.bank_code,
-        b.name AS bank_name,
-        r.proxy,
-        r.employee_comment,
-        sr.card_number,
-        sr.holder_name,
-        sr.status,
-        COALESCE(sr.inbound_turnover_minor, 0)::bigint AS inbound_turnover_minor,
-        COALESCE(sr.outbound_turnover_minor, 0)::bigint AS outbound_turnover_minor,
-        COALESCE(sr.closing_balance_minor, 0)::bigint AS closing_balance_minor,
-        COALESCE(ra.target_turnover_minor, 0)::bigint AS target_turnover_minor,
-        ('crm:' || sr.id::text) AS match_key,
-        NULLIF(right(regexp_replace(r.phone, '[^0-9]', '', 'g'), 10), '') AS phone_match_key,
-        NULLIF(regexp_replace(COALESCE(NULLIF(sr.card_number, ''), NULLIF(r.card_number, ''), ''), '[^0-9]', '', 'g'), '') AS card_match_key
-    FROM shift_requisites sr
-    JOIN trader_shifts ts ON ts.id = sr.shift_id
-    JOIN requisites r ON r.id = sr.requisite_id
-    JOIN banks b ON b.code = r.bank_code
-    LEFT JOIN requisite_assignments ra ON ra.id = sr.assignment_id
-    WHERE sr.team_id = sqlc.arg(team_id)
-      AND sr.shift_id = sqlc.arg(shift_id)
-      AND ts.team_id = sqlc.arg(team_id)
-),
-crm_match_keys AS (
-    SELECT shift_requisite_id, 'phone:' || phone_match_key AS lookup_key, match_key
-    FROM crm_requisites
-    WHERE phone_match_key IS NOT NULL
-    UNION ALL
-    SELECT shift_requisite_id, 'card:' || card_match_key AS lookup_key, match_key
-    FROM crm_requisites
-    WHERE card_match_key IS NOT NULL
-),
-unique_crm_match_keys AS (
-    SELECT lookup_key, min(match_key) AS match_key
-    FROM crm_match_keys
-    GROUP BY lookup_key
-    HAVING count(DISTINCT shift_requisite_id) = 1
-),
-csv_inbound_source AS (
-    SELECT
-        COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, '')) AS csv_requisite,
-        regexp_replace(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), ''), '[^0-9]', '', 'g') AS csv_digits,
-        normalized_status,
-        amount_minor
-    FROM order_scope_items
-    WHERE team_id = sqlc.arg(team_id)
-      AND scope_type = 'trader_shift'
-      AND shift_id = sqlc.arg(shift_id)
-      AND direction = 'inbound'
-      AND is_active = TRUE
-),
-csv_inbound_resolved AS (
-    SELECT
-        source.csv_requisite,
-        source.normalized_status,
-        source.amount_minor,
-        COALESCE(
-            phone_match.match_key,
-            card_match.match_key,
-            CASE
-                WHEN length(source.csv_digits) BETWEEN 10 AND 11 THEN 'csv_phone:' || right(source.csv_digits, 10)
-                WHEN length(source.csv_digits) >= 12 THEN 'csv_card:' || source.csv_digits
-                ELSE 'csv:' || lower(btrim(COALESCE(source.csv_requisite, 'unknown')))
-            END
-        ) AS match_key
-    FROM csv_inbound_source source
-    LEFT JOIN unique_crm_match_keys phone_match
-        ON length(source.csv_digits) BETWEEN 10 AND 11
-       AND phone_match.lookup_key = 'phone:' || right(source.csv_digits, 10)
-    LEFT JOIN unique_crm_match_keys card_match
-        ON length(source.csv_digits) >= 12
-       AND card_match.lookup_key = 'card:' || source.csv_digits
-),
-csv_inbound AS (
-    SELECT
-        match_key,
-        max(csv_requisite) AS csv_requisite,
-        COALESCE(sum(CASE WHEN normalized_status IN ('success', 'corrected') THEN amount_minor ELSE 0 END), 0)::bigint AS csv_inbound_minor
-    FROM csv_inbound_resolved
-    GROUP BY match_key
-),
-payout_transfer_outbound AS (
-    SELECT
-        mpt.source_shift_requisite_id AS shift_requisite_id,
-        COALESCE(sum(mpt.amount_minor), 0)::bigint AS transfer_outbound_minor
-    FROM manual_payout_transfers mpt
-    WHERE mpt.team_id = sqlc.arg(team_id)
-      AND mpt.shift_id = sqlc.arg(shift_id)
-    GROUP BY mpt.source_shift_requisite_id
-),
-all_keys AS (
-    SELECT match_key FROM crm_requisites
-    UNION
-    SELECT match_key FROM csv_inbound
-),
-report_rows AS (
-    SELECT
-        COALESCE(crm.row_key, 'csv:' || all_keys.match_key) AS row_key,
-        crm.shift_requisite_id,
-        crm.requisite_id,
-        COALESCE(crm.phone, csv_inbound.csv_requisite, 'Без реквизита') AS phone,
-        COALESCE(crm.method_type, '') AS method_type,
-        COALESCE(crm.bank_code, '') AS bank_code,
-        COALESCE(crm.bank_name, '') AS bank_name,
-        crm.proxy,
-        crm.employee_comment,
-        crm.card_number,
-        crm.holder_name,
-        CASE WHEN crm.shift_requisite_id IS NULL THEN 'csv_only' ELSE crm.status END AS status,
-        COALESCE(crm.inbound_turnover_minor, 0)::bigint AS inbound_turnover_minor,
-        COALESCE(crm.outbound_turnover_minor, 0)::bigint AS outbound_turnover_minor,
-        COALESCE(crm.closing_balance_minor, 0)::bigint AS closing_balance_minor,
-        COALESCE(crm.target_turnover_minor, 0)::bigint AS target_turnover_minor,
-        COALESCE(csv_inbound.csv_inbound_minor, 0)::bigint AS csv_inbound_minor,
-        COALESCE(payout_transfer_outbound.transfer_outbound_minor, 0)::bigint AS csv_outbound_minor,
-        (COALESCE(crm.inbound_turnover_minor, 0) - COALESCE(csv_inbound.csv_inbound_minor, 0))::bigint AS inbound_diff_minor,
-        (COALESCE(crm.outbound_turnover_minor, 0) - COALESCE(payout_transfer_outbound.transfer_outbound_minor, 0))::bigint AS outbound_diff_minor,
-        (
-            COALESCE(crm.inbound_turnover_minor, 0) <> COALESCE(csv_inbound.csv_inbound_minor, 0)
-            OR COALESCE(crm.outbound_turnover_minor, 0) <> COALESCE(payout_transfer_outbound.transfer_outbound_minor, 0)
-        ) AS has_mismatch,
-        crm.shift_requisite_id IS NULL AS csv_only
-    FROM all_keys
-    LEFT JOIN crm_requisites crm ON crm.match_key = all_keys.match_key
-    LEFT JOIN csv_inbound ON csv_inbound.match_key = all_keys.match_key
-    LEFT JOIN payout_transfer_outbound ON payout_transfer_outbound.shift_requisite_id = crm.shift_requisite_id
-)
+-- name: ListShiftReportRequisites :many
 SELECT
-    row_key::text AS row_key,
-    shift_requisite_id,
-    requisite_id,
-    phone::text AS phone,
-    method_type::text AS method_type,
-    bank_code::text AS bank_code,
-    bank_name::text AS bank_name,
-    proxy,
-    employee_comment,
-    card_number,
-    holder_name,
-    status::text AS status,
-    inbound_turnover_minor,
-    outbound_turnover_minor,
-    closing_balance_minor,
-    target_turnover_minor,
-    csv_inbound_minor,
-    csv_outbound_minor,
-    inbound_diff_minor,
-    outbound_diff_minor,
-    has_mismatch::bool AS has_mismatch,
-    csv_only::bool AS csv_only
-FROM report_rows
-ORDER BY has_mismatch DESC, csv_only DESC, (abs(inbound_diff_minor) + abs(outbound_diff_minor)) DESC, phone ASC, row_key ASC;
+    sr.id AS shift_requisite_id,
+    sr.requisite_id,
+    r.phone,
+    r.method_type,
+    r.bank_code,
+    r.proxy,
+    r.employee_comment,
+    sr.card_number,
+    r.card_number AS requisite_card_number,
+    sr.holder_name,
+    sr.status,
+    sr.tl_reconciliation_status,
+    COALESCE(sr.inbound_turnover_minor, 0)::bigint AS inbound_turnover_minor,
+    COALESCE(sr.outbound_turnover_minor, 0)::bigint AS outbound_turnover_minor,
+    COALESCE(sr.closing_balance_minor, 0)::bigint AS closing_balance_minor,
+    COALESCE(ra.target_turnover_minor, 0)::bigint AS target_turnover_minor
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+JOIN requisites r ON r.id = sr.requisite_id
+LEFT JOIN requisite_assignments ra ON ra.id = sr.assignment_id
+WHERE sr.team_id = sqlc.arg(team_id)
+  AND sr.shift_id = sqlc.arg(shift_id)
+  AND ts.team_id = sqlc.arg(team_id)
+ORDER BY sr.taken_at DESC, sr.id DESC;
+
+-- name: ListShiftReportInboundScopeItems :many
+SELECT
+    COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), '')::text AS csv_requisite,
+    normalized_status,
+    amount_minor
+FROM order_scope_items
+WHERE team_id = sqlc.arg(team_id)
+  AND scope_type = 'trader_shift'
+  AND shift_id = sqlc.arg(shift_id)
+  AND direction = 'inbound'
+  AND is_active = TRUE;
+
+-- name: ListShiftReportOutboundTransfers :many
+SELECT source_shift_requisite_id, amount_minor
+FROM manual_payout_transfers
+WHERE team_id = sqlc.arg(team_id)
+  AND shift_id = sqlc.arg(shift_id);
 
 -- name: UpdateShiftRequisiteDetails :one
 UPDATE shift_requisites sr
@@ -894,12 +778,12 @@ SELECT
     t.source_requisite_id,
     source_r.phone AS source_phone,
     source_r.bank_code AS source_bank_code,
-    source_b.name AS source_bank_name,
+    ''::text AS source_bank_name,
     t.destination_shift_requisite_id,
     t.destination_requisite_id,
     destination_r.phone AS destination_phone,
     destination_r.bank_code AS destination_bank_code,
-    destination_b.name AS destination_bank_name,
+    ''::text AS destination_bank_name,
     t.amount_minor,
     t.status,
     t.created_by,
@@ -909,9 +793,7 @@ SELECT
     t.comment
 FROM shift_requisite_internal_transfers t
 JOIN requisites source_r ON source_r.id = t.source_requisite_id
-JOIN banks source_b ON source_b.code = source_r.bank_code
 JOIN requisites destination_r ON destination_r.id = t.destination_requisite_id
-JOIN banks destination_b ON destination_b.code = destination_r.bank_code
 WHERE t.team_id = sqlc.arg(team_id)
   AND t.trader_id = sqlc.arg(trader_id)
   AND t.status = 'active'
@@ -992,12 +874,12 @@ SELECT
     inserted.source_requisite_id,
     source_r.phone AS source_phone,
     source_r.bank_code AS source_bank_code,
-    source_b.name AS source_bank_name,
+    ''::text AS source_bank_name,
     inserted.destination_shift_requisite_id,
     inserted.destination_requisite_id,
     destination_r.phone AS destination_phone,
     destination_r.bank_code AS destination_bank_code,
-    destination_b.name AS destination_bank_name,
+    ''::text AS destination_bank_name,
     inserted.amount_minor,
     inserted.status,
     inserted.created_by,
@@ -1007,9 +889,8 @@ SELECT
     inserted.comment
 FROM inserted
 JOIN requisites source_r ON source_r.id = inserted.source_requisite_id
-JOIN banks source_b ON source_b.code = source_r.bank_code
 JOIN requisites destination_r ON destination_r.id = inserted.destination_requisite_id
-JOIN banks destination_b ON destination_b.code = destination_r.bank_code;
+;
 
 -- name: CancelInternalTransfer :one
 WITH updated AS (
@@ -1036,12 +917,12 @@ SELECT
     updated.source_requisite_id,
     source_r.phone AS source_phone,
     source_r.bank_code AS source_bank_code,
-    source_b.name AS source_bank_name,
+    ''::text AS source_bank_name,
     updated.destination_shift_requisite_id,
     updated.destination_requisite_id,
     destination_r.phone AS destination_phone,
     destination_r.bank_code AS destination_bank_code,
-    destination_b.name AS destination_bank_name,
+    ''::text AS destination_bank_name,
     updated.amount_minor,
     updated.status,
     updated.created_by,
@@ -1051,9 +932,8 @@ SELECT
     updated.comment
 FROM updated
 JOIN requisites source_r ON source_r.id = updated.source_requisite_id
-JOIN banks source_b ON source_b.code = source_r.bank_code
 JOIN requisites destination_r ON destination_r.id = updated.destination_requisite_id
-JOIN banks destination_b ON destination_b.code = destination_r.bank_code;
+;
 
 -- name: CreateTurnoverEntry :one
 WITH target_shift_requisite AS (
@@ -1214,4 +1094,4 @@ WHERE trader_shifts.id = sqlc.arg(shift_id)
       GROUP BY mpo.id
       HAVING COALESCE(sum(mpt.amount_minor), 0)::bigint <> mpo.amount_minor
   )
-RETURNING id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at;
+RETURNING id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at;

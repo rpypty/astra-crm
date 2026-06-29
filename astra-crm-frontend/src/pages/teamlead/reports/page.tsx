@@ -181,6 +181,11 @@ export function TeamleadReportsPage() {
         header: "Выплаты",
         cell: ({ row }) => <StatusBadge status={row.original.outboundReconciliationStatus} />,
       },
+      {
+        accessorKey: "tlReconciliationStatus",
+        header: "TL",
+        cell: ({ row }) => <StatusBadge status={row.original.tlReconciliationStatus} />,
+      },
       { accessorKey: "status", header: "Статус", cell: ({ row }) => <StatusBadge status={row.original.status} /> },
       {
         accessorKey: "closeComment",
@@ -305,6 +310,7 @@ function TeamleadReportRequisitesTable({ rows }: { rows: ShiftReportRow[] }) {
             <th className="h-10 border-b border-border px-3 font-medium">Реквизит</th>
             <th className="h-10 border-b border-border px-3 font-medium">Банк</th>
             <th className="h-10 border-b border-border px-3 font-medium">Статус</th>
+            <th className="h-10 border-b border-border px-3 font-medium">TL</th>
             <th className="h-10 border-b border-border px-3 text-right font-medium">Оборот по CRM</th>
             <th className="h-10 border-b border-border px-3 text-right font-medium">CSV / переводы</th>
             <th className="h-10 border-b border-border px-3 text-right font-medium">Расхождение</th>
@@ -325,6 +331,9 @@ function TeamleadReportRequisitesTable({ rows }: { rows: ShiftReportRow[] }) {
               <td className="px-3 py-3">{item.bankName || "—"}</td>
               <td className="px-3 py-3">
                 <StatusBadge status={item.status} />
+              </td>
+              <td className="px-3 py-3">
+                <StatusBadge status={item.tlReconciliationStatus} />
               </td>
               <td className="px-3 py-3 text-right">
                 <ReportCrmTurnoverCell item={item} />

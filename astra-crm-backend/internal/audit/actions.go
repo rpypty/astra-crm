@@ -26,6 +26,10 @@ const (
 	ActionManualPayoutTransferUpdated       = "manual_payout.transfer_updated"
 	ActionManualPayoutTransferDeleted       = "manual_payout.transfer_deleted"
 	ActionImportApplied                     = "import.applied"
+	ActionReconciliationCreated             = "reconciliation.created"
+	ActionReconciliationConfirmed           = "reconciliation.confirmed"
+	ActionReconciliationRejected            = "reconciliation.rejected"
+	ActionReconciliationApplied             = "reconciliation.applied"
 	ActionReconciliationAcceptedWithComment = "reconciliation.accepted_with_comment"
 	ActionShiftClosed                       = "shift.closed"
 )

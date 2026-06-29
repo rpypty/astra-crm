@@ -11,6 +11,140 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countTeamleadOrders = `-- name: CountTeamleadOrders :one
+SELECT count(*)::bigint
+FROM order_scope_items osi
+JOIN trader_shifts ts ON ts.id = osi.shift_id
+WHERE osi.team_id = $1
+  AND osi.scope_type = 'trader_shift'
+  AND osi.direction = $2
+  AND osi.is_active = TRUE
+  AND (
+      NOT $3::boolean
+      OR (
+          ts.status IN ('closed', 'closed_with_discrepancy')
+          AND (
+              (osi.direction = 'inbound' AND ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+              OR (osi.direction = 'outbound' AND ts.outbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+          )
+      )
+  )
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
+  AND ($6::bigint IS NULL OR osi.trader_id = $6::bigint)
+  AND (COALESCE(cardinality($7::bigint[]), 0) = 0 OR osi.trader_id = ANY($7::bigint[]))
+  AND ($8::text IS NULL OR osi.worker_name ILIKE '%' || $8::text || '%')
+  AND (
+      $9::text IS NULL
+      OR osi.requisite_raw ILIKE '%' || $9::text || '%'
+      OR osi.requisite_phone ILIKE '%' || $9::text || '%'
+  )
+  AND ($10::text IS NULL OR osi.method_type = $10::text)
+  AND (
+      $11::text IS NULL
+      OR osi.raw_status = $11::text
+      OR osi.normalized_status = $11::text
+  )
+  AND ($12::bigint IS NULL OR osi.amount_minor >= $12::bigint)
+  AND ($13::bigint IS NULL OR osi.amount_minor <= $13::bigint)
+`
+
+type CountTeamleadOrdersParams struct {
+	TeamID             int64
+	Direction          string
+	ConfirmedOnly      bool
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
+	TraderID           pgtype.Int8
+	TraderIds          []int64
+	WorkerName         pgtype.Text
+	Requisite          pgtype.Text
+	MethodType         pgtype.Text
+	Status             pgtype.Text
+	AmountFrom         pgtype.Int8
+	AmountTo           pgtype.Int8
+}
+
+func (q *Queries) CountTeamleadOrders(ctx context.Context, arg CountTeamleadOrdersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTeamleadOrders,
+		arg.TeamID,
+		arg.Direction,
+		arg.ConfirmedOnly,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
+		arg.TraderID,
+		arg.TraderIds,
+		arg.WorkerName,
+		arg.Requisite,
+		arg.MethodType,
+		arg.Status,
+		arg.AmountFrom,
+		arg.AmountTo,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countTraderOrders = `-- name: CountTraderOrders :one
+SELECT count(*)::bigint
+FROM order_scope_items osi
+WHERE osi.team_id = $1
+  AND osi.scope_type = 'trader_shift'
+  AND osi.shift_id = $2
+  AND osi.direction = $3
+  AND osi.is_active = TRUE
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
+  AND ($6::text IS NULL OR osi.worker_name ILIKE '%' || $6::text || '%')
+  AND (
+      $7::text IS NULL
+      OR osi.requisite_raw ILIKE '%' || $7::text || '%'
+      OR osi.requisite_phone ILIKE '%' || $7::text || '%'
+  )
+  AND ($8::text IS NULL OR osi.method_type = $8::text)
+  AND (
+      $9::text IS NULL
+      OR osi.raw_status = $9::text
+      OR osi.normalized_status = $9::text
+  )
+  AND ($10::bigint IS NULL OR osi.amount_minor >= $10::bigint)
+  AND ($11::bigint IS NULL OR osi.amount_minor <= $11::bigint)
+`
+
+type CountTraderOrdersParams struct {
+	TeamID             int64
+	ShiftID            pgtype.Int8
+	Direction          string
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
+	WorkerName         pgtype.Text
+	Requisite          pgtype.Text
+	MethodType         pgtype.Text
+	Status             pgtype.Text
+	AmountFrom         pgtype.Int8
+	AmountTo           pgtype.Int8
+}
+
+func (q *Queries) CountTraderOrders(ctx context.Context, arg CountTraderOrdersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTraderOrders,
+		arg.TeamID,
+		arg.ShiftID,
+		arg.Direction,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
+		arg.WorkerName,
+		arg.Requisite,
+		arg.MethodType,
+		arg.Status,
+		arg.AmountFrom,
+		arg.AmountTo,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const getCurrentShiftIDForReadModel = `-- name: GetCurrentShiftIDForReadModel :one
 SELECT id
 FROM trader_shifts
@@ -33,7 +167,7 @@ func (q *Queries) GetCurrentShiftIDForReadModel(ctx context.Context, arg GetCurr
 	return id, err
 }
 
-const listTeamleadOrders = `-- name: ListTeamleadOrders :many
+const listTeamleadOrdersAmountAsc = `-- name: ListTeamleadOrdersAmountAsc :many
 SELECT
     osi.id AS scope_item_id,
     osi.external_order_id,
@@ -50,10 +184,11 @@ SELECT
     osi.currency,
     osi.raw_status,
     osi.normalized_status,
+    COALESCE(eo.tl_reconciliation_status, 'not_checked') AS tl_reconciliation_status,
     osi.created_at_external,
-    osi.import_batch_id,
-    count(*) OVER()::bigint AS total_count
+    osi.import_batch_id
 FROM order_scope_items osi
+LEFT JOIN external_orders eo ON eo.id = osi.external_order_id
 JOIN trader_shifts ts ON ts.id = osi.shift_id
 LEFT JOIN users u ON u.id = osi.trader_id
 WHERE osi.team_id = $1
@@ -70,8 +205,8 @@ WHERE osi.team_id = $1
           )
       )
   )
-  AND ($4::date IS NULL OR osi.created_at_external::date >= $4::date)
-  AND ($5::date IS NULL OR osi.created_at_external::date <= $5::date)
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
   AND ($6::bigint IS NULL OR osi.trader_id = $6::bigint)
   AND (COALESCE(cardinality($7::bigint[]), 0) = 0 OR osi.trader_id = ANY($7::bigint[]))
   AND ($8::text IS NULL OR osi.worker_name ILIKE '%' || $8::text || '%')
@@ -88,63 +223,57 @@ WHERE osi.team_id = $1
   )
   AND ($12::bigint IS NULL OR osi.amount_minor >= $12::bigint)
   AND ($13::bigint IS NULL OR osi.amount_minor <= $13::bigint)
-ORDER BY
-    CASE WHEN $14::text = 'amount_asc' THEN osi.amount_minor END ASC,
-    CASE WHEN $14::text = 'amount_desc' THEN osi.amount_minor END DESC,
-    CASE WHEN $14::text = 'created_at_asc' THEN osi.created_at_external END ASC,
-    osi.created_at_external DESC,
-    osi.id DESC
-LIMIT $16
-OFFSET $15
+ORDER BY osi.amount_minor ASC, osi.created_at_external DESC, osi.id DESC
+LIMIT $15
+OFFSET $14
 `
 
-type ListTeamleadOrdersParams struct {
-	TeamID        int64
-	Direction     string
-	ConfirmedOnly bool
-	DateFrom      pgtype.Date
-	DateTo        pgtype.Date
-	TraderID      pgtype.Int8
-	TraderIds     []int64
-	WorkerName    pgtype.Text
-	Requisite     pgtype.Text
-	MethodType    pgtype.Text
-	Status        pgtype.Text
-	AmountFrom    pgtype.Int8
-	AmountTo      pgtype.Int8
-	Sort          string
-	PageOffset    int32
-	PageSize      int32
+type ListTeamleadOrdersAmountAscParams struct {
+	TeamID             int64
+	Direction          string
+	ConfirmedOnly      bool
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
+	TraderID           pgtype.Int8
+	TraderIds          []int64
+	WorkerName         pgtype.Text
+	Requisite          pgtype.Text
+	MethodType         pgtype.Text
+	Status             pgtype.Text
+	AmountFrom         pgtype.Int8
+	AmountTo           pgtype.Int8
+	PageOffset         int32
+	PageSize           int32
 }
 
-type ListTeamleadOrdersRow struct {
-	ScopeItemID       int64
-	ExternalOrderID   int64
-	ExternalID        string
-	ExternalInnerID   string
-	WorkerName        string
-	TraderID          pgtype.Int8
-	TraderLogin       pgtype.Text
-	RequisiteRaw      pgtype.Text
-	RequisitePhone    pgtype.Text
-	MethodType        pgtype.Text
-	MethodName        pgtype.Text
-	AmountMinor       int64
-	Currency          string
-	RawStatus         string
-	NormalizedStatus  string
-	CreatedAtExternal pgtype.Timestamptz
-	ImportBatchID     int64
-	TotalCount        int64
+type ListTeamleadOrdersAmountAscRow struct {
+	ScopeItemID            int64
+	ExternalOrderID        int64
+	ExternalID             string
+	ExternalInnerID        string
+	WorkerName             string
+	TraderID               pgtype.Int8
+	TraderLogin            pgtype.Text
+	RequisiteRaw           pgtype.Text
+	RequisitePhone         pgtype.Text
+	MethodType             pgtype.Text
+	MethodName             pgtype.Text
+	AmountMinor            int64
+	Currency               string
+	RawStatus              string
+	NormalizedStatus       string
+	TlReconciliationStatus string
+	CreatedAtExternal      pgtype.Timestamptz
+	ImportBatchID          int64
 }
 
-func (q *Queries) ListTeamleadOrders(ctx context.Context, arg ListTeamleadOrdersParams) ([]ListTeamleadOrdersRow, error) {
-	rows, err := q.db.Query(ctx, listTeamleadOrders,
+func (q *Queries) ListTeamleadOrdersAmountAsc(ctx context.Context, arg ListTeamleadOrdersAmountAscParams) ([]ListTeamleadOrdersAmountAscRow, error) {
+	rows, err := q.db.Query(ctx, listTeamleadOrdersAmountAsc,
 		arg.TeamID,
 		arg.Direction,
 		arg.ConfirmedOnly,
-		arg.DateFrom,
-		arg.DateTo,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
 		arg.TraderID,
 		arg.TraderIds,
 		arg.WorkerName,
@@ -153,7 +282,6 @@ func (q *Queries) ListTeamleadOrders(ctx context.Context, arg ListTeamleadOrders
 		arg.Status,
 		arg.AmountFrom,
 		arg.AmountTo,
-		arg.Sort,
 		arg.PageOffset,
 		arg.PageSize,
 	)
@@ -161,9 +289,9 @@ func (q *Queries) ListTeamleadOrders(ctx context.Context, arg ListTeamleadOrders
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListTeamleadOrdersRow
+	var items []ListTeamleadOrdersAmountAscRow
 	for rows.Next() {
-		var i ListTeamleadOrdersRow
+		var i ListTeamleadOrdersAmountAscRow
 		if err := rows.Scan(
 			&i.ScopeItemID,
 			&i.ExternalOrderID,
@@ -180,9 +308,9 @@ func (q *Queries) ListTeamleadOrders(ctx context.Context, arg ListTeamleadOrders
 			&i.Currency,
 			&i.RawStatus,
 			&i.NormalizedStatus,
+			&i.TlReconciliationStatus,
 			&i.CreatedAtExternal,
 			&i.ImportBatchID,
-			&i.TotalCount,
 		); err != nil {
 			return nil, err
 		}
@@ -194,7 +322,7 @@ func (q *Queries) ListTeamleadOrders(ctx context.Context, arg ListTeamleadOrders
 	return items, nil
 }
 
-const listTraderOrders = `-- name: ListTraderOrders :many
+const listTeamleadOrdersAmountDesc = `-- name: ListTeamleadOrdersAmountDesc :many
 SELECT
     osi.id AS scope_item_id,
     osi.external_order_id,
@@ -211,94 +339,104 @@ SELECT
     osi.currency,
     osi.raw_status,
     osi.normalized_status,
+    COALESCE(eo.tl_reconciliation_status, 'not_checked') AS tl_reconciliation_status,
     osi.created_at_external,
-    osi.import_batch_id,
-    count(*) OVER()::bigint AS total_count
+    osi.import_batch_id
 FROM order_scope_items osi
+LEFT JOIN external_orders eo ON eo.id = osi.external_order_id
+JOIN trader_shifts ts ON ts.id = osi.shift_id
 LEFT JOIN users u ON u.id = osi.trader_id
 WHERE osi.team_id = $1
   AND osi.scope_type = 'trader_shift'
-  AND osi.shift_id = $2
-  AND osi.direction = $3
+  AND osi.direction = $2
   AND osi.is_active = TRUE
-  AND ($4::date IS NULL OR osi.created_at_external::date >= $4::date)
-  AND ($5::date IS NULL OR osi.created_at_external::date <= $5::date)
-  AND ($6::text IS NULL OR osi.worker_name ILIKE '%' || $6::text || '%')
   AND (
-      $7::text IS NULL
-      OR osi.requisite_raw ILIKE '%' || $7::text || '%'
-      OR osi.requisite_phone ILIKE '%' || $7::text || '%'
+      NOT $3::boolean
+      OR (
+          ts.status IN ('closed', 'closed_with_discrepancy')
+          AND (
+              (osi.direction = 'inbound' AND ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+              OR (osi.direction = 'outbound' AND ts.outbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+          )
+      )
   )
-  AND ($8::text IS NULL OR osi.method_type = $8::text)
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
+  AND ($6::bigint IS NULL OR osi.trader_id = $6::bigint)
+  AND (COALESCE(cardinality($7::bigint[]), 0) = 0 OR osi.trader_id = ANY($7::bigint[]))
+  AND ($8::text IS NULL OR osi.worker_name ILIKE '%' || $8::text || '%')
   AND (
       $9::text IS NULL
-      OR osi.raw_status = $9::text
-      OR osi.normalized_status = $9::text
+      OR osi.requisite_raw ILIKE '%' || $9::text || '%'
+      OR osi.requisite_phone ILIKE '%' || $9::text || '%'
   )
-  AND ($10::bigint IS NULL OR osi.amount_minor >= $10::bigint)
-  AND ($11::bigint IS NULL OR osi.amount_minor <= $11::bigint)
-ORDER BY
-    CASE WHEN $12::text = 'amount_asc' THEN osi.amount_minor END ASC,
-    CASE WHEN $12::text = 'amount_desc' THEN osi.amount_minor END DESC,
-    CASE WHEN $12::text = 'created_at_asc' THEN osi.created_at_external END ASC,
-    osi.created_at_external DESC,
-    osi.id DESC
-LIMIT $14
-OFFSET $13
+  AND ($10::text IS NULL OR osi.method_type = $10::text)
+  AND (
+      $11::text IS NULL
+      OR osi.raw_status = $11::text
+      OR osi.normalized_status = $11::text
+  )
+  AND ($12::bigint IS NULL OR osi.amount_minor >= $12::bigint)
+  AND ($13::bigint IS NULL OR osi.amount_minor <= $13::bigint)
+ORDER BY osi.amount_minor DESC, osi.created_at_external DESC, osi.id DESC
+LIMIT $15
+OFFSET $14
 `
 
-type ListTraderOrdersParams struct {
-	TeamID     int64
-	ShiftID    pgtype.Int8
-	Direction  string
-	DateFrom   pgtype.Date
-	DateTo     pgtype.Date
-	WorkerName pgtype.Text
-	Requisite  pgtype.Text
-	MethodType pgtype.Text
-	Status     pgtype.Text
-	AmountFrom pgtype.Int8
-	AmountTo   pgtype.Int8
-	Sort       string
-	PageOffset int32
-	PageSize   int32
+type ListTeamleadOrdersAmountDescParams struct {
+	TeamID             int64
+	Direction          string
+	ConfirmedOnly      bool
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
+	TraderID           pgtype.Int8
+	TraderIds          []int64
+	WorkerName         pgtype.Text
+	Requisite          pgtype.Text
+	MethodType         pgtype.Text
+	Status             pgtype.Text
+	AmountFrom         pgtype.Int8
+	AmountTo           pgtype.Int8
+	PageOffset         int32
+	PageSize           int32
 }
 
-type ListTraderOrdersRow struct {
-	ScopeItemID       int64
-	ExternalOrderID   int64
-	ExternalID        string
-	ExternalInnerID   string
-	WorkerName        string
-	TraderID          pgtype.Int8
-	TraderLogin       pgtype.Text
-	RequisiteRaw      pgtype.Text
-	RequisitePhone    pgtype.Text
-	MethodType        pgtype.Text
-	MethodName        pgtype.Text
-	AmountMinor       int64
-	Currency          string
-	RawStatus         string
-	NormalizedStatus  string
-	CreatedAtExternal pgtype.Timestamptz
-	ImportBatchID     int64
-	TotalCount        int64
+type ListTeamleadOrdersAmountDescRow struct {
+	ScopeItemID            int64
+	ExternalOrderID        int64
+	ExternalID             string
+	ExternalInnerID        string
+	WorkerName             string
+	TraderID               pgtype.Int8
+	TraderLogin            pgtype.Text
+	RequisiteRaw           pgtype.Text
+	RequisitePhone         pgtype.Text
+	MethodType             pgtype.Text
+	MethodName             pgtype.Text
+	AmountMinor            int64
+	Currency               string
+	RawStatus              string
+	NormalizedStatus       string
+	TlReconciliationStatus string
+	CreatedAtExternal      pgtype.Timestamptz
+	ImportBatchID          int64
 }
 
-func (q *Queries) ListTraderOrders(ctx context.Context, arg ListTraderOrdersParams) ([]ListTraderOrdersRow, error) {
-	rows, err := q.db.Query(ctx, listTraderOrders,
+func (q *Queries) ListTeamleadOrdersAmountDesc(ctx context.Context, arg ListTeamleadOrdersAmountDescParams) ([]ListTeamleadOrdersAmountDescRow, error) {
+	rows, err := q.db.Query(ctx, listTeamleadOrdersAmountDesc,
 		arg.TeamID,
-		arg.ShiftID,
 		arg.Direction,
-		arg.DateFrom,
-		arg.DateTo,
+		arg.ConfirmedOnly,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
+		arg.TraderID,
+		arg.TraderIds,
 		arg.WorkerName,
 		arg.Requisite,
 		arg.MethodType,
 		arg.Status,
 		arg.AmountFrom,
 		arg.AmountTo,
-		arg.Sort,
 		arg.PageOffset,
 		arg.PageSize,
 	)
@@ -306,9 +444,9 @@ func (q *Queries) ListTraderOrders(ctx context.Context, arg ListTraderOrdersPara
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListTraderOrdersRow
+	var items []ListTeamleadOrdersAmountDescRow
 	for rows.Next() {
-		var i ListTraderOrdersRow
+		var i ListTeamleadOrdersAmountDescRow
 		if err := rows.Scan(
 			&i.ScopeItemID,
 			&i.ExternalOrderID,
@@ -325,9 +463,875 @@ func (q *Queries) ListTraderOrders(ctx context.Context, arg ListTraderOrdersPara
 			&i.Currency,
 			&i.RawStatus,
 			&i.NormalizedStatus,
+			&i.TlReconciliationStatus,
 			&i.CreatedAtExternal,
 			&i.ImportBatchID,
-			&i.TotalCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTeamleadOrdersCreatedAsc = `-- name: ListTeamleadOrdersCreatedAsc :many
+SELECT
+    osi.id AS scope_item_id,
+    osi.external_order_id,
+    osi.external_id,
+    osi.external_inner_id,
+    osi.worker_name,
+    osi.trader_id,
+    u.login AS trader_login,
+    osi.requisite_raw,
+    osi.requisite_phone,
+    osi.method_type,
+    osi.method_name,
+    osi.amount_minor,
+    osi.currency,
+    osi.raw_status,
+    osi.normalized_status,
+    COALESCE(eo.tl_reconciliation_status, 'not_checked') AS tl_reconciliation_status,
+    osi.created_at_external,
+    osi.import_batch_id
+FROM order_scope_items osi
+LEFT JOIN external_orders eo ON eo.id = osi.external_order_id
+JOIN trader_shifts ts ON ts.id = osi.shift_id
+LEFT JOIN users u ON u.id = osi.trader_id
+WHERE osi.team_id = $1
+  AND osi.scope_type = 'trader_shift'
+  AND osi.direction = $2
+  AND osi.is_active = TRUE
+  AND (
+      NOT $3::boolean
+      OR (
+          ts.status IN ('closed', 'closed_with_discrepancy')
+          AND (
+              (osi.direction = 'inbound' AND ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+              OR (osi.direction = 'outbound' AND ts.outbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+          )
+      )
+  )
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
+  AND ($6::bigint IS NULL OR osi.trader_id = $6::bigint)
+  AND (COALESCE(cardinality($7::bigint[]), 0) = 0 OR osi.trader_id = ANY($7::bigint[]))
+  AND ($8::text IS NULL OR osi.worker_name ILIKE '%' || $8::text || '%')
+  AND (
+      $9::text IS NULL
+      OR osi.requisite_raw ILIKE '%' || $9::text || '%'
+      OR osi.requisite_phone ILIKE '%' || $9::text || '%'
+  )
+  AND ($10::text IS NULL OR osi.method_type = $10::text)
+  AND (
+      $11::text IS NULL
+      OR osi.raw_status = $11::text
+      OR osi.normalized_status = $11::text
+  )
+  AND ($12::bigint IS NULL OR osi.amount_minor >= $12::bigint)
+  AND ($13::bigint IS NULL OR osi.amount_minor <= $13::bigint)
+ORDER BY osi.created_at_external ASC, osi.id DESC
+LIMIT $15
+OFFSET $14
+`
+
+type ListTeamleadOrdersCreatedAscParams struct {
+	TeamID             int64
+	Direction          string
+	ConfirmedOnly      bool
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
+	TraderID           pgtype.Int8
+	TraderIds          []int64
+	WorkerName         pgtype.Text
+	Requisite          pgtype.Text
+	MethodType         pgtype.Text
+	Status             pgtype.Text
+	AmountFrom         pgtype.Int8
+	AmountTo           pgtype.Int8
+	PageOffset         int32
+	PageSize           int32
+}
+
+type ListTeamleadOrdersCreatedAscRow struct {
+	ScopeItemID            int64
+	ExternalOrderID        int64
+	ExternalID             string
+	ExternalInnerID        string
+	WorkerName             string
+	TraderID               pgtype.Int8
+	TraderLogin            pgtype.Text
+	RequisiteRaw           pgtype.Text
+	RequisitePhone         pgtype.Text
+	MethodType             pgtype.Text
+	MethodName             pgtype.Text
+	AmountMinor            int64
+	Currency               string
+	RawStatus              string
+	NormalizedStatus       string
+	TlReconciliationStatus string
+	CreatedAtExternal      pgtype.Timestamptz
+	ImportBatchID          int64
+}
+
+func (q *Queries) ListTeamleadOrdersCreatedAsc(ctx context.Context, arg ListTeamleadOrdersCreatedAscParams) ([]ListTeamleadOrdersCreatedAscRow, error) {
+	rows, err := q.db.Query(ctx, listTeamleadOrdersCreatedAsc,
+		arg.TeamID,
+		arg.Direction,
+		arg.ConfirmedOnly,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
+		arg.TraderID,
+		arg.TraderIds,
+		arg.WorkerName,
+		arg.Requisite,
+		arg.MethodType,
+		arg.Status,
+		arg.AmountFrom,
+		arg.AmountTo,
+		arg.PageOffset,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTeamleadOrdersCreatedAscRow
+	for rows.Next() {
+		var i ListTeamleadOrdersCreatedAscRow
+		if err := rows.Scan(
+			&i.ScopeItemID,
+			&i.ExternalOrderID,
+			&i.ExternalID,
+			&i.ExternalInnerID,
+			&i.WorkerName,
+			&i.TraderID,
+			&i.TraderLogin,
+			&i.RequisiteRaw,
+			&i.RequisitePhone,
+			&i.MethodType,
+			&i.MethodName,
+			&i.AmountMinor,
+			&i.Currency,
+			&i.RawStatus,
+			&i.NormalizedStatus,
+			&i.TlReconciliationStatus,
+			&i.CreatedAtExternal,
+			&i.ImportBatchID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTeamleadOrdersCreatedDesc = `-- name: ListTeamleadOrdersCreatedDesc :many
+SELECT
+    osi.id AS scope_item_id,
+    osi.external_order_id,
+    osi.external_id,
+    osi.external_inner_id,
+    osi.worker_name,
+    osi.trader_id,
+    u.login AS trader_login,
+    osi.requisite_raw,
+    osi.requisite_phone,
+    osi.method_type,
+    osi.method_name,
+    osi.amount_minor,
+    osi.currency,
+    osi.raw_status,
+    osi.normalized_status,
+    COALESCE(eo.tl_reconciliation_status, 'not_checked') AS tl_reconciliation_status,
+    osi.created_at_external,
+    osi.import_batch_id
+FROM order_scope_items osi
+LEFT JOIN external_orders eo ON eo.id = osi.external_order_id
+JOIN trader_shifts ts ON ts.id = osi.shift_id
+LEFT JOIN users u ON u.id = osi.trader_id
+WHERE osi.team_id = $1
+  AND osi.scope_type = 'trader_shift'
+  AND osi.direction = $2
+  AND osi.is_active = TRUE
+  AND (
+      NOT $3::boolean
+      OR (
+          ts.status IN ('closed', 'closed_with_discrepancy')
+          AND (
+              (osi.direction = 'inbound' AND ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+              OR (osi.direction = 'outbound' AND ts.outbound_reconciliation_status IN ('matched', 'accepted_with_comment'))
+          )
+      )
+  )
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
+  AND ($6::bigint IS NULL OR osi.trader_id = $6::bigint)
+  AND (COALESCE(cardinality($7::bigint[]), 0) = 0 OR osi.trader_id = ANY($7::bigint[]))
+  AND ($8::text IS NULL OR osi.worker_name ILIKE '%' || $8::text || '%')
+  AND (
+      $9::text IS NULL
+      OR osi.requisite_raw ILIKE '%' || $9::text || '%'
+      OR osi.requisite_phone ILIKE '%' || $9::text || '%'
+  )
+  AND ($10::text IS NULL OR osi.method_type = $10::text)
+  AND (
+      $11::text IS NULL
+      OR osi.raw_status = $11::text
+      OR osi.normalized_status = $11::text
+  )
+  AND ($12::bigint IS NULL OR osi.amount_minor >= $12::bigint)
+  AND ($13::bigint IS NULL OR osi.amount_minor <= $13::bigint)
+ORDER BY osi.created_at_external DESC, osi.id DESC
+LIMIT $15
+OFFSET $14
+`
+
+type ListTeamleadOrdersCreatedDescParams struct {
+	TeamID             int64
+	Direction          string
+	ConfirmedOnly      bool
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
+	TraderID           pgtype.Int8
+	TraderIds          []int64
+	WorkerName         pgtype.Text
+	Requisite          pgtype.Text
+	MethodType         pgtype.Text
+	Status             pgtype.Text
+	AmountFrom         pgtype.Int8
+	AmountTo           pgtype.Int8
+	PageOffset         int32
+	PageSize           int32
+}
+
+type ListTeamleadOrdersCreatedDescRow struct {
+	ScopeItemID            int64
+	ExternalOrderID        int64
+	ExternalID             string
+	ExternalInnerID        string
+	WorkerName             string
+	TraderID               pgtype.Int8
+	TraderLogin            pgtype.Text
+	RequisiteRaw           pgtype.Text
+	RequisitePhone         pgtype.Text
+	MethodType             pgtype.Text
+	MethodName             pgtype.Text
+	AmountMinor            int64
+	Currency               string
+	RawStatus              string
+	NormalizedStatus       string
+	TlReconciliationStatus string
+	CreatedAtExternal      pgtype.Timestamptz
+	ImportBatchID          int64
+}
+
+func (q *Queries) ListTeamleadOrdersCreatedDesc(ctx context.Context, arg ListTeamleadOrdersCreatedDescParams) ([]ListTeamleadOrdersCreatedDescRow, error) {
+	rows, err := q.db.Query(ctx, listTeamleadOrdersCreatedDesc,
+		arg.TeamID,
+		arg.Direction,
+		arg.ConfirmedOnly,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
+		arg.TraderID,
+		arg.TraderIds,
+		arg.WorkerName,
+		arg.Requisite,
+		arg.MethodType,
+		arg.Status,
+		arg.AmountFrom,
+		arg.AmountTo,
+		arg.PageOffset,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTeamleadOrdersCreatedDescRow
+	for rows.Next() {
+		var i ListTeamleadOrdersCreatedDescRow
+		if err := rows.Scan(
+			&i.ScopeItemID,
+			&i.ExternalOrderID,
+			&i.ExternalID,
+			&i.ExternalInnerID,
+			&i.WorkerName,
+			&i.TraderID,
+			&i.TraderLogin,
+			&i.RequisiteRaw,
+			&i.RequisitePhone,
+			&i.MethodType,
+			&i.MethodName,
+			&i.AmountMinor,
+			&i.Currency,
+			&i.RawStatus,
+			&i.NormalizedStatus,
+			&i.TlReconciliationStatus,
+			&i.CreatedAtExternal,
+			&i.ImportBatchID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTraderOrdersAmountAsc = `-- name: ListTraderOrdersAmountAsc :many
+SELECT
+    osi.id AS scope_item_id,
+    osi.external_order_id,
+    osi.external_id,
+    osi.external_inner_id,
+    osi.worker_name,
+    osi.trader_id,
+    u.login AS trader_login,
+    osi.requisite_raw,
+    osi.requisite_phone,
+    osi.method_type,
+    osi.method_name,
+    osi.amount_minor,
+    osi.currency,
+    osi.raw_status,
+    osi.normalized_status,
+    COALESCE(eo.tl_reconciliation_status, 'not_checked') AS tl_reconciliation_status,
+    osi.created_at_external,
+    osi.import_batch_id
+FROM order_scope_items osi
+LEFT JOIN external_orders eo ON eo.id = osi.external_order_id
+LEFT JOIN users u ON u.id = osi.trader_id
+WHERE osi.team_id = $1
+  AND osi.scope_type = 'trader_shift'
+  AND osi.shift_id = $2
+  AND osi.direction = $3
+  AND osi.is_active = TRUE
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
+  AND ($6::text IS NULL OR osi.worker_name ILIKE '%' || $6::text || '%')
+  AND (
+      $7::text IS NULL
+      OR osi.requisite_raw ILIKE '%' || $7::text || '%'
+      OR osi.requisite_phone ILIKE '%' || $7::text || '%'
+  )
+  AND ($8::text IS NULL OR osi.method_type = $8::text)
+  AND (
+      $9::text IS NULL
+      OR osi.raw_status = $9::text
+      OR osi.normalized_status = $9::text
+  )
+  AND ($10::bigint IS NULL OR osi.amount_minor >= $10::bigint)
+  AND ($11::bigint IS NULL OR osi.amount_minor <= $11::bigint)
+ORDER BY osi.amount_minor ASC, osi.created_at_external DESC, osi.id DESC
+LIMIT $13
+OFFSET $12
+`
+
+type ListTraderOrdersAmountAscParams struct {
+	TeamID             int64
+	ShiftID            pgtype.Int8
+	Direction          string
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
+	WorkerName         pgtype.Text
+	Requisite          pgtype.Text
+	MethodType         pgtype.Text
+	Status             pgtype.Text
+	AmountFrom         pgtype.Int8
+	AmountTo           pgtype.Int8
+	PageOffset         int32
+	PageSize           int32
+}
+
+type ListTraderOrdersAmountAscRow struct {
+	ScopeItemID            int64
+	ExternalOrderID        int64
+	ExternalID             string
+	ExternalInnerID        string
+	WorkerName             string
+	TraderID               pgtype.Int8
+	TraderLogin            pgtype.Text
+	RequisiteRaw           pgtype.Text
+	RequisitePhone         pgtype.Text
+	MethodType             pgtype.Text
+	MethodName             pgtype.Text
+	AmountMinor            int64
+	Currency               string
+	RawStatus              string
+	NormalizedStatus       string
+	TlReconciliationStatus string
+	CreatedAtExternal      pgtype.Timestamptz
+	ImportBatchID          int64
+}
+
+func (q *Queries) ListTraderOrdersAmountAsc(ctx context.Context, arg ListTraderOrdersAmountAscParams) ([]ListTraderOrdersAmountAscRow, error) {
+	rows, err := q.db.Query(ctx, listTraderOrdersAmountAsc,
+		arg.TeamID,
+		arg.ShiftID,
+		arg.Direction,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
+		arg.WorkerName,
+		arg.Requisite,
+		arg.MethodType,
+		arg.Status,
+		arg.AmountFrom,
+		arg.AmountTo,
+		arg.PageOffset,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTraderOrdersAmountAscRow
+	for rows.Next() {
+		var i ListTraderOrdersAmountAscRow
+		if err := rows.Scan(
+			&i.ScopeItemID,
+			&i.ExternalOrderID,
+			&i.ExternalID,
+			&i.ExternalInnerID,
+			&i.WorkerName,
+			&i.TraderID,
+			&i.TraderLogin,
+			&i.RequisiteRaw,
+			&i.RequisitePhone,
+			&i.MethodType,
+			&i.MethodName,
+			&i.AmountMinor,
+			&i.Currency,
+			&i.RawStatus,
+			&i.NormalizedStatus,
+			&i.TlReconciliationStatus,
+			&i.CreatedAtExternal,
+			&i.ImportBatchID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTraderOrdersAmountDesc = `-- name: ListTraderOrdersAmountDesc :many
+SELECT
+    osi.id AS scope_item_id,
+    osi.external_order_id,
+    osi.external_id,
+    osi.external_inner_id,
+    osi.worker_name,
+    osi.trader_id,
+    u.login AS trader_login,
+    osi.requisite_raw,
+    osi.requisite_phone,
+    osi.method_type,
+    osi.method_name,
+    osi.amount_minor,
+    osi.currency,
+    osi.raw_status,
+    osi.normalized_status,
+    COALESCE(eo.tl_reconciliation_status, 'not_checked') AS tl_reconciliation_status,
+    osi.created_at_external,
+    osi.import_batch_id
+FROM order_scope_items osi
+LEFT JOIN external_orders eo ON eo.id = osi.external_order_id
+LEFT JOIN users u ON u.id = osi.trader_id
+WHERE osi.team_id = $1
+  AND osi.scope_type = 'trader_shift'
+  AND osi.shift_id = $2
+  AND osi.direction = $3
+  AND osi.is_active = TRUE
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
+  AND ($6::text IS NULL OR osi.worker_name ILIKE '%' || $6::text || '%')
+  AND (
+      $7::text IS NULL
+      OR osi.requisite_raw ILIKE '%' || $7::text || '%'
+      OR osi.requisite_phone ILIKE '%' || $7::text || '%'
+  )
+  AND ($8::text IS NULL OR osi.method_type = $8::text)
+  AND (
+      $9::text IS NULL
+      OR osi.raw_status = $9::text
+      OR osi.normalized_status = $9::text
+  )
+  AND ($10::bigint IS NULL OR osi.amount_minor >= $10::bigint)
+  AND ($11::bigint IS NULL OR osi.amount_minor <= $11::bigint)
+ORDER BY osi.amount_minor DESC, osi.created_at_external DESC, osi.id DESC
+LIMIT $13
+OFFSET $12
+`
+
+type ListTraderOrdersAmountDescParams struct {
+	TeamID             int64
+	ShiftID            pgtype.Int8
+	Direction          string
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
+	WorkerName         pgtype.Text
+	Requisite          pgtype.Text
+	MethodType         pgtype.Text
+	Status             pgtype.Text
+	AmountFrom         pgtype.Int8
+	AmountTo           pgtype.Int8
+	PageOffset         int32
+	PageSize           int32
+}
+
+type ListTraderOrdersAmountDescRow struct {
+	ScopeItemID            int64
+	ExternalOrderID        int64
+	ExternalID             string
+	ExternalInnerID        string
+	WorkerName             string
+	TraderID               pgtype.Int8
+	TraderLogin            pgtype.Text
+	RequisiteRaw           pgtype.Text
+	RequisitePhone         pgtype.Text
+	MethodType             pgtype.Text
+	MethodName             pgtype.Text
+	AmountMinor            int64
+	Currency               string
+	RawStatus              string
+	NormalizedStatus       string
+	TlReconciliationStatus string
+	CreatedAtExternal      pgtype.Timestamptz
+	ImportBatchID          int64
+}
+
+func (q *Queries) ListTraderOrdersAmountDesc(ctx context.Context, arg ListTraderOrdersAmountDescParams) ([]ListTraderOrdersAmountDescRow, error) {
+	rows, err := q.db.Query(ctx, listTraderOrdersAmountDesc,
+		arg.TeamID,
+		arg.ShiftID,
+		arg.Direction,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
+		arg.WorkerName,
+		arg.Requisite,
+		arg.MethodType,
+		arg.Status,
+		arg.AmountFrom,
+		arg.AmountTo,
+		arg.PageOffset,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTraderOrdersAmountDescRow
+	for rows.Next() {
+		var i ListTraderOrdersAmountDescRow
+		if err := rows.Scan(
+			&i.ScopeItemID,
+			&i.ExternalOrderID,
+			&i.ExternalID,
+			&i.ExternalInnerID,
+			&i.WorkerName,
+			&i.TraderID,
+			&i.TraderLogin,
+			&i.RequisiteRaw,
+			&i.RequisitePhone,
+			&i.MethodType,
+			&i.MethodName,
+			&i.AmountMinor,
+			&i.Currency,
+			&i.RawStatus,
+			&i.NormalizedStatus,
+			&i.TlReconciliationStatus,
+			&i.CreatedAtExternal,
+			&i.ImportBatchID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTraderOrdersCreatedAsc = `-- name: ListTraderOrdersCreatedAsc :many
+SELECT
+    osi.id AS scope_item_id,
+    osi.external_order_id,
+    osi.external_id,
+    osi.external_inner_id,
+    osi.worker_name,
+    osi.trader_id,
+    u.login AS trader_login,
+    osi.requisite_raw,
+    osi.requisite_phone,
+    osi.method_type,
+    osi.method_name,
+    osi.amount_minor,
+    osi.currency,
+    osi.raw_status,
+    osi.normalized_status,
+    COALESCE(eo.tl_reconciliation_status, 'not_checked') AS tl_reconciliation_status,
+    osi.created_at_external,
+    osi.import_batch_id
+FROM order_scope_items osi
+LEFT JOIN external_orders eo ON eo.id = osi.external_order_id
+LEFT JOIN users u ON u.id = osi.trader_id
+WHERE osi.team_id = $1
+  AND osi.scope_type = 'trader_shift'
+  AND osi.shift_id = $2
+  AND osi.direction = $3
+  AND osi.is_active = TRUE
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
+  AND ($6::text IS NULL OR osi.worker_name ILIKE '%' || $6::text || '%')
+  AND (
+      $7::text IS NULL
+      OR osi.requisite_raw ILIKE '%' || $7::text || '%'
+      OR osi.requisite_phone ILIKE '%' || $7::text || '%'
+  )
+  AND ($8::text IS NULL OR osi.method_type = $8::text)
+  AND (
+      $9::text IS NULL
+      OR osi.raw_status = $9::text
+      OR osi.normalized_status = $9::text
+  )
+  AND ($10::bigint IS NULL OR osi.amount_minor >= $10::bigint)
+  AND ($11::bigint IS NULL OR osi.amount_minor <= $11::bigint)
+ORDER BY osi.created_at_external ASC, osi.id DESC
+LIMIT $13
+OFFSET $12
+`
+
+type ListTraderOrdersCreatedAscParams struct {
+	TeamID             int64
+	ShiftID            pgtype.Int8
+	Direction          string
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
+	WorkerName         pgtype.Text
+	Requisite          pgtype.Text
+	MethodType         pgtype.Text
+	Status             pgtype.Text
+	AmountFrom         pgtype.Int8
+	AmountTo           pgtype.Int8
+	PageOffset         int32
+	PageSize           int32
+}
+
+type ListTraderOrdersCreatedAscRow struct {
+	ScopeItemID            int64
+	ExternalOrderID        int64
+	ExternalID             string
+	ExternalInnerID        string
+	WorkerName             string
+	TraderID               pgtype.Int8
+	TraderLogin            pgtype.Text
+	RequisiteRaw           pgtype.Text
+	RequisitePhone         pgtype.Text
+	MethodType             pgtype.Text
+	MethodName             pgtype.Text
+	AmountMinor            int64
+	Currency               string
+	RawStatus              string
+	NormalizedStatus       string
+	TlReconciliationStatus string
+	CreatedAtExternal      pgtype.Timestamptz
+	ImportBatchID          int64
+}
+
+func (q *Queries) ListTraderOrdersCreatedAsc(ctx context.Context, arg ListTraderOrdersCreatedAscParams) ([]ListTraderOrdersCreatedAscRow, error) {
+	rows, err := q.db.Query(ctx, listTraderOrdersCreatedAsc,
+		arg.TeamID,
+		arg.ShiftID,
+		arg.Direction,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
+		arg.WorkerName,
+		arg.Requisite,
+		arg.MethodType,
+		arg.Status,
+		arg.AmountFrom,
+		arg.AmountTo,
+		arg.PageOffset,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTraderOrdersCreatedAscRow
+	for rows.Next() {
+		var i ListTraderOrdersCreatedAscRow
+		if err := rows.Scan(
+			&i.ScopeItemID,
+			&i.ExternalOrderID,
+			&i.ExternalID,
+			&i.ExternalInnerID,
+			&i.WorkerName,
+			&i.TraderID,
+			&i.TraderLogin,
+			&i.RequisiteRaw,
+			&i.RequisitePhone,
+			&i.MethodType,
+			&i.MethodName,
+			&i.AmountMinor,
+			&i.Currency,
+			&i.RawStatus,
+			&i.NormalizedStatus,
+			&i.TlReconciliationStatus,
+			&i.CreatedAtExternal,
+			&i.ImportBatchID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTraderOrdersCreatedDesc = `-- name: ListTraderOrdersCreatedDesc :many
+SELECT
+    osi.id AS scope_item_id,
+    osi.external_order_id,
+    osi.external_id,
+    osi.external_inner_id,
+    osi.worker_name,
+    osi.trader_id,
+    u.login AS trader_login,
+    osi.requisite_raw,
+    osi.requisite_phone,
+    osi.method_type,
+    osi.method_name,
+    osi.amount_minor,
+    osi.currency,
+    osi.raw_status,
+    osi.normalized_status,
+    COALESCE(eo.tl_reconciliation_status, 'not_checked') AS tl_reconciliation_status,
+    osi.created_at_external,
+    osi.import_batch_id
+FROM order_scope_items osi
+LEFT JOIN external_orders eo ON eo.id = osi.external_order_id
+LEFT JOIN users u ON u.id = osi.trader_id
+WHERE osi.team_id = $1
+  AND osi.scope_type = 'trader_shift'
+  AND osi.shift_id = $2
+  AND osi.direction = $3
+  AND osi.is_active = TRUE
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
+  AND ($6::text IS NULL OR osi.worker_name ILIKE '%' || $6::text || '%')
+  AND (
+      $7::text IS NULL
+      OR osi.requisite_raw ILIKE '%' || $7::text || '%'
+      OR osi.requisite_phone ILIKE '%' || $7::text || '%'
+  )
+  AND ($8::text IS NULL OR osi.method_type = $8::text)
+  AND (
+      $9::text IS NULL
+      OR osi.raw_status = $9::text
+      OR osi.normalized_status = $9::text
+  )
+  AND ($10::bigint IS NULL OR osi.amount_minor >= $10::bigint)
+  AND ($11::bigint IS NULL OR osi.amount_minor <= $11::bigint)
+ORDER BY osi.created_at_external DESC, osi.id DESC
+LIMIT $13
+OFFSET $12
+`
+
+type ListTraderOrdersCreatedDescParams struct {
+	TeamID             int64
+	ShiftID            pgtype.Int8
+	Direction          string
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
+	WorkerName         pgtype.Text
+	Requisite          pgtype.Text
+	MethodType         pgtype.Text
+	Status             pgtype.Text
+	AmountFrom         pgtype.Int8
+	AmountTo           pgtype.Int8
+	PageOffset         int32
+	PageSize           int32
+}
+
+type ListTraderOrdersCreatedDescRow struct {
+	ScopeItemID            int64
+	ExternalOrderID        int64
+	ExternalID             string
+	ExternalInnerID        string
+	WorkerName             string
+	TraderID               pgtype.Int8
+	TraderLogin            pgtype.Text
+	RequisiteRaw           pgtype.Text
+	RequisitePhone         pgtype.Text
+	MethodType             pgtype.Text
+	MethodName             pgtype.Text
+	AmountMinor            int64
+	Currency               string
+	RawStatus              string
+	NormalizedStatus       string
+	TlReconciliationStatus string
+	CreatedAtExternal      pgtype.Timestamptz
+	ImportBatchID          int64
+}
+
+func (q *Queries) ListTraderOrdersCreatedDesc(ctx context.Context, arg ListTraderOrdersCreatedDescParams) ([]ListTraderOrdersCreatedDescRow, error) {
+	rows, err := q.db.Query(ctx, listTraderOrdersCreatedDesc,
+		arg.TeamID,
+		arg.ShiftID,
+		arg.Direction,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
+		arg.WorkerName,
+		arg.Requisite,
+		arg.MethodType,
+		arg.Status,
+		arg.AmountFrom,
+		arg.AmountTo,
+		arg.PageOffset,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTraderOrdersCreatedDescRow
+	for rows.Next() {
+		var i ListTraderOrdersCreatedDescRow
+		if err := rows.Scan(
+			&i.ScopeItemID,
+			&i.ExternalOrderID,
+			&i.ExternalID,
+			&i.ExternalInnerID,
+			&i.WorkerName,
+			&i.TraderID,
+			&i.TraderLogin,
+			&i.RequisiteRaw,
+			&i.RequisitePhone,
+			&i.MethodType,
+			&i.MethodName,
+			&i.AmountMinor,
+			&i.Currency,
+			&i.RawStatus,
+			&i.NormalizedStatus,
+			&i.TlReconciliationStatus,
+			&i.CreatedAtExternal,
+			&i.ImportBatchID,
 		); err != nil {
 			return nil, err
 		}
@@ -389,20 +1393,20 @@ WHERE osi.team_id = $1
           )
       )
   )
-  AND ($4::date IS NULL OR osi.created_at_external::date >= $4::date)
-  AND ($5::date IS NULL OR osi.created_at_external::date <= $5::date)
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
   AND ($6::bigint IS NULL OR osi.trader_id = $6::bigint)
   AND (COALESCE(cardinality($7::bigint[]), 0) = 0 OR osi.trader_id = ANY($7::bigint[]))
 `
 
 type TeamleadOrdersSummaryParams struct {
-	TeamID        int64
-	Direction     string
-	ConfirmedOnly bool
-	DateFrom      pgtype.Date
-	DateTo        pgtype.Date
-	TraderID      pgtype.Int8
-	TraderIds     []int64
+	TeamID             int64
+	Direction          string
+	ConfirmedOnly      bool
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
+	TraderID           pgtype.Int8
+	TraderIds          []int64
 }
 
 type TeamleadOrdersSummaryRow struct {
@@ -421,8 +1425,8 @@ func (q *Queries) TeamleadOrdersSummary(ctx context.Context, arg TeamleadOrdersS
 		arg.TeamID,
 		arg.Direction,
 		arg.ConfirmedOnly,
-		arg.DateFrom,
-		arg.DateTo,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
 		arg.TraderID,
 		arg.TraderIds,
 	)
@@ -523,8 +1527,8 @@ WHERE osi.team_id = $1
           )
       )
   )
-  AND ($4::date IS NULL OR osi.created_at_external::date >= $4::date)
-  AND ($5::date IS NULL OR osi.created_at_external::date <= $5::date)
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
   AND ($6::bigint IS NULL OR osi.trader_id = $6::bigint)
   AND (COALESCE(cardinality($7::bigint[]), 0) = 0 OR osi.trader_id = ANY($7::bigint[]))
 GROUP BY osi.raw_status, osi.normalized_status
@@ -532,13 +1536,13 @@ ORDER BY count DESC, amount_minor DESC, osi.raw_status
 `
 
 type TeamleadStatusBreakdownParams struct {
-	TeamID        int64
-	Direction     string
-	ConfirmedOnly bool
-	DateFrom      pgtype.Date
-	DateTo        pgtype.Date
-	TraderID      pgtype.Int8
-	TraderIds     []int64
+	TeamID             int64
+	Direction          string
+	ConfirmedOnly      bool
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
+	TraderID           pgtype.Int8
+	TraderIds          []int64
 }
 
 type TeamleadStatusBreakdownRow struct {
@@ -553,8 +1557,8 @@ func (q *Queries) TeamleadStatusBreakdown(ctx context.Context, arg TeamleadStatu
 		arg.TeamID,
 		arg.Direction,
 		arg.ConfirmedOnly,
-		arg.DateFrom,
-		arg.DateTo,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
 		arg.TraderID,
 		arg.TraderIds,
 	)
@@ -619,16 +1623,16 @@ WHERE osi.team_id = $1
   AND osi.shift_id = $2
   AND osi.direction = $3
   AND osi.is_active = TRUE
-  AND ($4::date IS NULL OR osi.created_at_external::date >= $4::date)
-  AND ($5::date IS NULL OR osi.created_at_external::date <= $5::date)
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
 `
 
 type TraderOrdersSummaryParams struct {
-	TeamID    int64
-	ShiftID   pgtype.Int8
-	Direction string
-	DateFrom  pgtype.Date
-	DateTo    pgtype.Date
+	TeamID             int64
+	ShiftID            pgtype.Int8
+	Direction          string
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
 }
 
 type TraderOrdersSummaryRow struct {
@@ -647,8 +1651,8 @@ func (q *Queries) TraderOrdersSummary(ctx context.Context, arg TraderOrdersSumma
 		arg.TeamID,
 		arg.ShiftID,
 		arg.Direction,
-		arg.DateFrom,
-		arg.DateTo,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
 	)
 	var i TraderOrdersSummaryRow
 	err := row.Scan(
@@ -736,18 +1740,18 @@ WHERE osi.team_id = $1
   AND osi.shift_id = $2
   AND osi.direction = $3
   AND osi.is_active = TRUE
-  AND ($4::date IS NULL OR osi.created_at_external::date >= $4::date)
-  AND ($5::date IS NULL OR osi.created_at_external::date <= $5::date)
+  AND ($4::timestamptz IS NULL OR osi.created_at_external >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR osi.created_at_external < $5::timestamptz)
 GROUP BY osi.raw_status, osi.normalized_status
 ORDER BY count DESC, amount_minor DESC, osi.raw_status
 `
 
 type TraderStatusBreakdownParams struct {
-	TeamID    int64
-	ShiftID   pgtype.Int8
-	Direction string
-	DateFrom  pgtype.Date
-	DateTo    pgtype.Date
+	TeamID             int64
+	ShiftID            pgtype.Int8
+	Direction          string
+	CreatedFrom        pgtype.Timestamptz
+	CreatedToExclusive pgtype.Timestamptz
 }
 
 type TraderStatusBreakdownRow struct {
@@ -762,8 +1766,8 @@ func (q *Queries) TraderStatusBreakdown(ctx context.Context, arg TraderStatusBre
 		arg.TeamID,
 		arg.ShiftID,
 		arg.Direction,
-		arg.DateFrom,
-		arg.DateTo,
+		arg.CreatedFrom,
+		arg.CreatedToExclusive,
 	)
 	if err != nil {
 		return nil, err

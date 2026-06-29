@@ -30,6 +30,8 @@ import type {
   ShiftReportRow,
   ShiftReport,
   ShiftRequisite,
+  TeamleadReconciliationItem,
+  TeamleadReconciliationRun,
   Trader,
   TraderProfile,
   TurnoverEntry,
@@ -91,6 +93,16 @@ type ReconciliationItemFilters = PaginationParams & {
   onlyMismatch?: boolean;
 };
 
+export type TeamleadReconciliationItemFilters = PaginationParams & {
+  direction?: OrderDirection | "all";
+  stage?: string;
+  issueType?: string;
+  severity?: "info" | "warning" | "error" | "blocker" | "all";
+  traderId?: number;
+  requisiteId?: number;
+  onlyMismatch?: boolean;
+};
+
 type BackendPage<T> = {
   items: T[];
   page: number;
@@ -130,6 +142,9 @@ type BackendTransfer = ApiSchema<"PayoutTransfer">;
 type BackendOrder = ApiSchema<"Order">;
 type BackendImportResult = ApiSchema<"ImportResult">;
 type BackendReconciliationRun = ApiSchema<"ReconciliationRun">;
+type TeamleadReconciliationResponse = ApiSchema<"TeamleadReconciliationResponse">;
+type TeamleadReconciliationsResponse = ApiSchema<"TeamleadReconciliationsResponse">;
+type TeamleadReconciliationItemsResponse = ApiSchema<"TeamleadReconciliationItemsResponse">;
 
 type BackendShiftReportReconciliation = {
   id: number;
@@ -154,6 +169,7 @@ type BackendShiftReportRow = {
   cardNumber?: string;
   holderName?: string;
   status: string;
+  tlReconciliationStatus?: ShiftReportRow["tlReconciliationStatus"];
   inboundTurnoverMinor: number;
   outboundTurnoverMinor: number;
   closingBalanceMinor: number;
@@ -618,6 +634,46 @@ export const api = {
     },
   },
 
+  teamleadReconciliations: {
+    async list(pagination?: PaginationParams): Promise<Page<TeamleadReconciliationRun>> {
+      const response = await apiClient.get<TeamleadReconciliationsResponse>(`/teamlead/reconciliations${queryString(pagination ?? {})}`);
+      return toPage(response, (item) => item);
+    },
+    async get(runId: number): Promise<TeamleadReconciliationRun> {
+      const response = await apiClient.get<TeamleadReconciliationResponse>(`/teamlead/reconciliations/${runId}`);
+      return response.reconciliation;
+    },
+    async items(runId: number, filters?: TeamleadReconciliationItemFilters): Promise<Page<TeamleadReconciliationItem>> {
+      const response = await apiClient.get<TeamleadReconciliationItemsResponse>(`/teamlead/reconciliations/${runId}/items${queryString(filters ?? {})}`);
+      return toPage(response, (item) => item);
+    },
+    async create(input: { dateFrom: string; dateTo: string; inboundFile?: File | null; outboundFile?: File | null }) {
+      const formData = new FormData();
+      formData.set("dateFrom", input.dateFrom);
+      formData.set("dateTo", input.dateTo);
+      if (input.inboundFile) {
+        formData.set("inboundFile", input.inboundFile);
+      }
+      if (input.outboundFile) {
+        formData.set("outboundFile", input.outboundFile);
+      }
+      const response = await apiClient.upload<TeamleadReconciliationResponse>("/teamlead/reconciliations", formData);
+      return response.reconciliation;
+    },
+    async confirm(input: { runId: number; comment?: string }) {
+      const response = await apiClient.post<TeamleadReconciliationResponse>(`/teamlead/reconciliations/${input.runId}/confirm`, {
+        comment: input.comment ?? "",
+      });
+      return response.reconciliation;
+    },
+    async reject(input: { runId: number; comment: string }) {
+      const response = await apiClient.post<TeamleadReconciliationResponse>(`/teamlead/reconciliations/${input.runId}/reject`, {
+        comment: input.comment,
+      });
+      return response.reconciliation;
+    },
+  },
+
   debug: {
     async importFinAll(input: { file: File; dryRun: boolean }) {
       const formData = new FormData();
@@ -926,6 +982,9 @@ function toShiftReport(item: ApiSchema<"Shift">): ShiftReport {
     status: item.status as ShiftReport["status"],
     inboundReconciliationStatus: item.inboundReconciliationStatus,
     outboundReconciliationStatus: item.outboundReconciliationStatus,
+    tlReconciliationStatus: item.tlReconciliationStatus,
+    lastTeamleadReconciliationId: item.lastTeamleadReconciliationId,
+    tlReconciledAt: item.tlReconciledAt,
     closeComment: item.closeComment,
   };
 }
@@ -965,6 +1024,7 @@ function toShiftReportRow(item: BackendShiftReportRow): ShiftReportRow {
     cardNumber: item.cardNumber,
     holderName: item.holderName,
     status: item.status,
+    tlReconciliationStatus: item.tlReconciliationStatus ?? "not_checked",
     inboundTurnoverMinor: item.inboundTurnoverMinor,
     outboundTurnoverMinor: item.outboundTurnoverMinor,
     closingBalanceMinor: item.closingBalanceMinor,
@@ -1073,6 +1133,7 @@ function toOrder(item: BackendOrder): Order {
     status: item.rawStatus || item.normalizedStatus,
     rawStatus: item.rawStatus,
     normalizedStatus: item.normalizedStatus,
+    tlReconciliationStatus: item.tlReconciliationStatus,
     innerId: item.externalInnerId,
     externalId: item.externalId,
     importBatchId: item.importBatchId,

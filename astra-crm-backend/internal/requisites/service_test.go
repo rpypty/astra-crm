@@ -26,6 +26,7 @@ func TestServiceCreateWithAssignedTraderCreatesAssignmentAndAudits(t *testing.T)
 		TeamID:           2,
 		Phone:            "+79991234567",
 		BankCode:         "sber",
+		CardNumber:       "1234 5678 9012 3456",
 		AssignedTraderID: &traderID,
 	})
 	if err != nil {
@@ -37,6 +38,24 @@ func TestServiceCreateWithAssignedTraderCreatesAssignmentAndAudits(t *testing.T)
 	}
 	if store.assigned.TraderID != traderID {
 		t.Fatalf("assigned trader id in store = %d, want %d", store.assigned.TraderID, traderID)
+	}
+	if store.created.CardNumber != "1234567890123456" {
+		t.Fatalf("created card number = %q, want normalized digits", store.created.CardNumber)
+	}
+}
+
+func TestServiceCreateRejectsMissingCardNumber(t *testing.T) {
+	service := NewService(&fakeStore{}, nil, nil)
+
+	_, err := service.Create(context.Background(), CreateParams{
+		ActorID:    1,
+		TeamID:     2,
+		Phone:      "+79991234567",
+		BankCode:   "sber",
+		CardNumber: "123",
+	})
+	if err != ErrInvalidInput {
+		t.Fatalf("Create() error = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -236,6 +255,7 @@ func (s *fakeStore) Create(ctx context.Context, params CreateRecord) (Requisite,
 		Phone:      params.Phone,
 		MethodType: params.MethodType,
 		BankCode:   params.BankCode,
+		CardNumber: &params.CardNumber,
 		Proxy:      params.Proxy,
 		Status:     StatusActive,
 		CreatedBy:  params.CreatedBy,

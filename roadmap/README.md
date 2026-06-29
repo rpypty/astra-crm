@@ -30,6 +30,7 @@
 6. Frontend feature flows.
 7. Integration, release hardening, deployment.
 8. Backend SQL optimization stream.
+9. Teamlead reconciliation V2.
 
 Backend идет первым, потому что основные риски продукта находятся в доменных инвариантах, CSV-импортах, переимпортах, сверке и аудитах.
 
@@ -48,6 +49,7 @@ roadmap/06-frontend-flows.md
 roadmap/07-integration-release.md
 roadmap/08-openapi-seed-v2-tasks.md
 roadmap/09-backend-sql-optimization.md
+roadmap/10-teamlead-reconciliation-v2.md
 roadmap/backlog-open-questions.md
 ```
 

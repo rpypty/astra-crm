@@ -43,6 +43,8 @@ ExternalOrder
 OrderScopeItem
 ReconciliationRun
 ReconciliationItem
+TeamleadReconciliation
+TeamleadReconciliationItem
 AuditLog
 AuthSession
 ```
@@ -159,8 +161,13 @@ Fields:
 id
 team_id
 phone
+bank_code
+card_number
+normalized_phone
+normalized_card_number
 method_type: sbp / c2c / ...
 proxy
+employee_comment nullable
 status: active / disabled / archived
 created_by
 created_at
@@ -170,8 +177,12 @@ deleted_at nullable
 
 Important:
 
-- Do not store daily card number / holder name here.
-- Daily card/holder values belong to `ShiftRequisite`.
+- Requisite identity is `team_id + bank_code + normalized_phone + normalized_card_number`.
+- `phone` is the base contact identifier.
+- `card_number` is a stable identity field for matching TL CSV and CRM data.
+- `normalized_phone` and `normalized_card_number` are stored/generated match keys and must be used for comparisons.
+- `holder_name` is not part of identity. If it is stored on the base requisite, it is operational/display context only.
+- Existing historical requisites may temporarily have empty `card_number`; new records should be created with a card.
 - Requisite can be assigned to a trader but can move between traders during day.
 - Assignment history must be preserved.
 
@@ -276,9 +287,10 @@ updated_at
 
 Meaning:
 
-- This is the daily/shift-specific version of a requisite.
-- Trader fills card number and holder name here.
-- If for a method the actual daily instrument is phone rather than card, keep domain language flexible in UI, but persist in a stable field or rename later to `instrument_value`.
+- This is the shift-specific work record for a base requisite.
+- `card_number` is a snapshot/work-time value. It should match the base requisite card unless an explicit correction flow changes the base identity.
+- `holder_name` is filled by trader for operational work and audit context.
+- If for a method the actual daily instrument is phone rather than card, keep domain language flexible in UI, but do not silently change the base identity key.
 
 Rules:
 
@@ -567,6 +579,9 @@ ordered nullable
 counted nullable
 initials nullable
 last_import_batch_id
+tl_reconciliation_status: not_checked / confirmed_by_tl / updated_by_tl / tl_discrepancy / tl_accepted
+last_teamlead_reconciliation_id nullable
+tl_reconciled_at nullable
 created_at
 updated_at
 ```
@@ -689,7 +704,88 @@ Used mostly for teamlead period reconciliation and detailed UI.
 
 ---
 
-# 20. AuditLog
+# 20. TeamleadReconciliation
+
+Full TL reconciliation run for one selected export period.
+
+Fields:
+
+```text
+id
+team_id
+date_from
+date_to
+status: draft / analyzing / matched / mismatch / apply_queued / applying / applied / apply_failed / rejected
+created_by
+confirmed_by nullable
+rejected_by nullable
+inbound_import_batch_id nullable
+outbound_import_batch_id nullable
+comment nullable
+mismatch_count
+conflict_count
+blocked_count
+pipeline_json
+inbound_summary_json
+outbound_summary_json
+preview_json
+apply_result_json
+error_message nullable
+created_at
+updated_at
+analyzed_at nullable
+confirmed_at nullable
+rejected_at nullable
+apply_queued_at nullable
+applied_at nullable
+```
+
+Rules:
+
+- One run covers a period and may contain inbound CSV, outbound CSV, or both.
+- At least one direction CSV is required.
+- Analysis does not mutate `external_orders`, shift statuses, or analytics.
+- Confirm moves the run to async apply.
+- Reject preserves the run in history without changing transactions or analytics.
+
+---
+
+# 21. TeamleadReconciliationItem
+
+Pipeline detail, mismatch, preview, or apply item for a TL reconciliation run.
+
+Fields:
+
+```text
+id
+teamlead_reconciliation_id
+team_id
+direction: inbound / outbound
+stage: normalization / matching / turnover_check / transaction_check / preview / apply
+issue_type
+severity: info / warning / error / blocker
+external_order_id nullable
+external_inner_id nullable
+trader_id nullable
+requisite_id nullable
+shift_id nullable
+before_json nullable
+after_json nullable
+message nullable
+is_blocking
+applied_at nullable
+created_at
+```
+
+Rules:
+
+- `before_json` and `after_json` store the concrete preview/apply delta.
+- Blocking conflict items prevent apply until the run is rejected or resolved by a later run.
+- Items are append-only for audit/debug history.
+
+---
+
+# 22. AuditLog
 
 Append-only audit event.
 
@@ -719,7 +815,7 @@ Rules:
 
 ---
 
-# 21. AuthSession
+# 23. AuthSession
 
 Server-side user session.
 
@@ -745,7 +841,7 @@ Rules:
 
 ---
 
-# 22. Status summary
+# 24. Status summary
 
 ## TraderShift.status
 
@@ -787,6 +883,38 @@ cancelled
 unknown
 ```
 
+## TL reconciliation status
+
+```text
+not_checked
+confirmed_by_tl
+updated_by_tl
+tl_discrepancy
+tl_accepted
+```
+
+Used on:
+
+```text
+external_orders
+trader_shifts
+shift_requisites
+```
+
+## TeamleadReconciliation.status
+
+```text
+draft
+analyzing
+matched
+mismatch
+apply_queued
+applying
+applied
+apply_failed
+rejected
+```
+
 ## ManualPayoutOrder.status
 
 ```text
@@ -798,17 +926,20 @@ cancelled
 
 ---
 
-# 23. Core invariants
+# 25. Core invariants
 
 ```text
 A trader can have only one open shift.
 A requisite can have only one active assignment.
+A requisite identity is bank + normalized phone + normalized card number inside a team.
 A trader can take only assigned requisites into work.
 Taking first requisite creates shift automatically.
 Turnover entries are cumulative.
 Reconciliation uses latest turnover entry per shift requisite.
 CSV duplicate innerId inside one file is an import error.
 CSV reimport replaces active order scope set.
+TL reconciliation transaction diff by innerId runs even if turnover totals match.
+Rejected TL reconciliation never changes transactions, shifts, statuses, or analytics.
 Historical import batches/rows are preserved.
 Inbound success includes hand_success and corrected.
 Outbound reconciliation compares CSV amount vs manual payout transfers.

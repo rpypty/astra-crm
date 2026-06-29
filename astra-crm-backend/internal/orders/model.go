@@ -71,6 +71,7 @@ type Order struct {
 	Currency          string
 	RawStatus         string
 	NormalizedStatus  string
+	TLStatus          string
 	CreatedAtExternal time.Time
 	ImportBatchID     int64
 }

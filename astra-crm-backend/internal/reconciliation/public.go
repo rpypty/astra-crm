@@ -101,6 +101,127 @@ func PublicItemsFromDomain(items []Item) []PublicItem {
 	return publicItems
 }
 
+type PublicTeamleadRun struct {
+	ID                    int64           `json:"id"`
+	TeamID                int64           `json:"teamId"`
+	DateFrom              string          `json:"dateFrom"`
+	DateTo                string          `json:"dateTo"`
+	Status                string          `json:"status"`
+	CreatedBy             int64           `json:"createdBy"`
+	ConfirmedBy           *int64          `json:"confirmedBy,omitempty"`
+	RejectedBy            *int64          `json:"rejectedBy,omitempty"`
+	InboundImportBatchID  *int64          `json:"inboundImportBatchId,omitempty"`
+	OutboundImportBatchID *int64          `json:"outboundImportBatchId,omitempty"`
+	Comment               *string         `json:"comment,omitempty"`
+	MismatchCount         int64           `json:"mismatchCount"`
+	ConflictCount         int64           `json:"conflictCount"`
+	BlockedCount          int64           `json:"blockedCount"`
+	Pipeline              json.RawMessage `json:"pipeline,omitempty"`
+	InboundSummary        json.RawMessage `json:"inboundSummary,omitempty"`
+	OutboundSummary       json.RawMessage `json:"outboundSummary,omitempty"`
+	Preview               json.RawMessage `json:"preview,omitempty"`
+	ApplyResult           json.RawMessage `json:"applyResult,omitempty"`
+	ErrorMessage          *string         `json:"errorMessage,omitempty"`
+	CreatedAt             time.Time       `json:"createdAt"`
+	UpdatedAt             time.Time       `json:"updatedAt"`
+	AnalyzedAt            *time.Time      `json:"analyzedAt,omitempty"`
+	ConfirmedAt           *time.Time      `json:"confirmedAt,omitempty"`
+	RejectedAt            *time.Time      `json:"rejectedAt,omitempty"`
+	ApplyQueuedAt         *time.Time      `json:"applyQueuedAt,omitempty"`
+	AppliedAt             *time.Time      `json:"appliedAt,omitempty"`
+}
+
+func PublicTeamleadRunFromDomain(run TeamleadRun) PublicTeamleadRun {
+	return PublicTeamleadRun{
+		ID:                    run.ID,
+		TeamID:                run.TeamID,
+		DateFrom:              formatDate(run.DateFrom),
+		DateTo:                formatDate(run.DateTo),
+		Status:                run.Status,
+		CreatedBy:             run.CreatedBy,
+		ConfirmedBy:           run.ConfirmedBy,
+		RejectedBy:            run.RejectedBy,
+		InboundImportBatchID:  run.InboundImportBatchID,
+		OutboundImportBatchID: run.OutboundImportBatchID,
+		Comment:               run.Comment,
+		MismatchCount:         run.MismatchCount,
+		ConflictCount:         run.ConflictCount,
+		BlockedCount:          run.BlockedCount,
+		Pipeline:              nullableRawJSON(run.PipelineJSON),
+		InboundSummary:        nullableRawJSON(run.InboundSummaryJSON),
+		OutboundSummary:       nullableRawJSON(run.OutboundSummaryJSON),
+		Preview:               nullableRawJSON(run.PreviewJSON),
+		ApplyResult:           nullableRawJSON(run.ApplyResultJSON),
+		ErrorMessage:          run.ErrorMessage,
+		CreatedAt:             run.CreatedAt,
+		UpdatedAt:             run.UpdatedAt,
+		AnalyzedAt:            run.AnalyzedAt,
+		ConfirmedAt:           run.ConfirmedAt,
+		RejectedAt:            run.RejectedAt,
+		ApplyQueuedAt:         run.ApplyQueuedAt,
+		AppliedAt:             run.AppliedAt,
+	}
+}
+
+type PublicTeamleadItem struct {
+	ID                       int64           `json:"id"`
+	TeamleadReconciliationID int64           `json:"teamleadReconciliationId"`
+	TeamID                   int64           `json:"teamId"`
+	Direction                string          `json:"direction"`
+	Stage                    string          `json:"stage"`
+	IssueType                string          `json:"issueType"`
+	Severity                 string          `json:"severity"`
+	ExternalOrderID          *int64          `json:"externalOrderId,omitempty"`
+	ExternalInnerID          *string         `json:"externalInnerId,omitempty"`
+	TraderID                 *int64          `json:"traderId,omitempty"`
+	RequisiteID              *int64          `json:"requisiteId,omitempty"`
+	ShiftID                  *int64          `json:"shiftId,omitempty"`
+	Before                   json.RawMessage `json:"before,omitempty"`
+	After                    json.RawMessage `json:"after,omitempty"`
+	Message                  *string         `json:"message,omitempty"`
+	IsBlocking               bool            `json:"isBlocking"`
+	AppliedAt                *time.Time      `json:"appliedAt,omitempty"`
+	CreatedAt                time.Time       `json:"createdAt"`
+}
+
+func PublicTeamleadItemFromDomain(item TeamleadItem) PublicTeamleadItem {
+	return PublicTeamleadItem{
+		ID:                       item.ID,
+		TeamleadReconciliationID: item.TeamleadReconciliationID,
+		TeamID:                   item.TeamID,
+		Direction:                item.Direction,
+		Stage:                    item.Stage,
+		IssueType:                item.IssueType,
+		Severity:                 item.Severity,
+		ExternalOrderID:          item.ExternalOrderID,
+		ExternalInnerID:          item.ExternalInnerID,
+		TraderID:                 item.TraderID,
+		RequisiteID:              item.RequisiteID,
+		ShiftID:                  item.ShiftID,
+		Before:                   nullableRawJSON(item.BeforeJSON),
+		After:                    nullableRawJSON(item.AfterJSON),
+		Message:                  item.Message,
+		IsBlocking:               item.IsBlocking,
+		AppliedAt:                item.AppliedAt,
+		CreatedAt:                item.CreatedAt,
+	}
+}
+
+func PublicTeamleadItemsFromDomain(items []TeamleadItem) []PublicTeamleadItem {
+	publicItems := make([]PublicTeamleadItem, 0, len(items))
+	for _, item := range items {
+		publicItems = append(publicItems, PublicTeamleadItemFromDomain(item))
+	}
+	return publicItems
+}
+
+func formatDate(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Format("2006-01-02")
+}
+
 func nullableRawJSON(value json.RawMessage) json.RawMessage {
 	if len(value) == 0 {
 		return nil

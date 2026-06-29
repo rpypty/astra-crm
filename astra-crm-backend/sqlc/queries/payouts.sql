@@ -233,7 +233,8 @@ source_requisite AS (
         sr.id AS source_shift_requisite_id,
         sr.requisite_id AS source_requisite_id,
         r.phone AS source_phone,
-        b.name AS source_bank_name
+        r.bank_code AS source_bank_code,
+        ''::text AS source_bank_name
     FROM order_row
     JOIN shift_requisites sr ON sr.id = sqlc.arg(source_shift_requisite_id)
         AND sr.team_id = order_row.team_id
@@ -241,7 +242,6 @@ source_requisite AS (
         AND sr.shift_id = order_row.shift_id
         AND sr.status = 'active'
     JOIN requisites r ON r.id = sr.requisite_id
-    JOIN banks b ON b.code = r.bank_code
 ),
 paid AS (
     SELECT COALESCE(sum(mpt.amount_minor), 0)::bigint AS paid_amount_minor
@@ -286,7 +286,7 @@ updated_order AS (
     WHERE mpo.id = (SELECT manual_payout_order_id FROM inserted)
     RETURNING mpo.id
 )
-SELECT inserted.id, inserted.team_id, inserted.manual_payout_order_id, inserted.shift_id, inserted.trader_id, inserted.source_shift_requisite_id, inserted.source_requisite_id, source_requisite.source_phone, source_requisite.source_bank_name, inserted.amount_minor, inserted.created_by, inserted.created_at, inserted.comment
+SELECT inserted.id, inserted.team_id, inserted.manual_payout_order_id, inserted.shift_id, inserted.trader_id, inserted.source_shift_requisite_id, inserted.source_requisite_id, source_requisite.source_phone, source_requisite.source_bank_code, source_requisite.source_bank_name, inserted.amount_minor, inserted.created_by, inserted.created_at, inserted.comment
 FROM inserted
 JOIN source_requisite ON source_requisite.source_shift_requisite_id = inserted.source_shift_requisite_id;
 
@@ -315,14 +315,14 @@ source_requisite AS (
         sr.id AS source_shift_requisite_id,
         sr.requisite_id AS source_requisite_id,
         r.phone AS source_phone,
-        b.name AS source_bank_name
+        r.bank_code AS source_bank_code,
+        ''::text AS source_bank_name
     FROM order_row
     JOIN shift_requisites sr ON sr.id = sqlc.arg(source_shift_requisite_id)
         AND sr.team_id = order_row.team_id
         AND sr.trader_id = order_row.trader_id
         AND sr.shift_id = order_row.shift_id
     JOIN requisites r ON r.id = sr.requisite_id
-    JOIN banks b ON b.code = r.bank_code
 ),
 paid_other AS (
     SELECT COALESCE(sum(mpt.amount_minor), 0)::bigint AS paid_amount_minor
@@ -358,7 +358,7 @@ updated_order AS (
       AND EXISTS (SELECT 1 FROM updated)
     RETURNING mpo.id
 )
-SELECT updated.id, updated.team_id, updated.manual_payout_order_id, updated.shift_id, updated.trader_id, updated.source_shift_requisite_id, updated.source_requisite_id, source_requisite.source_phone, source_requisite.source_bank_name, updated.amount_minor, updated.created_by, updated.created_at, updated.comment
+SELECT updated.id, updated.team_id, updated.manual_payout_order_id, updated.shift_id, updated.trader_id, updated.source_shift_requisite_id, updated.source_requisite_id, source_requisite.source_phone, source_requisite.source_bank_code, source_requisite.source_bank_name, updated.amount_minor, updated.created_by, updated.created_at, updated.comment
 FROM updated
 JOIN source_requisite ON source_requisite.source_shift_requisite_id = updated.source_shift_requisite_id;
 
@@ -397,10 +397,9 @@ updated_order AS (
       AND EXISTS (SELECT 1 FROM deleted)
     RETURNING mpo.id
 )
-SELECT deleted.id, deleted.team_id, deleted.manual_payout_order_id, deleted.shift_id, deleted.trader_id, deleted.source_shift_requisite_id, deleted.source_requisite_id, r.phone AS source_phone, b.name AS source_bank_name, deleted.amount_minor, deleted.created_by, deleted.created_at, deleted.comment
+SELECT deleted.id, deleted.team_id, deleted.manual_payout_order_id, deleted.shift_id, deleted.trader_id, deleted.source_shift_requisite_id, deleted.source_requisite_id, r.phone AS source_phone, r.bank_code AS source_bank_code, ''::text AS source_bank_name, deleted.amount_minor, deleted.created_by, deleted.created_at, deleted.comment
 FROM deleted
-JOIN requisites r ON r.id = deleted.source_requisite_id
-JOIN banks b ON b.code = r.bank_code;
+JOIN requisites r ON r.id = deleted.source_requisite_id;
 
 -- name: ListPayoutTransfers :many
 SELECT
@@ -412,14 +411,14 @@ SELECT
     mpt.source_shift_requisite_id,
     mpt.source_requisite_id,
     r.phone AS source_phone,
-    b.name AS source_bank_name,
+    r.bank_code AS source_bank_code,
+    ''::text AS source_bank_name,
     mpt.amount_minor,
     mpt.created_by,
     mpt.created_at,
     mpt.comment
 FROM manual_payout_transfers mpt
 JOIN requisites r ON r.id = mpt.source_requisite_id
-JOIN banks b ON b.code = r.bank_code
 WHERE mpt.team_id = sqlc.arg(team_id)
   AND mpt.trader_id = sqlc.arg(trader_id)
   AND mpt.manual_payout_order_id = sqlc.arg(payout_id)

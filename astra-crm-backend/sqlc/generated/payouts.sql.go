@@ -27,7 +27,8 @@ source_requisite AS (
         sr.id AS source_shift_requisite_id,
         sr.requisite_id AS source_requisite_id,
         r.phone AS source_phone,
-        b.name AS source_bank_name
+        r.bank_code AS source_bank_code,
+        ''::text AS source_bank_name
     FROM order_row
     JOIN shift_requisites sr ON sr.id = $4
         AND sr.team_id = order_row.team_id
@@ -35,7 +36,6 @@ source_requisite AS (
         AND sr.shift_id = order_row.shift_id
         AND sr.status = 'active'
     JOIN requisites r ON r.id = sr.requisite_id
-    JOIN banks b ON b.code = r.bank_code
 ),
 paid AS (
     SELECT COALESCE(sum(mpt.amount_minor), 0)::bigint AS paid_amount_minor
@@ -80,7 +80,7 @@ updated_order AS (
     WHERE mpo.id = (SELECT manual_payout_order_id FROM inserted)
     RETURNING mpo.id
 )
-SELECT inserted.id, inserted.team_id, inserted.manual_payout_order_id, inserted.shift_id, inserted.trader_id, inserted.source_shift_requisite_id, inserted.source_requisite_id, source_requisite.source_phone, source_requisite.source_bank_name, inserted.amount_minor, inserted.created_by, inserted.created_at, inserted.comment
+SELECT inserted.id, inserted.team_id, inserted.manual_payout_order_id, inserted.shift_id, inserted.trader_id, inserted.source_shift_requisite_id, inserted.source_requisite_id, source_requisite.source_phone, source_requisite.source_bank_code, source_requisite.source_bank_name, inserted.amount_minor, inserted.created_by, inserted.created_at, inserted.comment
 FROM inserted
 JOIN source_requisite ON source_requisite.source_shift_requisite_id = inserted.source_shift_requisite_id
 `
@@ -104,6 +104,7 @@ type AddPayoutTransferRow struct {
 	SourceShiftRequisiteID int64
 	SourceRequisiteID      int64
 	SourcePhone            string
+	SourceBankCode         string
 	SourceBankName         string
 	AmountMinor            int64
 	CreatedBy              int64
@@ -131,6 +132,7 @@ func (q *Queries) AddPayoutTransfer(ctx context.Context, arg AddPayoutTransferPa
 		&i.SourceShiftRequisiteID,
 		&i.SourceRequisiteID,
 		&i.SourcePhone,
+		&i.SourceBankCode,
 		&i.SourceBankName,
 		&i.AmountMinor,
 		&i.CreatedBy,
@@ -335,10 +337,9 @@ updated_order AS (
       AND EXISTS (SELECT 1 FROM deleted)
     RETURNING mpo.id
 )
-SELECT deleted.id, deleted.team_id, deleted.manual_payout_order_id, deleted.shift_id, deleted.trader_id, deleted.source_shift_requisite_id, deleted.source_requisite_id, r.phone AS source_phone, b.name AS source_bank_name, deleted.amount_minor, deleted.created_by, deleted.created_at, deleted.comment
+SELECT deleted.id, deleted.team_id, deleted.manual_payout_order_id, deleted.shift_id, deleted.trader_id, deleted.source_shift_requisite_id, deleted.source_requisite_id, r.phone AS source_phone, r.bank_code AS source_bank_code, ''::text AS source_bank_name, deleted.amount_minor, deleted.created_by, deleted.created_at, deleted.comment
 FROM deleted
 JOIN requisites r ON r.id = deleted.source_requisite_id
-JOIN banks b ON b.code = r.bank_code
 `
 
 type DeletePayoutTransferParams struct {
@@ -357,6 +358,7 @@ type DeletePayoutTransferRow struct {
 	SourceShiftRequisiteID int64
 	SourceRequisiteID      int64
 	SourcePhone            string
+	SourceBankCode         string
 	SourceBankName         string
 	AmountMinor            int64
 	CreatedBy              int64
@@ -381,6 +383,7 @@ func (q *Queries) DeletePayoutTransfer(ctx context.Context, arg DeletePayoutTran
 		&i.SourceShiftRequisiteID,
 		&i.SourceRequisiteID,
 		&i.SourcePhone,
+		&i.SourceBankCode,
 		&i.SourceBankName,
 		&i.AmountMinor,
 		&i.CreatedBy,
@@ -670,14 +673,14 @@ SELECT
     mpt.source_shift_requisite_id,
     mpt.source_requisite_id,
     r.phone AS source_phone,
-    b.name AS source_bank_name,
+    r.bank_code AS source_bank_code,
+    ''::text AS source_bank_name,
     mpt.amount_minor,
     mpt.created_by,
     mpt.created_at,
     mpt.comment
 FROM manual_payout_transfers mpt
 JOIN requisites r ON r.id = mpt.source_requisite_id
-JOIN banks b ON b.code = r.bank_code
 WHERE mpt.team_id = $1
   AND mpt.trader_id = $2
   AND mpt.manual_payout_order_id = $3
@@ -699,6 +702,7 @@ type ListPayoutTransfersRow struct {
 	SourceShiftRequisiteID int64
 	SourceRequisiteID      int64
 	SourcePhone            string
+	SourceBankCode         string
 	SourceBankName         string
 	AmountMinor            int64
 	CreatedBy              int64
@@ -724,6 +728,7 @@ func (q *Queries) ListPayoutTransfers(ctx context.Context, arg ListPayoutTransfe
 			&i.SourceShiftRequisiteID,
 			&i.SourceRequisiteID,
 			&i.SourcePhone,
+			&i.SourceBankCode,
 			&i.SourceBankName,
 			&i.AmountMinor,
 			&i.CreatedBy,
@@ -867,14 +872,14 @@ source_requisite AS (
         sr.id AS source_shift_requisite_id,
         sr.requisite_id AS source_requisite_id,
         r.phone AS source_phone,
-        b.name AS source_bank_name
+        r.bank_code AS source_bank_code,
+        ''::text AS source_bank_name
     FROM order_row
     JOIN shift_requisites sr ON sr.id = $5
         AND sr.team_id = order_row.team_id
         AND sr.trader_id = order_row.trader_id
         AND sr.shift_id = order_row.shift_id
     JOIN requisites r ON r.id = sr.requisite_id
-    JOIN banks b ON b.code = r.bank_code
 ),
 paid_other AS (
     SELECT COALESCE(sum(mpt.amount_minor), 0)::bigint AS paid_amount_minor
@@ -910,7 +915,7 @@ updated_order AS (
       AND EXISTS (SELECT 1 FROM updated)
     RETURNING mpo.id
 )
-SELECT updated.id, updated.team_id, updated.manual_payout_order_id, updated.shift_id, updated.trader_id, updated.source_shift_requisite_id, updated.source_requisite_id, source_requisite.source_phone, source_requisite.source_bank_name, updated.amount_minor, updated.created_by, updated.created_at, updated.comment
+SELECT updated.id, updated.team_id, updated.manual_payout_order_id, updated.shift_id, updated.trader_id, updated.source_shift_requisite_id, updated.source_requisite_id, source_requisite.source_phone, source_requisite.source_bank_code, source_requisite.source_bank_name, updated.amount_minor, updated.created_by, updated.created_at, updated.comment
 FROM updated
 JOIN source_requisite ON source_requisite.source_shift_requisite_id = updated.source_shift_requisite_id
 `
@@ -934,6 +939,7 @@ type UpdatePayoutTransferRow struct {
 	SourceShiftRequisiteID int64
 	SourceRequisiteID      int64
 	SourcePhone            string
+	SourceBankCode         string
 	SourceBankName         string
 	AmountMinor            int64
 	CreatedBy              int64
@@ -961,6 +967,7 @@ func (q *Queries) UpdatePayoutTransfer(ctx context.Context, arg UpdatePayoutTran
 		&i.SourceShiftRequisiteID,
 		&i.SourceRequisiteID,
 		&i.SourcePhone,
+		&i.SourceBankCode,
 		&i.SourceBankName,
 		&i.AmountMinor,
 		&i.CreatedBy,

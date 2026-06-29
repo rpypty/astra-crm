@@ -157,6 +157,12 @@ func (r *Repository) CancelOrder(ctx context.Context, teamID int64, traderID int
 }
 
 func (r *Repository) AddTransfer(ctx context.Context, params AddTransferRecord) (Transfer, error) {
+	bankRows, err := r.queries.ListActiveBanks(ctx)
+	if err != nil {
+		return Transfer{}, err
+	}
+	bankNames := bankNamesByCode(bankRows)
+
 	row, err := r.queries.AddPayoutTransfer(ctx, db.AddPayoutTransferParams{
 		TeamID:                 params.TeamID,
 		TraderID:               params.TraderID,
@@ -173,10 +179,16 @@ func (r *Repository) AddTransfer(ctx context.Context, params AddTransferRecord) 
 		return Transfer{}, err
 	}
 
-	return fromAddTransferRow(row), nil
+	return fromAddTransferRow(row, bankNames), nil
 }
 
 func (r *Repository) UpdateTransfer(ctx context.Context, params UpdateTransferRecord) (Transfer, error) {
+	bankRows, err := r.queries.ListActiveBanks(ctx)
+	if err != nil {
+		return Transfer{}, err
+	}
+	bankNames := bankNamesByCode(bankRows)
+
 	row, err := r.queries.UpdatePayoutTransfer(ctx, db.UpdatePayoutTransferParams{
 		TeamID:                 params.TeamID,
 		TraderID:               params.TraderID,
@@ -193,10 +205,16 @@ func (r *Repository) UpdateTransfer(ctx context.Context, params UpdateTransferRe
 		return Transfer{}, err
 	}
 
-	return fromUpdateTransferRow(row), nil
+	return fromUpdateTransferRow(row, bankNames), nil
 }
 
 func (r *Repository) DeleteTransfer(ctx context.Context, teamID int64, traderID int64, payoutID int64, transferID int64) (Transfer, error) {
+	bankRows, err := r.queries.ListActiveBanks(ctx)
+	if err != nil {
+		return Transfer{}, err
+	}
+	bankNames := bankNamesByCode(bankRows)
+
 	row, err := r.queries.DeletePayoutTransfer(ctx, db.DeletePayoutTransferParams{
 		TeamID:     teamID,
 		TraderID:   traderID,
@@ -210,10 +228,16 @@ func (r *Repository) DeleteTransfer(ctx context.Context, teamID int64, traderID 
 		return Transfer{}, err
 	}
 
-	return fromDeleteTransferRow(row), nil
+	return fromDeleteTransferRow(row, bankNames), nil
 }
 
 func (r *Repository) ListTransfers(ctx context.Context, teamID int64, traderID int64, payoutID int64) ([]Transfer, error) {
+	bankRows, err := r.queries.ListActiveBanks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	bankNames := bankNamesByCode(bankRows)
+
 	rows, err := r.queries.ListPayoutTransfers(ctx, db.ListPayoutTransfersParams{
 		TeamID:   teamID,
 		TraderID: traderID,
@@ -225,7 +249,7 @@ func (r *Repository) ListTransfers(ctx context.Context, teamID int64, traderID i
 
 	items := make([]Transfer, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, fromListTransferRow(row))
+		items = append(items, fromListTransferRow(row, bankNames))
 	}
 
 	return items, nil
@@ -374,7 +398,15 @@ func fromDBTransfer(row db.ManualPayoutTransfer) Transfer {
 	}
 }
 
-func fromListTransferRow(row db.ListPayoutTransfersRow) Transfer {
+func bankNamesByCode(rows []db.Bank) map[string]string {
+	names := make(map[string]string, len(rows))
+	for _, row := range rows {
+		names[row.Code] = row.Name
+	}
+	return names
+}
+
+func fromListTransferRow(row db.ListPayoutTransfersRow, bankNames map[string]string) Transfer {
 	return Transfer{
 		ID:                     row.ID,
 		TeamID:                 row.TeamID,
@@ -384,7 +416,7 @@ func fromListTransferRow(row db.ListPayoutTransfersRow) Transfer {
 		SourceShiftRequisiteID: row.SourceShiftRequisiteID,
 		SourceRequisiteID:      row.SourceRequisiteID,
 		SourcePhone:            row.SourcePhone,
-		SourceBankName:         row.SourceBankName,
+		SourceBankName:         bankNames[row.SourceBankCode],
 		AmountMinor:            row.AmountMinor,
 		CreatedBy:              row.CreatedBy,
 		CreatedAt:              row.CreatedAt.Time,
@@ -392,7 +424,7 @@ func fromListTransferRow(row db.ListPayoutTransfersRow) Transfer {
 	}
 }
 
-func fromAddTransferRow(row db.AddPayoutTransferRow) Transfer {
+func fromAddTransferRow(row db.AddPayoutTransferRow, bankNames map[string]string) Transfer {
 	return Transfer{
 		ID:                     row.ID,
 		TeamID:                 row.TeamID,
@@ -402,7 +434,7 @@ func fromAddTransferRow(row db.AddPayoutTransferRow) Transfer {
 		SourceShiftRequisiteID: row.SourceShiftRequisiteID,
 		SourceRequisiteID:      row.SourceRequisiteID,
 		SourcePhone:            row.SourcePhone,
-		SourceBankName:         row.SourceBankName,
+		SourceBankName:         bankNames[row.SourceBankCode],
 		AmountMinor:            row.AmountMinor,
 		CreatedBy:              row.CreatedBy,
 		CreatedAt:              row.CreatedAt.Time,
@@ -410,7 +442,7 @@ func fromAddTransferRow(row db.AddPayoutTransferRow) Transfer {
 	}
 }
 
-func fromUpdateTransferRow(row db.UpdatePayoutTransferRow) Transfer {
+func fromUpdateTransferRow(row db.UpdatePayoutTransferRow, bankNames map[string]string) Transfer {
 	return Transfer{
 		ID:                     row.ID,
 		TeamID:                 row.TeamID,
@@ -420,7 +452,7 @@ func fromUpdateTransferRow(row db.UpdatePayoutTransferRow) Transfer {
 		SourceShiftRequisiteID: row.SourceShiftRequisiteID,
 		SourceRequisiteID:      row.SourceRequisiteID,
 		SourcePhone:            row.SourcePhone,
-		SourceBankName:         row.SourceBankName,
+		SourceBankName:         bankNames[row.SourceBankCode],
 		AmountMinor:            row.AmountMinor,
 		CreatedBy:              row.CreatedBy,
 		CreatedAt:              row.CreatedAt.Time,
@@ -428,7 +460,7 @@ func fromUpdateTransferRow(row db.UpdatePayoutTransferRow) Transfer {
 	}
 }
 
-func fromDeleteTransferRow(row db.DeletePayoutTransferRow) Transfer {
+func fromDeleteTransferRow(row db.DeletePayoutTransferRow, bankNames map[string]string) Transfer {
 	return Transfer{
 		ID:                     row.ID,
 		TeamID:                 row.TeamID,
@@ -438,7 +470,7 @@ func fromDeleteTransferRow(row db.DeletePayoutTransferRow) Transfer {
 		SourceShiftRequisiteID: row.SourceShiftRequisiteID,
 		SourceRequisiteID:      row.SourceRequisiteID,
 		SourcePhone:            row.SourcePhone,
-		SourceBankName:         row.SourceBankName,
+		SourceBankName:         bankNames[row.SourceBankCode],
 		AmountMinor:            row.AmountMinor,
 		CreatedBy:              row.CreatedBy,
 		CreatedAt:              row.CreatedAt.Time,

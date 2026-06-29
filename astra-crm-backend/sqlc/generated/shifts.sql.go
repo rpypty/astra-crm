@@ -36,12 +36,12 @@ SELECT
     updated.source_requisite_id,
     source_r.phone AS source_phone,
     source_r.bank_code AS source_bank_code,
-    source_b.name AS source_bank_name,
+    ''::text AS source_bank_name,
     updated.destination_shift_requisite_id,
     updated.destination_requisite_id,
     destination_r.phone AS destination_phone,
     destination_r.bank_code AS destination_bank_code,
-    destination_b.name AS destination_bank_name,
+    ''::text AS destination_bank_name,
     updated.amount_minor,
     updated.status,
     updated.created_by,
@@ -51,9 +51,7 @@ SELECT
     updated.comment
 FROM updated
 JOIN requisites source_r ON source_r.id = updated.source_requisite_id
-JOIN banks source_b ON source_b.code = source_r.bank_code
 JOIN requisites destination_r ON destination_r.id = updated.destination_requisite_id
-JOIN banks destination_b ON destination_b.code = destination_r.bank_code
 `
 
 type CancelInternalTransferParams struct {
@@ -150,7 +148,7 @@ WHERE trader_shifts.id = $2
       GROUP BY mpo.id
       HAVING COALESCE(sum(mpt.amount_minor), 0)::bigint <> mpo.amount_minor
   )
-RETURNING id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+RETURNING id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at
 `
 
 type CloseCurrentTraderShiftParams struct {
@@ -181,6 +179,9 @@ func (q *Queries) CloseCurrentTraderShift(ctx context.Context, arg CloseCurrentT
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
+		&i.TlReconciliationStatus,
+		&i.LastTeamleadReconciliationID,
+		&i.TlReconciledAt,
 	)
 	return i, err
 }
@@ -556,10 +557,9 @@ WITH current_shift AS (
 SELECT count(*)::bigint
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN current_shift cs ON true
 LEFT JOIN LATERAL (
-    SELECT sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id, sr.assignment_id, sr.card_number, sr.holder_name, sr.taken_at, sr.released_at, sr.status, sr.created_at, sr.updated_at, sr.inbound_turnover_minor, sr.outbound_turnover_minor, sr.closing_balance_minor
+    SELECT sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id, sr.assignment_id, sr.card_number, sr.holder_name, sr.taken_at, sr.released_at, sr.status, sr.created_at, sr.updated_at, sr.inbound_turnover_minor, sr.outbound_turnover_minor, sr.closing_balance_minor, sr.tl_reconciliation_status, sr.last_teamlead_reconciliation_id, sr.tl_reconciled_at
     FROM shift_requisites sr
     WHERE sr.shift_id = cs.id
       AND sr.requisite_id = r.id
@@ -590,26 +590,30 @@ WHERE ra.team_id = $1
   AND (
       $6::text = ''
       OR lower(r.phone) LIKE '%' || lower($6::text) || '%'
-      OR lower(b.name) LIKE '%' || lower($6::text) || '%'
+      OR (
+          COALESCE(cardinality($7::text[]), 0) > 0
+          AND r.bank_code = ANY($7::text[])
+      )
       OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower($6::text) || '%'
       OR (
-          $7::text <> ''
+          $8::text <> ''
           AND (
-              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
-              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $8::text || '%'
+              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $8::text || '%'
           )
       )
   )
 `
 
 type CountAssignedRequisitesForTraderParams struct {
-	TeamID       int64
-	TraderID     int64
-	Today        pgtype.Date
-	ExcludeID    pgtype.Int8
-	Statuses     []string
-	Search       string
-	SearchDigits string
+	TeamID          int64
+	TraderID        int64
+	Today           pgtype.Date
+	ExcludeID       pgtype.Int8
+	Statuses        []string
+	Search          string
+	BankSearchCodes []string
+	SearchDigits    string
 }
 
 func (q *Queries) CountAssignedRequisitesForTrader(ctx context.Context, arg CountAssignedRequisitesForTraderParams) (int64, error) {
@@ -620,6 +624,7 @@ func (q *Queries) CountAssignedRequisitesForTrader(ctx context.Context, arg Coun
 		arg.ExcludeID,
 		arg.Statuses,
 		arg.Search,
+		arg.BankSearchCodes,
 		arg.SearchDigits,
 	)
 	var column_1 int64
@@ -851,12 +856,12 @@ SELECT
     inserted.source_requisite_id,
     source_r.phone AS source_phone,
     source_r.bank_code AS source_bank_code,
-    source_b.name AS source_bank_name,
+    ''::text AS source_bank_name,
     inserted.destination_shift_requisite_id,
     inserted.destination_requisite_id,
     destination_r.phone AS destination_phone,
     destination_r.bank_code AS destination_bank_code,
-    destination_b.name AS destination_bank_name,
+    ''::text AS destination_bank_name,
     inserted.amount_minor,
     inserted.status,
     inserted.created_by,
@@ -866,9 +871,7 @@ SELECT
     inserted.comment
 FROM inserted
 JOIN requisites source_r ON source_r.id = inserted.source_requisite_id
-JOIN banks source_b ON source_b.code = source_r.bank_code
 JOIN requisites destination_r ON destination_r.id = inserted.destination_requisite_id
-JOIN banks destination_b ON destination_b.code = destination_r.bank_code
 `
 
 type CreateInternalTransferParams struct {
@@ -1012,7 +1015,7 @@ func (q *Queries) CreateShiftRequisite(ctx context.Context, arg CreateShiftRequi
 const createTraderShift = `-- name: CreateTraderShift :one
 INSERT INTO trader_shifts (team_id, trader_id)
 VALUES ($1, $2)
-RETURNING id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+RETURNING id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at
 `
 
 type CreateTraderShiftParams struct {
@@ -1036,6 +1039,9 @@ func (q *Queries) CreateTraderShift(ctx context.Context, arg CreateTraderShiftPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
+		&i.TlReconciliationStatus,
+		&i.LastTeamleadReconciliationID,
+		&i.TlReconciledAt,
 	)
 	return i, err
 }
@@ -1273,7 +1279,7 @@ func (q *Queries) GetCurrentShiftChecklist(ctx context.Context, arg GetCurrentSh
 }
 
 const getCurrentTraderShift = `-- name: GetCurrentTraderShift :one
-SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at
 FROM trader_shifts
 WHERE team_id = $1
   AND trader_id = $2
@@ -1303,6 +1309,9 @@ func (q *Queries) GetCurrentTraderShift(ctx context.Context, arg GetCurrentTrade
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
+		&i.TlReconciliationStatus,
+		&i.LastTeamleadReconciliationID,
+		&i.TlReconciledAt,
 	)
 	return i, err
 }
@@ -1365,7 +1374,7 @@ func (q *Queries) GetShiftRequisiteForTrader(ctx context.Context, arg GetShiftRe
 }
 
 const getTraderShiftByIDForTeam = `-- name: GetTraderShiftByIDForTeam :one
-SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at
 FROM trader_shifts
 WHERE team_id = $1
   AND id = $2
@@ -1393,12 +1402,15 @@ func (q *Queries) GetTraderShiftByIDForTeam(ctx context.Context, arg GetTraderSh
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
+		&i.TlReconciliationStatus,
+		&i.LastTeamleadReconciliationID,
+		&i.TlReconciledAt,
 	)
 	return i, err
 }
 
 const getTraderShiftByIDForTrader = `-- name: GetTraderShiftByIDForTrader :one
-SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at
 FROM trader_shifts
 WHERE team_id = $1
   AND trader_id = $2
@@ -1428,6 +1440,9 @@ func (q *Queries) GetTraderShiftByIDForTrader(ctx context.Context, arg GetTrader
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
+		&i.TlReconciliationStatus,
+		&i.LastTeamleadReconciliationID,
+		&i.TlReconciledAt,
 	)
 	return i, err
 }
@@ -1439,7 +1454,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.status,
@@ -1459,7 +1474,6 @@ SELECT
 FROM shift_requisites sr
 JOIN trader_shifts ts ON ts.id = sr.shift_id
 JOIN requisites r ON r.id = sr.requisite_id
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN requisite_assignments ra ON ra.id = sr.assignment_id
 WHERE sr.team_id = $1
   AND sr.trader_id = $2
@@ -1560,7 +1574,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.status,
@@ -1580,7 +1594,6 @@ SELECT
 FROM shift_requisites sr
 JOIN trader_shifts ts ON ts.id = sr.shift_id
 JOIN requisites r ON r.id = sr.requisite_id
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN requisite_assignments ra ON ra.id = sr.assignment_id
 WHERE sr.team_id = $1
   AND sr.shift_id = $2
@@ -1686,7 +1699,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.status,
@@ -1705,10 +1718,9 @@ SELECT
     COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN current_shift cs ON true
 LEFT JOIN LATERAL (
-    SELECT sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id, sr.assignment_id, sr.card_number, sr.holder_name, sr.taken_at, sr.released_at, sr.status, sr.created_at, sr.updated_at, sr.inbound_turnover_minor, sr.outbound_turnover_minor, sr.closing_balance_minor
+    SELECT sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id, sr.assignment_id, sr.card_number, sr.holder_name, sr.taken_at, sr.released_at, sr.status, sr.created_at, sr.updated_at, sr.inbound_turnover_minor, sr.outbound_turnover_minor, sr.closing_balance_minor, sr.tl_reconciliation_status, sr.last_teamlead_reconciliation_id, sr.tl_reconciled_at
     FROM shift_requisites sr
     WHERE sr.shift_id = cs.id
       AND sr.requisite_id = r.id
@@ -1739,31 +1751,35 @@ WHERE ra.team_id = $1
   AND (
       $6::text = ''
       OR lower(r.phone) LIKE '%' || lower($6::text) || '%'
-      OR lower(b.name) LIKE '%' || lower($6::text) || '%'
+      OR (
+          COALESCE(cardinality($7::text[]), 0) > 0
+          AND r.bank_code = ANY($7::text[])
+      )
       OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower($6::text) || '%'
       OR (
-          $7::text <> ''
+          $8::text <> ''
           AND (
-              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
-              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $8::text || '%'
+              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $8::text || '%'
           )
       )
   )
 ORDER BY ra.assigned_for_date DESC, r.created_at DESC, r.id DESC
-LIMIT $9
-OFFSET $8
+LIMIT $10
+OFFSET $9
 `
 
 type ListAssignedRequisitesForTraderParams struct {
-	TeamID       int64
-	TraderID     int64
-	Today        pgtype.Date
-	ExcludeID    pgtype.Int8
-	Statuses     []string
-	Search       string
-	SearchDigits string
-	OffsetCount  int32
-	LimitCount   int32
+	TeamID          int64
+	TraderID        int64
+	Today           pgtype.Date
+	ExcludeID       pgtype.Int8
+	Statuses        []string
+	Search          string
+	BankSearchCodes []string
+	SearchDigits    string
+	OffsetCount     int32
+	LimitCount      int32
 }
 
 type ListAssignedRequisitesForTraderRow struct {
@@ -1799,6 +1815,7 @@ func (q *Queries) ListAssignedRequisitesForTrader(ctx context.Context, arg ListA
 		arg.ExcludeID,
 		arg.Statuses,
 		arg.Search,
+		arg.BankSearchCodes,
 		arg.SearchDigits,
 		arg.OffsetCount,
 		arg.LimitCount,
@@ -1851,7 +1868,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.status,
@@ -1870,7 +1887,6 @@ SELECT
     0::bigint AS closing_balance_minor
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 WHERE ra.team_id = $1
   AND ra.trader_id = $2
   AND ra.unassigned_at IS NULL
@@ -1972,7 +1988,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.status,
@@ -1991,7 +2007,6 @@ SELECT
     COALESCE(sr.closing_balance_minor, 0) AS closing_balance_minor
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = $1
   AND ra.trader_id = $2
@@ -2105,12 +2120,12 @@ SELECT
     t.source_requisite_id,
     source_r.phone AS source_phone,
     source_r.bank_code AS source_bank_code,
-    source_b.name AS source_bank_name,
+    ''::text AS source_bank_name,
     t.destination_shift_requisite_id,
     t.destination_requisite_id,
     destination_r.phone AS destination_phone,
     destination_r.bank_code AS destination_bank_code,
-    destination_b.name AS destination_bank_name,
+    ''::text AS destination_bank_name,
     t.amount_minor,
     t.status,
     t.created_by,
@@ -2120,9 +2135,7 @@ SELECT
     t.comment
 FROM shift_requisite_internal_transfers t
 JOIN requisites source_r ON source_r.id = t.source_requisite_id
-JOIN banks source_b ON source_b.code = source_r.bank_code
 JOIN requisites destination_r ON destination_r.id = t.destination_requisite_id
-JOIN banks destination_b ON destination_b.code = destination_r.bank_code
 WHERE t.team_id = $1
   AND t.trader_id = $2
   AND t.status = 'active'
@@ -2268,230 +2281,165 @@ func (q *Queries) ListLatestTurnoversForCurrentShift(ctx context.Context, arg Li
 	return items, nil
 }
 
-const listShiftReportRows = `-- name: ListShiftReportRows :many
-WITH crm_requisites AS (
-    SELECT
-        ('crm:' || sr.id::text) AS row_key,
-        sr.id AS shift_requisite_id,
-        sr.requisite_id,
-        r.phone,
-        r.method_type,
-        r.bank_code,
-        b.name AS bank_name,
-        r.proxy,
-        r.employee_comment,
-        sr.card_number,
-        sr.holder_name,
-        sr.status,
-        COALESCE(sr.inbound_turnover_minor, 0)::bigint AS inbound_turnover_minor,
-        COALESCE(sr.outbound_turnover_minor, 0)::bigint AS outbound_turnover_minor,
-        COALESCE(sr.closing_balance_minor, 0)::bigint AS closing_balance_minor,
-        COALESCE(ra.target_turnover_minor, 0)::bigint AS target_turnover_minor,
-        ('crm:' || sr.id::text) AS match_key,
-        NULLIF(right(regexp_replace(r.phone, '[^0-9]', '', 'g'), 10), '') AS phone_match_key,
-        NULLIF(regexp_replace(COALESCE(NULLIF(sr.card_number, ''), NULLIF(r.card_number, ''), ''), '[^0-9]', '', 'g'), '') AS card_match_key
-    FROM shift_requisites sr
-    JOIN trader_shifts ts ON ts.id = sr.shift_id
-    JOIN requisites r ON r.id = sr.requisite_id
-    JOIN banks b ON b.code = r.bank_code
-    LEFT JOIN requisite_assignments ra ON ra.id = sr.assignment_id
-    WHERE sr.team_id = $1
-      AND sr.shift_id = $2
-      AND ts.team_id = $1
-),
-crm_match_keys AS (
-    SELECT shift_requisite_id, 'phone:' || phone_match_key AS lookup_key, match_key
-    FROM crm_requisites
-    WHERE phone_match_key IS NOT NULL
-    UNION ALL
-    SELECT shift_requisite_id, 'card:' || card_match_key AS lookup_key, match_key
-    FROM crm_requisites
-    WHERE card_match_key IS NOT NULL
-),
-unique_crm_match_keys AS (
-    SELECT lookup_key, min(match_key) AS match_key
-    FROM crm_match_keys
-    GROUP BY lookup_key
-    HAVING count(DISTINCT shift_requisite_id) = 1
-),
-csv_inbound_source AS (
-    SELECT
-        COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, '')) AS csv_requisite,
-        regexp_replace(COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), ''), '[^0-9]', '', 'g') AS csv_digits,
-        normalized_status,
-        amount_minor
-    FROM order_scope_items
-    WHERE team_id = $1
-      AND scope_type = 'trader_shift'
-      AND shift_id = $2
-      AND direction = 'inbound'
-      AND is_active = TRUE
-),
-csv_inbound_resolved AS (
-    SELECT
-        source.csv_requisite,
-        source.normalized_status,
-        source.amount_minor,
-        COALESCE(
-            phone_match.match_key,
-            card_match.match_key,
-            CASE
-                WHEN length(source.csv_digits) BETWEEN 10 AND 11 THEN 'csv_phone:' || right(source.csv_digits, 10)
-                WHEN length(source.csv_digits) >= 12 THEN 'csv_card:' || source.csv_digits
-                ELSE 'csv:' || lower(btrim(COALESCE(source.csv_requisite, 'unknown')))
-            END
-        ) AS match_key
-    FROM csv_inbound_source source
-    LEFT JOIN unique_crm_match_keys phone_match
-        ON length(source.csv_digits) BETWEEN 10 AND 11
-       AND phone_match.lookup_key = 'phone:' || right(source.csv_digits, 10)
-    LEFT JOIN unique_crm_match_keys card_match
-        ON length(source.csv_digits) >= 12
-       AND card_match.lookup_key = 'card:' || source.csv_digits
-),
-csv_inbound AS (
-    SELECT
-        match_key,
-        max(csv_requisite) AS csv_requisite,
-        COALESCE(sum(CASE WHEN normalized_status IN ('success', 'corrected') THEN amount_minor ELSE 0 END), 0)::bigint AS csv_inbound_minor
-    FROM csv_inbound_resolved
-    GROUP BY match_key
-),
-payout_transfer_outbound AS (
-    SELECT
-        mpt.source_shift_requisite_id AS shift_requisite_id,
-        COALESCE(sum(mpt.amount_minor), 0)::bigint AS transfer_outbound_minor
-    FROM manual_payout_transfers mpt
-    WHERE mpt.team_id = $1
-      AND mpt.shift_id = $2
-    GROUP BY mpt.source_shift_requisite_id
-),
-all_keys AS (
-    SELECT match_key FROM crm_requisites
-    UNION
-    SELECT match_key FROM csv_inbound
-),
-report_rows AS (
-    SELECT
-        COALESCE(crm.row_key, 'csv:' || all_keys.match_key) AS row_key,
-        crm.shift_requisite_id,
-        crm.requisite_id,
-        COALESCE(crm.phone, csv_inbound.csv_requisite, 'Без реквизита') AS phone,
-        COALESCE(crm.method_type, '') AS method_type,
-        COALESCE(crm.bank_code, '') AS bank_code,
-        COALESCE(crm.bank_name, '') AS bank_name,
-        crm.proxy,
-        crm.employee_comment,
-        crm.card_number,
-        crm.holder_name,
-        CASE WHEN crm.shift_requisite_id IS NULL THEN 'csv_only' ELSE crm.status END AS status,
-        COALESCE(crm.inbound_turnover_minor, 0)::bigint AS inbound_turnover_minor,
-        COALESCE(crm.outbound_turnover_minor, 0)::bigint AS outbound_turnover_minor,
-        COALESCE(crm.closing_balance_minor, 0)::bigint AS closing_balance_minor,
-        COALESCE(crm.target_turnover_minor, 0)::bigint AS target_turnover_minor,
-        COALESCE(csv_inbound.csv_inbound_minor, 0)::bigint AS csv_inbound_minor,
-        COALESCE(payout_transfer_outbound.transfer_outbound_minor, 0)::bigint AS csv_outbound_minor,
-        (COALESCE(crm.inbound_turnover_minor, 0) - COALESCE(csv_inbound.csv_inbound_minor, 0))::bigint AS inbound_diff_minor,
-        (COALESCE(crm.outbound_turnover_minor, 0) - COALESCE(payout_transfer_outbound.transfer_outbound_minor, 0))::bigint AS outbound_diff_minor,
-        (
-            COALESCE(crm.inbound_turnover_minor, 0) <> COALESCE(csv_inbound.csv_inbound_minor, 0)
-            OR COALESCE(crm.outbound_turnover_minor, 0) <> COALESCE(payout_transfer_outbound.transfer_outbound_minor, 0)
-        ) AS has_mismatch,
-        crm.shift_requisite_id IS NULL AS csv_only
-    FROM all_keys
-    LEFT JOIN crm_requisites crm ON crm.match_key = all_keys.match_key
-    LEFT JOIN csv_inbound ON csv_inbound.match_key = all_keys.match_key
-    LEFT JOIN payout_transfer_outbound ON payout_transfer_outbound.shift_requisite_id = crm.shift_requisite_id
-)
+const listShiftReportInboundScopeItems = `-- name: ListShiftReportInboundScopeItems :many
 SELECT
-    row_key::text AS row_key,
-    shift_requisite_id,
-    requisite_id,
-    phone::text AS phone,
-    method_type::text AS method_type,
-    bank_code::text AS bank_code,
-    bank_name::text AS bank_name,
-    proxy,
-    employee_comment,
-    card_number,
-    holder_name,
-    status::text AS status,
-    inbound_turnover_minor,
-    outbound_turnover_minor,
-    closing_balance_minor,
-    target_turnover_minor,
-    csv_inbound_minor,
-    csv_outbound_minor,
-    inbound_diff_minor,
-    outbound_diff_minor,
-    has_mismatch::bool AS has_mismatch,
-    csv_only::bool AS csv_only
-FROM report_rows
-ORDER BY has_mismatch DESC, csv_only DESC, (abs(inbound_diff_minor) + abs(outbound_diff_minor)) DESC, phone ASC, row_key ASC
+    COALESCE(NULLIF(requisite_phone, ''), NULLIF(requisite_raw, ''), '')::text AS csv_requisite,
+    normalized_status,
+    amount_minor
+FROM order_scope_items
+WHERE team_id = $1
+  AND scope_type = 'trader_shift'
+  AND shift_id = $2
+  AND direction = 'inbound'
+  AND is_active = TRUE
 `
 
-type ListShiftReportRowsParams struct {
+type ListShiftReportInboundScopeItemsParams struct {
 	TeamID  int64
-	ShiftID int64
+	ShiftID pgtype.Int8
 }
 
-type ListShiftReportRowsRow struct {
-	RowKey                string
-	ShiftRequisiteID      pgtype.Int8
-	RequisiteID           pgtype.Int8
-	Phone                 string
-	MethodType            string
-	BankCode              string
-	BankName              string
-	Proxy                 pgtype.Text
-	EmployeeComment       pgtype.Text
-	CardNumber            pgtype.Text
-	HolderName            pgtype.Text
-	Status                string
-	InboundTurnoverMinor  int64
-	OutboundTurnoverMinor int64
-	ClosingBalanceMinor   int64
-	TargetTurnoverMinor   int64
-	CsvInboundMinor       int64
-	CsvOutboundMinor      int64
-	InboundDiffMinor      int64
-	OutboundDiffMinor     int64
-	HasMismatch           bool
-	CsvOnly               bool
+type ListShiftReportInboundScopeItemsRow struct {
+	CsvRequisite     string
+	NormalizedStatus string
+	AmountMinor      int64
 }
 
-func (q *Queries) ListShiftReportRows(ctx context.Context, arg ListShiftReportRowsParams) ([]ListShiftReportRowsRow, error) {
-	rows, err := q.db.Query(ctx, listShiftReportRows, arg.TeamID, arg.ShiftID)
+func (q *Queries) ListShiftReportInboundScopeItems(ctx context.Context, arg ListShiftReportInboundScopeItemsParams) ([]ListShiftReportInboundScopeItemsRow, error) {
+	rows, err := q.db.Query(ctx, listShiftReportInboundScopeItems, arg.TeamID, arg.ShiftID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListShiftReportRowsRow
+	var items []ListShiftReportInboundScopeItemsRow
 	for rows.Next() {
-		var i ListShiftReportRowsRow
+		var i ListShiftReportInboundScopeItemsRow
+		if err := rows.Scan(&i.CsvRequisite, &i.NormalizedStatus, &i.AmountMinor); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listShiftReportOutboundTransfers = `-- name: ListShiftReportOutboundTransfers :many
+SELECT source_shift_requisite_id, amount_minor
+FROM manual_payout_transfers
+WHERE team_id = $1
+  AND shift_id = $2
+`
+
+type ListShiftReportOutboundTransfersParams struct {
+	TeamID  int64
+	ShiftID int64
+}
+
+type ListShiftReportOutboundTransfersRow struct {
+	SourceShiftRequisiteID int64
+	AmountMinor            int64
+}
+
+func (q *Queries) ListShiftReportOutboundTransfers(ctx context.Context, arg ListShiftReportOutboundTransfersParams) ([]ListShiftReportOutboundTransfersRow, error) {
+	rows, err := q.db.Query(ctx, listShiftReportOutboundTransfers, arg.TeamID, arg.ShiftID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListShiftReportOutboundTransfersRow
+	for rows.Next() {
+		var i ListShiftReportOutboundTransfersRow
+		if err := rows.Scan(&i.SourceShiftRequisiteID, &i.AmountMinor); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listShiftReportRequisites = `-- name: ListShiftReportRequisites :many
+SELECT
+    sr.id AS shift_requisite_id,
+    sr.requisite_id,
+    r.phone,
+    r.method_type,
+    r.bank_code,
+    r.proxy,
+    r.employee_comment,
+    sr.card_number,
+    r.card_number AS requisite_card_number,
+    sr.holder_name,
+    sr.status,
+    sr.tl_reconciliation_status,
+    COALESCE(sr.inbound_turnover_minor, 0)::bigint AS inbound_turnover_minor,
+    COALESCE(sr.outbound_turnover_minor, 0)::bigint AS outbound_turnover_minor,
+    COALESCE(sr.closing_balance_minor, 0)::bigint AS closing_balance_minor,
+    COALESCE(ra.target_turnover_minor, 0)::bigint AS target_turnover_minor
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+JOIN requisites r ON r.id = sr.requisite_id
+LEFT JOIN requisite_assignments ra ON ra.id = sr.assignment_id
+WHERE sr.team_id = $1
+  AND sr.shift_id = $2
+  AND ts.team_id = $1
+ORDER BY sr.taken_at DESC, sr.id DESC
+`
+
+type ListShiftReportRequisitesParams struct {
+	TeamID  int64
+	ShiftID int64
+}
+
+type ListShiftReportRequisitesRow struct {
+	ShiftRequisiteID       int64
+	RequisiteID            int64
+	Phone                  string
+	MethodType             string
+	BankCode               string
+	Proxy                  pgtype.Text
+	EmployeeComment        pgtype.Text
+	CardNumber             string
+	RequisiteCardNumber    pgtype.Text
+	HolderName             string
+	Status                 string
+	TlReconciliationStatus string
+	InboundTurnoverMinor   int64
+	OutboundTurnoverMinor  int64
+	ClosingBalanceMinor    int64
+	TargetTurnoverMinor    int64
+}
+
+func (q *Queries) ListShiftReportRequisites(ctx context.Context, arg ListShiftReportRequisitesParams) ([]ListShiftReportRequisitesRow, error) {
+	rows, err := q.db.Query(ctx, listShiftReportRequisites, arg.TeamID, arg.ShiftID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListShiftReportRequisitesRow
+	for rows.Next() {
+		var i ListShiftReportRequisitesRow
 		if err := rows.Scan(
-			&i.RowKey,
 			&i.ShiftRequisiteID,
 			&i.RequisiteID,
 			&i.Phone,
 			&i.MethodType,
 			&i.BankCode,
-			&i.BankName,
 			&i.Proxy,
 			&i.EmployeeComment,
 			&i.CardNumber,
+			&i.RequisiteCardNumber,
 			&i.HolderName,
 			&i.Status,
+			&i.TlReconciliationStatus,
 			&i.InboundTurnoverMinor,
 			&i.OutboundTurnoverMinor,
 			&i.ClosingBalanceMinor,
 			&i.TargetTurnoverMinor,
-			&i.CsvInboundMinor,
-			&i.CsvOutboundMinor,
-			&i.InboundDiffMinor,
-			&i.OutboundDiffMinor,
-			&i.HasMismatch,
-			&i.CsvOnly,
 		); err != nil {
 			return nil, err
 		}
@@ -2584,7 +2532,7 @@ func (q *Queries) ListShiftRequisitesByTrader(ctx context.Context, arg ListShift
 }
 
 const listTeamShiftHistory = `-- name: ListTeamShiftHistory :many
-SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at
 FROM trader_shifts
 WHERE team_id = $1
   AND status IN ('closed', 'closed_with_discrepancy')
@@ -2621,6 +2569,9 @@ func (q *Queries) ListTeamShiftHistory(ctx context.Context, arg ListTeamShiftHis
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ClosedAt,
+			&i.TlReconciliationStatus,
+			&i.LastTeamleadReconciliationID,
+			&i.TlReconciledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -2633,7 +2584,7 @@ func (q *Queries) ListTeamShiftHistory(ctx context.Context, arg ListTeamShiftHis
 }
 
 const listTraderShiftHistory = `-- name: ListTraderShiftHistory :many
-SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
+SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at, tl_reconciliation_status, last_teamlead_reconciliation_id, tl_reconciled_at
 FROM trader_shifts
 WHERE team_id = $1
   AND trader_id = $2
@@ -2677,6 +2628,9 @@ func (q *Queries) ListTraderShiftHistory(ctx context.Context, arg ListTraderShif
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ClosedAt,
+			&i.TlReconciliationStatus,
+			&i.LastTeamleadReconciliationID,
+			&i.TlReconciledAt,
 		); err != nil {
 			return nil, err
 		}

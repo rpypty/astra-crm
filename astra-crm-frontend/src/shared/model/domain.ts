@@ -186,6 +186,9 @@ export type ShiftReport = {
   status: "open" | "closing" | "closed" | "closed_with_discrepancy" | "draft";
   inboundReconciliationStatus: string;
   outboundReconciliationStatus: string;
+  tlReconciliationStatus: TLReconciliationStatus;
+  lastTeamleadReconciliationId?: number;
+  tlReconciledAt?: string;
   closeComment?: string;
 };
 
@@ -212,6 +215,7 @@ export type ShiftReportRow = {
   cardNumber?: string;
   holderName?: string;
   status: string;
+  tlReconciliationStatus: TLReconciliationStatus;
   inboundTurnoverMinor: number;
   outboundTurnoverMinor: number;
   closingBalanceMinor: number;
@@ -284,6 +288,7 @@ export type PayoutTransfer = {
 };
 
 export type OrderDirection = "inbound" | "outbound";
+export type TLReconciliationStatus = "not_checked" | "confirmed_by_tl" | "updated_by_tl" | "tl_discrepancy" | "tl_accepted";
 
 export type OrderFilters = {
   dateFrom?: string;
@@ -307,6 +312,7 @@ export type Order = {
   status: string;
   rawStatus: string;
   normalizedStatus: string;
+  tlReconciliationStatus: TLReconciliationStatus;
   innerId: string;
   externalId: string;
   importBatchId: number;
@@ -419,6 +425,68 @@ export type ReconciliationItem = {
   teamleadValue?: Record<string, unknown>;
   traderValue?: Record<string, unknown>;
   message?: string;
+  createdAt: string;
+};
+
+export type TeamleadReconciliationStatus =
+  | "draft"
+  | "analyzing"
+  | "matched"
+  | "mismatch"
+  | "apply_queued"
+  | "applying"
+  | "applied"
+  | "apply_failed"
+  | "rejected";
+
+export type TeamleadReconciliationRun = {
+  id: number;
+  teamId: number;
+  dateFrom: string;
+  dateTo: string;
+  status: TeamleadReconciliationStatus;
+  createdBy: number;
+  confirmedBy?: number;
+  rejectedBy?: number;
+  inboundImportBatchId?: number;
+  outboundImportBatchId?: number;
+  comment?: string;
+  mismatchCount: number;
+  conflictCount: number;
+  blockedCount: number;
+  pipeline?: unknown;
+  inboundSummary?: Record<string, unknown>;
+  outboundSummary?: Record<string, unknown>;
+  preview?: Record<string, unknown>;
+  applyResult?: Record<string, unknown>;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  analyzedAt?: string;
+  confirmedAt?: string;
+  rejectedAt?: string;
+  applyQueuedAt?: string;
+  appliedAt?: string;
+};
+
+export type TeamleadReconciliationItem = {
+  id: number;
+  teamleadReconciliationId: number;
+  teamId: number;
+  direction: OrderDirection;
+  stage: string;
+  issueType: string;
+  severity: "info" | "warning" | "error" | "blocker";
+  externalOrderId?: number;
+  externalInnerId?: string;
+  traderId?: number;
+  requisiteId?: number;
+  shiftId?: number;
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  message?: string;
+  isBlocking: boolean;
+  appliedAt?: string;
   createdAt: string;
 };
 

@@ -56,6 +56,7 @@ type createRequisiteRequest struct {
 	Phone            string  `json:"phone"`
 	MethodType       string  `json:"methodType"`
 	BankCode         string  `json:"bankCode"`
+	CardNumber       string  `json:"cardNumber"`
 	Proxy            *string `json:"proxy"`
 	EmployeeComment  *string `json:"employeeComment"`
 	AssignedTraderID *int64  `json:"assignedTraderId"`
@@ -65,6 +66,7 @@ type patchRequisiteRequest struct {
 	Phone           *string `json:"phone"`
 	MethodType      *string `json:"methodType"`
 	BankCode        *string `json:"bankCode"`
+	CardNumber      *string `json:"cardNumber"`
 	Proxy           *string `json:"proxy"`
 	EmployeeComment *string `json:"employeeComment"`
 	Status          *string `json:"status"`
@@ -367,6 +369,7 @@ func (h *TeamleadRequisitesHandler) Create(w http.ResponseWriter, r *http.Reques
 		Phone:            request.Phone,
 		MethodType:       request.MethodType,
 		BankCode:         request.BankCode,
+		CardNumber:       request.CardNumber,
 		Proxy:            request.Proxy,
 		EmployeeComment:  request.EmployeeComment,
 		AssignedTraderID: request.AssignedTraderID,
@@ -440,6 +443,7 @@ func (h *TeamleadRequisitesHandler) Patch(w http.ResponseWriter, r *http.Request
 		Phone:           request.Phone,
 		MethodType:      request.MethodType,
 		BankCode:        request.BankCode,
+		CardNumber:      request.CardNumber,
 		Proxy:           request.Proxy,
 		EmployeeComment: request.EmployeeComment,
 		Status:          request.Status,
@@ -607,6 +611,9 @@ func validateCreateRequisiteRequest(request createRequisiteRequest) map[string]s
 	if strings.TrimSpace(request.BankCode) == "" {
 		fields["bankCode"] = "Банк обязателен"
 	}
+	if strings.TrimSpace(request.CardNumber) == "" {
+		fields["cardNumber"] = "Номер карты обязателен"
+	}
 	if request.AssignedTraderID != nil && *request.AssignedTraderID <= 0 {
 		fields["assignedTraderId"] = "Некорректный ID трейдера"
 	}
@@ -616,7 +623,7 @@ func validateCreateRequisiteRequest(request createRequisiteRequest) map[string]s
 
 func validatePatchRequisiteRequest(request patchRequisiteRequest) map[string]string {
 	fields := map[string]string{}
-	if request.Phone == nil && request.MethodType == nil && request.BankCode == nil && request.Proxy == nil && request.EmployeeComment == nil && request.Status == nil {
+	if request.Phone == nil && request.MethodType == nil && request.BankCode == nil && request.CardNumber == nil && request.Proxy == nil && request.EmployeeComment == nil && request.Status == nil {
 		fields["body"] = "Нужно передать хотя бы одно поле для изменения"
 	}
 	if request.Phone != nil && strings.TrimSpace(*request.Phone) == "" {
@@ -627,6 +634,9 @@ func validatePatchRequisiteRequest(request patchRequisiteRequest) map[string]str
 	}
 	if request.BankCode != nil && strings.TrimSpace(*request.BankCode) == "" {
 		fields["bankCode"] = "Банк обязателен"
+	}
+	if request.CardNumber != nil && strings.TrimSpace(*request.CardNumber) == "" {
+		fields["cardNumber"] = "Номер карты обязателен"
 	}
 	if request.Status != nil && !validRequisitePatchStatus(*request.Status) {
 		fields["status"] = "Некорректный статус реквизита"
@@ -686,7 +696,7 @@ func mapRequisiteError(err error) error {
 	case errors.Is(err, requisites.ErrRequisiteInOpenShift):
 		return DomainError("REQUISITE_IN_OPEN_SHIFT", "Реквизит уже находится в работе в открытой смене").WithCause(err)
 	case errors.Is(err, requisites.ErrPhoneBankDuplicate):
-		return DomainError("REQUISITE_PHONE_BANK_DUPLICATE", "Такой номер с этим банком уже существует").WithCause(err)
+		return DomainError("REQUISITE_IDENTITY_DUPLICATE", "Такая связка банка, телефона и карты уже существует").WithCause(err)
 	case errors.Is(err, requisites.ErrProxyDuplicate):
 		return DomainError("REQUISITE_PROXY_DUPLICATE", "Такой proxy уже используется").WithCause(err)
 	case errors.Is(err, requisites.ErrBankNotFound):

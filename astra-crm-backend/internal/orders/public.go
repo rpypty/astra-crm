@@ -25,6 +25,7 @@ type PublicOrder struct {
 	Currency          string    `json:"currency"`
 	RawStatus         string    `json:"rawStatus"`
 	NormalizedStatus  string    `json:"normalizedStatus"`
+	TLStatus          string    `json:"tlReconciliationStatus"`
 	CreatedAtExternal time.Time `json:"createdAtExternal"`
 	ImportBatchID     int64     `json:"importBatchId"`
 }
@@ -104,6 +105,7 @@ func PublicOrderFromDomain(order Order) PublicOrder {
 		Currency:          order.Currency,
 		RawStatus:         order.RawStatus,
 		NormalizedStatus:  order.NormalizedStatus,
+		TLStatus:          order.TLStatus,
 		CreatedAtExternal: order.CreatedAtExternal,
 		ImportBatchID:     order.ImportBatchID,
 	}

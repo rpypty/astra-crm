@@ -14,8 +14,9 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-func TestTeamleadRequisitesHandlerCreateReturnsBaseRequisiteOnly(t *testing.T) {
+func TestTeamleadRequisitesHandlerCreateReturnsBaseIdentity(t *testing.T) {
 	proxy := "192.168.1.1:8080"
+	cardNumber := "1234567890123456"
 	service := &fakeTeamleadRequisiteService{
 		createResult: requisites.RequisiteDetails{
 			Requisite: requisites.Requisite{
@@ -25,6 +26,7 @@ func TestTeamleadRequisitesHandlerCreateReturnsBaseRequisiteOnly(t *testing.T) {
 				MethodType: "sbp",
 				BankCode:   "sber",
 				BankName:   "Сбер",
+				CardNumber: &cardNumber,
 				Proxy:      &proxy,
 				Status:     requisites.StatusActive,
 				CreatedAt:  time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
@@ -38,6 +40,7 @@ func TestTeamleadRequisitesHandlerCreateReturnsBaseRequisiteOnly(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/teamlead/requisites", strings.NewReader(`{
 		"phone": "+79991234567",
 		"bankCode": "sber",
+		"cardNumber": "1234 5678 9012 3456",
 		"proxy": "192.168.1.1:8080"
 	}`))
 	request = request.WithContext(ContextWithCurrentUser(request.Context(), users.User{
@@ -52,11 +55,17 @@ func TestTeamleadRequisitesHandlerCreateReturnsBaseRequisiteOnly(t *testing.T) {
 	if response.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusCreated, response.Body.String())
 	}
-	if strings.Contains(response.Body.String(), "card") || strings.Contains(response.Body.String(), "holder") {
-		t.Fatalf("daily card/holder fields leaked into base requisite response: %s", response.Body.String())
+	if !strings.Contains(response.Body.String(), `"cardNumber":"1234567890123456"`) {
+		t.Fatalf("base card number is missing from response: %s", response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "holder") {
+		t.Fatalf("holder fields leaked into base requisite response: %s", response.Body.String())
 	}
 	if service.createParams.ActorID != 1 || service.createParams.TeamID != 2 {
 		t.Fatalf("create actor/team = %d/%d, want 1/2", service.createParams.ActorID, service.createParams.TeamID)
+	}
+	if service.createParams.CardNumber != "1234 5678 9012 3456" {
+		t.Fatalf("create card number = %q, want raw request value", service.createParams.CardNumber)
 	}
 }
 

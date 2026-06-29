@@ -360,7 +360,113 @@ B remains historical but inactive for that scope.
 
 ---
 
-# 9. Amount precision
+# 9. Teamlead reconciliation V2
+
+V2 replaces separate top-level inbound/outbound reconciliation screens with a single run for a selected export period.
+
+Run scope:
+
+```text
+teamlead_reconciliations.team_id
+teamlead_reconciliations.date_from
+teamlead_reconciliations.date_to
+directions: inbound, outbound, or both
+```
+
+Pipeline:
+
+```text
+1. Normalization
+2. Matching trader/requisite
+3. Turnover check
+4. Transaction check
+5. Preview changes
+6. Async apply after confirm
+```
+
+Important rule:
+
+```text
+Transaction check by team_id + direction + external_inner_id always runs.
+It must run even if aggregated turnover totals match.
+```
+
+Requisite matching:
+
+```text
+Primary key: team_id + bank_code + normalized_phone + normalized_card_number
+If CSV has bank + phone + card -> match by all three values.
+If CSV has bank + card only -> match by card only when it is unique inside the team/bank.
+If CSV has bank + phone only and multiple cards exist -> ambiguous_requisite.
+If CSV card points to another phone/bank -> conflict item, not silent update.
+```
+
+Run statuses:
+
+```text
+draft
+analyzing
+matched
+mismatch
+apply_queued
+applying
+applied
+apply_failed
+rejected
+```
+
+Confirm:
+
+```text
+1. Allowed only after analysis is finished.
+2. Requires comment when mismatch/conflict exists.
+3. Sets status apply_queued.
+4. Creates async apply work.
+5. Does not update external_orders synchronously in HTTP request.
+```
+
+Reject:
+
+```text
+1. Sets status rejected.
+2. Stores comment.
+3. Does not change external_orders.
+4. Does not change trader_shifts / shift_requisites TL statuses.
+5. Does not affect analytics.
+```
+
+Apply:
+
+```text
+1. Inbound and outbound are applied independently.
+2. Each direction is applied in a separate DB transaction.
+3. Apply locks team_id + date_from + date_to + direction.
+4. Retry must be idempotent.
+5. Existing external_orders are updated to TL CSV values.
+6. Missing external_orders are created.
+```
+
+TL status values:
+
+```text
+not_checked
+confirmed_by_tl
+updated_by_tl
+tl_discrepancy
+tl_accepted
+```
+
+Used on:
+
+```text
+external_orders
+trader_shifts
+shift_requisites
+```
+
+---
+
+# 10. Amount precision
 
 CSV amounts may come like:
 
@@ -391,7 +497,7 @@ Never use float for persisted money or reconciliation.
 
 ---
 
-# 10. Salary calculation
+# 11. Salary calculation
 
 For trader shift dashboard:
 
@@ -414,7 +520,7 @@ Use integer division floor for MVP, display rounded to currency format.
 
 ---
 
-# 11. Dashboard formulas
+# 12. Dashboard formulas
 
 Inbound dashboard:
 

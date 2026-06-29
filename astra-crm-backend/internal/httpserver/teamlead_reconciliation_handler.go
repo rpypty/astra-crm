@@ -2,9 +2,12 @@ package httpserver
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/reconciliation"
@@ -12,6 +15,12 @@ import (
 )
 
 type TeamleadReconciliationService interface {
+	CreateTeamleadReconciliation(ctx context.Context, params reconciliation.CreateTeamleadReconciliationParams) (reconciliation.TeamleadRun, error)
+	ConfirmTeamleadReconciliation(ctx context.Context, params reconciliation.ConfirmTeamleadReconciliationParams) (reconciliation.TeamleadRun, error)
+	RejectTeamleadReconciliation(ctx context.Context, params reconciliation.RejectTeamleadReconciliationParams) (reconciliation.TeamleadRun, error)
+	ListTeamleadReconciliations(ctx context.Context, params reconciliation.ListTeamleadReconciliationsParams) (pagination.Result[reconciliation.TeamleadRun], error)
+	GetTeamleadReconciliation(ctx context.Context, params reconciliation.GetTeamleadReconciliationParams) (reconciliation.TeamleadRun, error)
+	ListTeamleadReconciliationItems(ctx context.Context, params reconciliation.GetTeamleadReconciliationParams, filters reconciliation.TeamleadItemFilters, page pagination.Params) (pagination.Result[reconciliation.TeamleadItem], error)
 	LatestTeamleadInbound(ctx context.Context, teamID int64, actorID int64) (reconciliation.Run, error)
 	LatestTeamleadOutbound(ctx context.Context, teamID int64, actorID int64) (reconciliation.Run, error)
 	RecalculateTeamleadCurrent(ctx context.Context, params reconciliation.RecalculateTeamleadCurrentParams) (reconciliation.Run, error)
@@ -37,6 +46,296 @@ type TeamleadReconciliationHandler struct {
 
 func NewTeamleadReconciliationHandler(service TeamleadReconciliationService) *TeamleadReconciliationHandler {
 	return &TeamleadReconciliationHandler{service: service}
+}
+
+type teamleadReconciliationResponse struct {
+	Reconciliation reconciliation.PublicTeamleadRun `json:"reconciliation"`
+}
+
+func (h *TeamleadReconciliationHandler) List(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	runs, err := h.service.ListTeamleadReconciliations(r.Context(), reconciliation.ListTeamleadReconciliationsParams{
+		TeamID: actor.TeamID,
+		Page:   page,
+	})
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+	publicRuns := make([]reconciliation.PublicTeamleadRun, 0, len(runs.Items))
+	for _, run := range runs.Items {
+		publicRuns = append(publicRuns, reconciliation.PublicTeamleadRunFromDomain(run))
+	}
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(publicRuns, page, runs.Total)))
+}
+
+func (h *TeamleadReconciliationHandler) Get(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+	runID, ok := reconciliationRunIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	run, err := h.service.GetTeamleadReconciliation(r.Context(), reconciliation.GetTeamleadReconciliationParams{
+		TeamID: actor.TeamID,
+		RunID:  runID,
+	})
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+	WriteJSON(w, http.StatusOK, teamleadReconciliationResponse{
+		Reconciliation: reconciliation.PublicTeamleadRunFromDomain(run),
+	})
+}
+
+func (h *TeamleadReconciliationHandler) Items(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+	runID, ok := reconciliationRunIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
+	filters, ok := teamleadReconciliationItemFiltersFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	items, err := h.service.ListTeamleadReconciliationItems(r.Context(), reconciliation.GetTeamleadReconciliationParams{
+		TeamID: actor.TeamID,
+		RunID:  runID,
+	}, filters, page)
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(reconciliation.PublicTeamleadItemsFromDomain(items.Items), page, items.Total)))
+}
+
+func (h *TeamleadReconciliationHandler) Create(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	params, ok := createTeamleadReconciliationParamsFromRequest(w, r)
+	if !ok {
+		return
+	}
+	params.ActorID = actor.ID
+	params.TeamID = actor.TeamID
+
+	run, err := h.service.CreateTeamleadReconciliation(r.Context(), params)
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusCreated, teamleadReconciliationResponse{
+		Reconciliation: reconciliation.PublicTeamleadRunFromDomain(run),
+	})
+}
+
+func (h *TeamleadReconciliationHandler) Confirm(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+	runID, ok := reconciliationRunIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var request acceptReconciliationRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	run, err := h.service.ConfirmTeamleadReconciliation(r.Context(), reconciliation.ConfirmTeamleadReconciliationParams{
+		ActorID: actor.ID,
+		TeamID:  actor.TeamID,
+		RunID:   runID,
+		Comment: request.Comment,
+	})
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, teamleadReconciliationResponse{
+		Reconciliation: reconciliation.PublicTeamleadRunFromDomain(run),
+	})
+}
+
+func (h *TeamleadReconciliationHandler) Reject(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+	runID, ok := reconciliationRunIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var request acceptReconciliationRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	run, err := h.service.RejectTeamleadReconciliation(r.Context(), reconciliation.RejectTeamleadReconciliationParams{
+		ActorID: actor.ID,
+		TeamID:  actor.TeamID,
+		RunID:   runID,
+		Comment: request.Comment,
+	})
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, teamleadReconciliationResponse{
+		Reconciliation: reconciliation.PublicTeamleadRunFromDomain(run),
+	})
+}
+
+func createTeamleadReconciliationParamsFromRequest(w http.ResponseWriter, r *http.Request) (reconciliation.CreateTeamleadReconciliationParams, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportFileSize*2)
+	if err := r.ParseMultipartForm(maxImportFileSize * 2); err != nil {
+		RespondError(w, ValidationError(map[string]string{
+			"body": "Ожидается multipart/form-data с периодом и CSV файлами",
+		}))
+		return reconciliation.CreateTeamleadReconciliationParams{}, false
+	}
+
+	fields := map[string]string{}
+	dateFrom, ok := parseRequiredDateField(r.FormValue("dateFrom"), "dateFrom", fields)
+	if !ok {
+		RespondError(w, ValidationError(fields))
+		return reconciliation.CreateTeamleadReconciliationParams{}, false
+	}
+	dateTo, ok := parseRequiredDateField(r.FormValue("dateTo"), "dateTo", fields)
+	if !ok {
+		RespondError(w, ValidationError(fields))
+		return reconciliation.CreateTeamleadReconciliationParams{}, false
+	}
+	if dateTo.Before(dateFrom) {
+		fields["dateTo"] = "Дата окончания не может быть раньше даты начала"
+		RespondError(w, ValidationError(fields))
+		return reconciliation.CreateTeamleadReconciliationParams{}, false
+	}
+
+	inbound, inboundOK, ok := optionalTeamleadCSVInputFromRequest(w, r, "inboundFile")
+	if !ok {
+		return reconciliation.CreateTeamleadReconciliationParams{}, false
+	}
+	outbound, outboundOK, ok := optionalTeamleadCSVInputFromRequest(w, r, "outboundFile")
+	if !ok {
+		return reconciliation.CreateTeamleadReconciliationParams{}, false
+	}
+	if !inboundOK && !outboundOK {
+		RespondError(w, ValidationError(map[string]string{
+			"file": "Нужно загрузить CSV входов, CSV выходов или оба файла",
+		}))
+		return reconciliation.CreateTeamleadReconciliationParams{}, false
+	}
+
+	params := reconciliation.CreateTeamleadReconciliationParams{
+		DateFrom: dateFrom,
+		DateTo:   dateTo,
+	}
+	if inboundOK {
+		params.Inbound = &inbound
+	}
+	if outboundOK {
+		params.Outbound = &outbound
+	}
+	return params, true
+}
+
+func parseRequiredDateField(value string, field string, fields map[string]string) (time.Time, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		fields[field] = "Дата обязательна"
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse("2006-01-02", trimmed)
+	if err != nil {
+		fields[field] = "Дата должна быть в формате YYYY-MM-DD"
+		return time.Time{}, false
+	}
+	return parsed, true
+}
+
+func optionalTeamleadCSVInputFromRequest(w http.ResponseWriter, r *http.Request, field string) (reconciliation.TeamleadCSVInput, bool, bool) {
+	file, header, err := r.FormFile(field)
+	if err != nil {
+		if errors.Is(err, http.ErrMissingFile) {
+			return reconciliation.TeamleadCSVInput{}, false, true
+		}
+		RespondError(w, ValidationError(map[string]string{
+			field: "CSV файл не удалось прочитать",
+		}))
+		return reconciliation.TeamleadCSVInput{}, false, false
+	}
+	defer file.Close()
+
+	payload, err := io.ReadAll(file)
+	if err != nil {
+		RespondError(w, ValidationError(map[string]string{
+			field: "CSV файл не удалось прочитать",
+		}))
+		return reconciliation.TeamleadCSVInput{}, false, false
+	}
+	fileName := strings.TrimSpace(header.Filename)
+	if fileName == "" {
+		fileName = field + ".csv"
+	}
+	return reconciliation.TeamleadCSVInput{FileName: fileName, Payload: payload}, true, true
 }
 
 func (h *TeamleadReconciliationHandler) LatestInbound(w http.ResponseWriter, r *http.Request) {
@@ -594,6 +893,36 @@ func reconciliationItemFiltersFromRequest(w http.ResponseWriter, r *http.Request
 
 	return reconciliation.ItemFilters{
 		Status:       r.URL.Query().Get("status"),
+		OnlyMismatch: onlyMismatch,
+	}, true
+}
+
+func teamleadReconciliationItemFiltersFromRequest(w http.ResponseWriter, r *http.Request) (reconciliation.TeamleadItemFilters, bool) {
+	fields := map[string]string{}
+	query := r.URL.Query()
+	onlyMismatch, ok := optionalBool(query.Get("onlyMismatch"), "onlyMismatch", fields)
+	if !ok {
+		RespondError(w, ValidationError(fields))
+		return reconciliation.TeamleadItemFilters{}, false
+	}
+	traderID, ok := optionalInt64(query.Get("traderId"), "traderId", fields, false)
+	if !ok {
+		RespondError(w, ValidationError(fields))
+		return reconciliation.TeamleadItemFilters{}, false
+	}
+	requisiteID, ok := optionalInt64(query.Get("requisiteId"), "requisiteId", fields, false)
+	if !ok {
+		RespondError(w, ValidationError(fields))
+		return reconciliation.TeamleadItemFilters{}, false
+	}
+
+	return reconciliation.TeamleadItemFilters{
+		Direction:    strings.TrimSpace(query.Get("direction")),
+		Stage:        strings.TrimSpace(query.Get("stage")),
+		IssueType:    strings.TrimSpace(query.Get("issueType")),
+		Severity:     strings.TrimSpace(query.Get("severity")),
+		TraderID:     traderID,
+		RequisiteID:  requisiteID,
 		OnlyMismatch: onlyMismatch,
 	}, true
 }

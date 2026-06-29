@@ -11,6 +11,9 @@ type PublicShift struct {
 	Status                       string     `json:"status"`
 	InboundReconciliationStatus  string     `json:"inboundReconciliationStatus"`
 	OutboundReconciliationStatus string     `json:"outboundReconciliationStatus"`
+	TLStatus                     string     `json:"tlReconciliationStatus"`
+	LastTeamleadReconciliationID *int64     `json:"lastTeamleadReconciliationId,omitempty"`
+	TLReconciledAt               *time.Time `json:"tlReconciledAt,omitempty"`
 	CloseComment                 *string    `json:"closeComment,omitempty"`
 	CreatedAt                    time.Time  `json:"createdAt"`
 	UpdatedAt                    time.Time  `json:"updatedAt"`
@@ -142,6 +145,7 @@ type PublicShiftReportRow struct {
 	CardNumber            *string `json:"cardNumber,omitempty"`
 	HolderName            *string `json:"holderName,omitempty"`
 	Status                string  `json:"status"`
+	TLStatus              string  `json:"tlReconciliationStatus"`
 	InboundTurnoverMinor  int64   `json:"inboundTurnoverMinor"`
 	OutboundTurnoverMinor int64   `json:"outboundTurnoverMinor"`
 	ClosingBalanceMinor   int64   `json:"closingBalanceMinor"`
@@ -164,6 +168,9 @@ func PublicShiftFromDomain(shift Shift) PublicShift {
 		Status:                       shift.Status,
 		InboundReconciliationStatus:  shift.InboundReconciliationStatus,
 		OutboundReconciliationStatus: shift.OutboundReconciliationStatus,
+		TLStatus:                     shift.TLStatus,
+		LastTeamleadReconciliationID: shift.LastTeamleadReconciliationID,
+		TLReconciledAt:               shift.TLReconciledAt,
 		CloseComment:                 shift.CloseComment,
 		CreatedAt:                    shift.CreatedAt,
 		UpdatedAt:                    shift.UpdatedAt,
@@ -369,6 +376,7 @@ func PublicShiftReportRowFromDomain(item ShiftReportRow) PublicShiftReportRow {
 		CardNumber:            item.CardNumber,
 		HolderName:            item.HolderName,
 		Status:                item.Status,
+		TLStatus:              item.TLStatus,
 		InboundTurnoverMinor:  item.InboundTurnoverMinor,
 		OutboundTurnoverMinor: item.OutboundTurnoverMinor,
 		ClosingBalanceMinor:   item.ClosingBalanceMinor,

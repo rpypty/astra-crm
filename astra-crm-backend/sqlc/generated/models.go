@@ -88,42 +88,45 @@ type DebugFinAllImportJob struct {
 }
 
 type ExternalOrder struct {
-	ID                  int64
-	TeamID              int64
-	Direction           string
-	ExternalID          string
-	ExternalInnerID     string
-	ExternalForeignID   pgtype.Text
-	WorkerName          string
-	TraderID            pgtype.Int8
-	RequisiteRaw        pgtype.Text
-	RequisitePhone      pgtype.Text
-	RequisiteExternalID pgtype.Text
-	RequisiteID         pgtype.Int8
-	DeviceName          pgtype.Text
-	MethodType          pgtype.Text
-	MethodName          pgtype.Text
-	AmountMinor         int64
-	Currency            string
-	Course              pgtype.Numeric
-	CourseWorker        pgtype.Numeric
-	WorkerAmount        pgtype.Numeric
-	WorkerProfit        pgtype.Numeric
-	RawStatus           string
-	NormalizedStatus    string
-	CreatedAtExternal   pgtype.Timestamptz
-	ClosedAtExternal    pgtype.Timestamptz
-	UpdatedAtExternal   pgtype.Timestamptz
-	OldAmountMinor      pgtype.Int8
-	HadDispute          pgtype.Bool
-	Receipt             pgtype.Text
-	OrderComment        pgtype.Text
-	Ordered             pgtype.Bool
-	Counted             pgtype.Bool
-	Initials            pgtype.Text
-	LastImportBatchID   pgtype.Int8
-	CreatedAt           pgtype.Timestamptz
-	UpdatedAt           pgtype.Timestamptz
+	ID                           int64
+	TeamID                       int64
+	Direction                    string
+	ExternalID                   string
+	ExternalInnerID              string
+	ExternalForeignID            pgtype.Text
+	WorkerName                   string
+	TraderID                     pgtype.Int8
+	RequisiteRaw                 pgtype.Text
+	RequisitePhone               pgtype.Text
+	RequisiteExternalID          pgtype.Text
+	RequisiteID                  pgtype.Int8
+	DeviceName                   pgtype.Text
+	MethodType                   pgtype.Text
+	MethodName                   pgtype.Text
+	AmountMinor                  int64
+	Currency                     string
+	Course                       pgtype.Numeric
+	CourseWorker                 pgtype.Numeric
+	WorkerAmount                 pgtype.Numeric
+	WorkerProfit                 pgtype.Numeric
+	RawStatus                    string
+	NormalizedStatus             string
+	CreatedAtExternal            pgtype.Timestamptz
+	ClosedAtExternal             pgtype.Timestamptz
+	UpdatedAtExternal            pgtype.Timestamptz
+	OldAmountMinor               pgtype.Int8
+	HadDispute                   pgtype.Bool
+	Receipt                      pgtype.Text
+	OrderComment                 pgtype.Text
+	Ordered                      pgtype.Bool
+	Counted                      pgtype.Bool
+	Initials                     pgtype.Text
+	LastImportBatchID            pgtype.Int8
+	CreatedAt                    pgtype.Timestamptz
+	UpdatedAt                    pgtype.Timestamptz
+	TlReconciliationStatus       string
+	LastTeamleadReconciliationID pgtype.Int8
+	TlReconciledAt               pgtype.Timestamptz
 }
 
 type ImportBatch struct {
@@ -273,6 +276,8 @@ type Requisite struct {
 	LastActivityStatus         pgtype.Text
 	LastActivityAt             pgtype.Timestamptz
 	LastShiftRequisiteID       pgtype.Int8
+	NormalizedPhone            pgtype.Text
+	NormalizedCardNumber       pgtype.Text
 }
 
 type RequisiteAssignment struct {
@@ -320,22 +325,25 @@ type RequisiteTurnoverEntry struct {
 }
 
 type ShiftRequisite struct {
-	ID                    int64
-	TeamID                int64
-	ShiftID               int64
-	TraderID              int64
-	RequisiteID           int64
-	AssignmentID          pgtype.Int8
-	CardNumber            string
-	HolderName            string
-	TakenAt               pgtype.Timestamptz
-	ReleasedAt            pgtype.Timestamptz
-	Status                string
-	CreatedAt             pgtype.Timestamptz
-	UpdatedAt             pgtype.Timestamptz
-	InboundTurnoverMinor  int64
-	OutboundTurnoverMinor int64
-	ClosingBalanceMinor   int64
+	ID                           int64
+	TeamID                       int64
+	ShiftID                      int64
+	TraderID                     int64
+	RequisiteID                  int64
+	AssignmentID                 pgtype.Int8
+	CardNumber                   string
+	HolderName                   string
+	TakenAt                      pgtype.Timestamptz
+	ReleasedAt                   pgtype.Timestamptz
+	Status                       string
+	CreatedAt                    pgtype.Timestamptz
+	UpdatedAt                    pgtype.Timestamptz
+	InboundTurnoverMinor         int64
+	OutboundTurnoverMinor        int64
+	ClosingBalanceMinor          int64
+	TlReconciliationStatus       string
+	LastTeamleadReconciliationID pgtype.Int8
+	TlReconciledAt               pgtype.Timestamptz
 }
 
 type ShiftRequisiteInternalTransfer struct {
@@ -364,6 +372,70 @@ type Team struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type TeamleadReconciliation struct {
+	ID                    int64
+	TeamID                int64
+	DateFrom              pgtype.Date
+	DateTo                pgtype.Date
+	Status                string
+	CreatedBy             int64
+	ConfirmedBy           pgtype.Int8
+	RejectedBy            pgtype.Int8
+	InboundImportBatchID  pgtype.Int8
+	OutboundImportBatchID pgtype.Int8
+	Comment               pgtype.Text
+	MismatchCount         int64
+	ConflictCount         int64
+	BlockedCount          int64
+	PipelineJson          []byte
+	InboundSummaryJson    []byte
+	OutboundSummaryJson   []byte
+	PreviewJson           []byte
+	ApplyResultJson       []byte
+	ErrorMessage          pgtype.Text
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	AnalyzedAt            pgtype.Timestamptz
+	ConfirmedAt           pgtype.Timestamptz
+	RejectedAt            pgtype.Timestamptz
+	ApplyQueuedAt         pgtype.Timestamptz
+	AppliedAt             pgtype.Timestamptz
+}
+
+type TeamleadReconciliationApplyJob struct {
+	ID                       int64
+	TeamleadReconciliationID int64
+	TeamID                   int64
+	Status                   string
+	Attempts                 int32
+	ResultJson               []byte
+	ErrorMessage             pgtype.Text
+	CreatedAt                pgtype.Timestamptz
+	StartedAt                pgtype.Timestamptz
+	FinishedAt               pgtype.Timestamptz
+}
+
+type TeamleadReconciliationItem struct {
+	ID                       int64
+	TeamleadReconciliationID int64
+	TeamID                   int64
+	Direction                string
+	Stage                    string
+	IssueType                string
+	Severity                 string
+	ExternalOrderID          pgtype.Int8
+	ExternalInnerID          pgtype.Text
+	TraderID                 pgtype.Int8
+	RequisiteID              pgtype.Int8
+	ShiftID                  pgtype.Int8
+	BeforeJson               []byte
+	AfterJson                []byte
+	Message                  pgtype.Text
+	IsBlocking               bool
+	AppliedAt                pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+}
+
 type TraderProfile struct {
 	ID                 int64
 	UserID             int64
@@ -386,6 +458,9 @@ type TraderShift struct {
 	CreatedAt                    pgtype.Timestamptz
 	UpdatedAt                    pgtype.Timestamptz
 	ClosedAt                     pgtype.Timestamptz
+	TlReconciliationStatus       string
+	LastTeamleadReconciliationID pgtype.Int8
+	TlReconciledAt               pgtype.Timestamptz
 }
 
 type User struct {

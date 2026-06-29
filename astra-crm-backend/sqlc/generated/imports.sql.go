@@ -11,6 +11,246 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const batchInsertImportRows = `-- name: BatchInsertImportRows :many
+INSERT INTO import_rows (
+    import_batch_id,
+    row_number,
+    external_id,
+    external_inner_id,
+    raw_payload_json,
+    parse_status,
+    parse_error
+)
+SELECT
+    $1,
+    input.row_number,
+    input.external_id,
+    input.external_inner_id,
+    input.raw_payload_json,
+    'parsed',
+    NULL
+FROM jsonb_to_recordset($2::jsonb) AS input(
+    row_number bigint,
+    external_id text,
+    external_inner_id text,
+    raw_payload_json jsonb
+)
+ORDER BY input.row_number
+RETURNING id, row_number, external_inner_id
+`
+
+type BatchInsertImportRowsParams struct {
+	ImportBatchID int64
+	RowsJson      []byte
+}
+
+type BatchInsertImportRowsRow struct {
+	ID              int64
+	RowNumber       int64
+	ExternalInnerID pgtype.Text
+}
+
+func (q *Queries) BatchInsertImportRows(ctx context.Context, arg BatchInsertImportRowsParams) ([]BatchInsertImportRowsRow, error) {
+	rows, err := q.db.Query(ctx, batchInsertImportRows, arg.ImportBatchID, arg.RowsJson)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BatchInsertImportRowsRow
+	for rows.Next() {
+		var i BatchInsertImportRowsRow
+		if err := rows.Scan(&i.ID, &i.RowNumber, &i.ExternalInnerID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const batchUpsertExternalOrders = `-- name: BatchUpsertExternalOrders :many
+WITH upserted AS (
+    INSERT INTO external_orders (
+        team_id,
+        direction,
+        external_id,
+        external_inner_id,
+        external_foreign_id,
+        worker_name,
+        trader_id,
+        requisite_raw,
+        requisite_phone,
+        requisite_external_id,
+        requisite_id,
+        device_name,
+        method_type,
+        method_name,
+        amount_minor,
+        currency,
+        course,
+        course_worker,
+        worker_amount,
+        worker_profit,
+        raw_status,
+        normalized_status,
+        created_at_external,
+        closed_at_external,
+        updated_at_external,
+        old_amount_minor,
+        had_dispute,
+        receipt,
+        order_comment,
+        ordered,
+        counted,
+        initials,
+        last_import_batch_id
+    )
+    SELECT
+        $1,
+        $2,
+        input.external_id,
+        input.external_inner_id,
+        input.external_foreign_id,
+        input.worker_name,
+        $3,
+        input.requisite_raw,
+        input.requisite_phone,
+        input.requisite_external_id,
+        NULL,
+        input.device_name,
+        input.method_type,
+        input.method_name,
+        input.amount_minor,
+        input.currency,
+        input.course::numeric,
+        input.course_worker::numeric,
+        input.worker_amount::numeric,
+        input.worker_profit::numeric,
+        input.raw_status,
+        input.normalized_status,
+        input.created_at_external,
+        input.closed_at_external,
+        input.updated_at_external,
+        input.old_amount_minor,
+        input.had_dispute,
+        input.receipt,
+        input.order_comment,
+        input.ordered,
+        input.counted,
+        input.initials,
+        $4
+    FROM jsonb_to_recordset($5::jsonb) AS input(
+        external_id text,
+        external_inner_id text,
+        external_foreign_id text,
+        worker_name text,
+        requisite_raw text,
+        requisite_phone text,
+        requisite_external_id text,
+        device_name text,
+        method_type text,
+        method_name text,
+        amount_minor bigint,
+        currency text,
+        course text,
+        course_worker text,
+        worker_amount text,
+        worker_profit text,
+        raw_status text,
+        normalized_status text,
+        created_at_external timestamptz,
+        closed_at_external timestamptz,
+        updated_at_external timestamptz,
+        old_amount_minor bigint,
+        had_dispute boolean,
+        receipt text,
+        order_comment text,
+        ordered boolean,
+        counted boolean,
+        initials text
+    )
+    ON CONFLICT (team_id, direction, external_inner_id)
+    DO UPDATE SET
+        external_id = EXCLUDED.external_id,
+        external_foreign_id = EXCLUDED.external_foreign_id,
+        worker_name = EXCLUDED.worker_name,
+        trader_id = EXCLUDED.trader_id,
+        requisite_raw = EXCLUDED.requisite_raw,
+        requisite_phone = EXCLUDED.requisite_phone,
+        requisite_external_id = EXCLUDED.requisite_external_id,
+        requisite_id = EXCLUDED.requisite_id,
+        device_name = EXCLUDED.device_name,
+        method_type = EXCLUDED.method_type,
+        method_name = EXCLUDED.method_name,
+        amount_minor = EXCLUDED.amount_minor,
+        currency = EXCLUDED.currency,
+        course = EXCLUDED.course,
+        course_worker = EXCLUDED.course_worker,
+        worker_amount = EXCLUDED.worker_amount,
+        worker_profit = EXCLUDED.worker_profit,
+        raw_status = EXCLUDED.raw_status,
+        normalized_status = EXCLUDED.normalized_status,
+        created_at_external = EXCLUDED.created_at_external,
+        closed_at_external = EXCLUDED.closed_at_external,
+        updated_at_external = EXCLUDED.updated_at_external,
+        old_amount_minor = EXCLUDED.old_amount_minor,
+        had_dispute = EXCLUDED.had_dispute,
+        receipt = EXCLUDED.receipt,
+        order_comment = EXCLUDED.order_comment,
+        ordered = EXCLUDED.ordered,
+        counted = EXCLUDED.counted,
+        initials = EXCLUDED.initials,
+        last_import_batch_id = EXCLUDED.last_import_batch_id,
+        updated_at = now()
+    RETURNING id, external_inner_id, (xmax = 0) AS inserted
+)
+SELECT id, external_inner_id, inserted
+FROM upserted
+ORDER BY external_inner_id
+`
+
+type BatchUpsertExternalOrdersParams struct {
+	TeamID            int64
+	Direction         string
+	TraderID          pgtype.Int8
+	LastImportBatchID pgtype.Int8
+	RowsJson          []byte
+}
+
+type BatchUpsertExternalOrdersRow struct {
+	ID              int64
+	ExternalInnerID string
+	Inserted        bool
+}
+
+func (q *Queries) BatchUpsertExternalOrders(ctx context.Context, arg BatchUpsertExternalOrdersParams) ([]BatchUpsertExternalOrdersRow, error) {
+	rows, err := q.db.Query(ctx, batchUpsertExternalOrders,
+		arg.TeamID,
+		arg.Direction,
+		arg.TraderID,
+		arg.LastImportBatchID,
+		arg.RowsJson,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BatchUpsertExternalOrdersRow
+	for rows.Next() {
+		var i BatchUpsertExternalOrdersRow
+		if err := rows.Scan(&i.ID, &i.ExternalInnerID, &i.Inserted); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createImportBatch = `-- name: CreateImportBatch :one
 INSERT INTO import_batches (
     team_id,
@@ -89,7 +329,7 @@ func (q *Queries) CreateImportBatch(ctx context.Context, arg CreateImportBatchPa
 	return i, err
 }
 
-const createTeamleadPeriodScopeItem = `-- name: CreateTeamleadPeriodScopeItem :one
+const createTeamleadPeriodScopeItemsBatch = `-- name: CreateTeamleadPeriodScopeItemsBatch :many
 INSERT INTO order_scope_items (
     team_id,
     scope_type,
@@ -121,105 +361,64 @@ SELECT
     NULL,
     $3,
     $4,
-    $5,
-    $6,
-    eo.external_id,
-    eo.external_inner_id,
-    eo.worker_name,
-    eo.trader_id,
-    eo.requisite_raw,
-    eo.requisite_phone,
-    eo.method_type,
-    eo.method_name,
-    eo.amount_minor,
-    eo.currency,
-    eo.raw_status,
-    eo.normalized_status,
-    eo.created_at_external,
+    import_rows.id,
+    external_orders.id,
+    external_orders.external_id,
+    external_orders.external_inner_id,
+    external_orders.worker_name,
+    external_orders.trader_id,
+    external_orders.requisite_raw,
+    external_orders.requisite_phone,
+    external_orders.method_type,
+    external_orders.method_name,
+    external_orders.amount_minor,
+    external_orders.currency,
+    external_orders.raw_status,
+    external_orders.normalized_status,
+    external_orders.created_at_external,
     TRUE
-FROM external_orders eo
-WHERE eo.id = $6
-RETURNING id, team_id, scope_type, direction, shift_id, accounting_period_id, import_batch_id, import_row_id, external_order_id, external_id, external_inner_id, worker_name, trader_id, requisite_raw, requisite_phone, method_type, method_name, amount_minor, currency, raw_status, normalized_status, created_at_external, is_active, created_at, deactivated_at
+FROM import_rows
+JOIN external_orders ON external_orders.team_id = $1
+    AND external_orders.direction = $2
+    AND external_orders.external_inner_id = import_rows.external_inner_id
+WHERE import_rows.import_batch_id = $4
+ORDER BY import_rows.row_number
+RETURNING id
 `
 
-type CreateTeamleadPeriodScopeItemParams struct {
+type CreateTeamleadPeriodScopeItemsBatchParams struct {
 	TeamID             int64
 	Direction          string
 	AccountingPeriodID pgtype.Int8
 	ImportBatchID      int64
-	ImportRowID        int64
-	ExternalOrderID    int64
 }
 
-type CreateTeamleadPeriodScopeItemRow struct {
-	ID                 int64
-	TeamID             int64
-	ScopeType          string
-	Direction          string
-	ShiftID            pgtype.Int8
-	AccountingPeriodID pgtype.Int8
-	ImportBatchID      int64
-	ImportRowID        int64
-	ExternalOrderID    int64
-	ExternalID         string
-	ExternalInnerID    string
-	WorkerName         string
-	TraderID           pgtype.Int8
-	RequisiteRaw       pgtype.Text
-	RequisitePhone     pgtype.Text
-	MethodType         pgtype.Text
-	MethodName         pgtype.Text
-	AmountMinor        int64
-	Currency           string
-	RawStatus          string
-	NormalizedStatus   string
-	CreatedAtExternal  pgtype.Timestamptz
-	IsActive           bool
-	CreatedAt          pgtype.Timestamptz
-	DeactivatedAt      pgtype.Timestamptz
-}
-
-func (q *Queries) CreateTeamleadPeriodScopeItem(ctx context.Context, arg CreateTeamleadPeriodScopeItemParams) (CreateTeamleadPeriodScopeItemRow, error) {
-	row := q.db.QueryRow(ctx, createTeamleadPeriodScopeItem,
+func (q *Queries) CreateTeamleadPeriodScopeItemsBatch(ctx context.Context, arg CreateTeamleadPeriodScopeItemsBatchParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, createTeamleadPeriodScopeItemsBatch,
 		arg.TeamID,
 		arg.Direction,
 		arg.AccountingPeriodID,
 		arg.ImportBatchID,
-		arg.ImportRowID,
-		arg.ExternalOrderID,
 	)
-	var i CreateTeamleadPeriodScopeItemRow
-	err := row.Scan(
-		&i.ID,
-		&i.TeamID,
-		&i.ScopeType,
-		&i.Direction,
-		&i.ShiftID,
-		&i.AccountingPeriodID,
-		&i.ImportBatchID,
-		&i.ImportRowID,
-		&i.ExternalOrderID,
-		&i.ExternalID,
-		&i.ExternalInnerID,
-		&i.WorkerName,
-		&i.TraderID,
-		&i.RequisiteRaw,
-		&i.RequisitePhone,
-		&i.MethodType,
-		&i.MethodName,
-		&i.AmountMinor,
-		&i.Currency,
-		&i.RawStatus,
-		&i.NormalizedStatus,
-		&i.CreatedAtExternal,
-		&i.IsActive,
-		&i.CreatedAt,
-		&i.DeactivatedAt,
-	)
-	return i, err
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
-const createTraderShiftScopeItem = `-- name: CreateTraderShiftScopeItem :one
+const createTraderShiftScopeItemsBatch = `-- name: CreateTraderShiftScopeItemsBatch :many
 INSERT INTO order_scope_items (
     team_id,
     scope_type,
@@ -251,102 +450,61 @@ SELECT
     $3,
     NULL,
     $4,
-    $5,
-    $6,
-    eo.external_id,
-    eo.external_inner_id,
-    eo.worker_name,
-    eo.trader_id,
-    eo.requisite_raw,
-    eo.requisite_phone,
-    eo.method_type,
-    eo.method_name,
-    eo.amount_minor,
-    eo.currency,
-    eo.raw_status,
-    eo.normalized_status,
-    eo.created_at_external,
+    import_rows.id,
+    external_orders.id,
+    external_orders.external_id,
+    external_orders.external_inner_id,
+    external_orders.worker_name,
+    external_orders.trader_id,
+    external_orders.requisite_raw,
+    external_orders.requisite_phone,
+    external_orders.method_type,
+    external_orders.method_name,
+    external_orders.amount_minor,
+    external_orders.currency,
+    external_orders.raw_status,
+    external_orders.normalized_status,
+    external_orders.created_at_external,
     TRUE
-FROM external_orders eo
-WHERE eo.id = $6
-RETURNING id, team_id, scope_type, direction, shift_id, accounting_period_id, import_batch_id, import_row_id, external_order_id, external_id, external_inner_id, worker_name, trader_id, requisite_raw, requisite_phone, method_type, method_name, amount_minor, currency, raw_status, normalized_status, created_at_external, is_active, created_at, deactivated_at
+FROM import_rows
+JOIN external_orders ON external_orders.team_id = $1
+    AND external_orders.direction = $2
+    AND external_orders.external_inner_id = import_rows.external_inner_id
+WHERE import_rows.import_batch_id = $4
+ORDER BY import_rows.row_number
+RETURNING id
 `
 
-type CreateTraderShiftScopeItemParams struct {
-	TeamID          int64
-	Direction       string
-	ShiftID         pgtype.Int8
-	ImportBatchID   int64
-	ImportRowID     int64
-	ExternalOrderID int64
+type CreateTraderShiftScopeItemsBatchParams struct {
+	TeamID        int64
+	Direction     string
+	ShiftID       pgtype.Int8
+	ImportBatchID int64
 }
 
-type CreateTraderShiftScopeItemRow struct {
-	ID                 int64
-	TeamID             int64
-	ScopeType          string
-	Direction          string
-	ShiftID            pgtype.Int8
-	AccountingPeriodID pgtype.Int8
-	ImportBatchID      int64
-	ImportRowID        int64
-	ExternalOrderID    int64
-	ExternalID         string
-	ExternalInnerID    string
-	WorkerName         string
-	TraderID           pgtype.Int8
-	RequisiteRaw       pgtype.Text
-	RequisitePhone     pgtype.Text
-	MethodType         pgtype.Text
-	MethodName         pgtype.Text
-	AmountMinor        int64
-	Currency           string
-	RawStatus          string
-	NormalizedStatus   string
-	CreatedAtExternal  pgtype.Timestamptz
-	IsActive           bool
-	CreatedAt          pgtype.Timestamptz
-	DeactivatedAt      pgtype.Timestamptz
-}
-
-func (q *Queries) CreateTraderShiftScopeItem(ctx context.Context, arg CreateTraderShiftScopeItemParams) (CreateTraderShiftScopeItemRow, error) {
-	row := q.db.QueryRow(ctx, createTraderShiftScopeItem,
+func (q *Queries) CreateTraderShiftScopeItemsBatch(ctx context.Context, arg CreateTraderShiftScopeItemsBatchParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, createTraderShiftScopeItemsBatch,
 		arg.TeamID,
 		arg.Direction,
 		arg.ShiftID,
 		arg.ImportBatchID,
-		arg.ImportRowID,
-		arg.ExternalOrderID,
 	)
-	var i CreateTraderShiftScopeItemRow
-	err := row.Scan(
-		&i.ID,
-		&i.TeamID,
-		&i.ScopeType,
-		&i.Direction,
-		&i.ShiftID,
-		&i.AccountingPeriodID,
-		&i.ImportBatchID,
-		&i.ImportRowID,
-		&i.ExternalOrderID,
-		&i.ExternalID,
-		&i.ExternalInnerID,
-		&i.WorkerName,
-		&i.TraderID,
-		&i.RequisiteRaw,
-		&i.RequisitePhone,
-		&i.MethodType,
-		&i.MethodName,
-		&i.AmountMinor,
-		&i.Currency,
-		&i.RawStatus,
-		&i.NormalizedStatus,
-		&i.CreatedAtExternal,
-		&i.IsActive,
-		&i.CreatedAt,
-		&i.DeactivatedAt,
-	)
-	return i, err
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deactivateTeamleadPeriodScopeItems = `-- name: DeactivateTeamleadPeriodScopeItems :many
@@ -621,193 +779,4 @@ func (q *Queries) SupersedeTraderShiftImportBatches(ctx context.Context, arg Sup
 		return nil, err
 	}
 	return items, nil
-}
-
-const upsertExternalOrder = `-- name: UpsertExternalOrder :one
-INSERT INTO external_orders (
-    team_id,
-    direction,
-    external_id,
-    external_inner_id,
-    external_foreign_id,
-    worker_name,
-    trader_id,
-    requisite_raw,
-    requisite_phone,
-    requisite_external_id,
-    requisite_id,
-    device_name,
-    method_type,
-    method_name,
-    amount_minor,
-    currency,
-    course,
-    course_worker,
-    worker_amount,
-    worker_profit,
-    raw_status,
-    normalized_status,
-    created_at_external,
-    closed_at_external,
-    updated_at_external,
-    old_amount_minor,
-    had_dispute,
-    receipt,
-    order_comment,
-    ordered,
-    counted,
-    initials,
-    last_import_batch_id
-)
-VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10,
-    $11,
-    $12,
-    $13,
-    $14,
-    $15,
-    $16,
-    $17::numeric,
-    $18::numeric,
-    $19::numeric,
-    $20::numeric,
-    $21,
-    $22,
-    $23,
-    $24,
-    $25,
-    $26,
-    $27,
-    $28,
-    $29,
-    $30,
-    $31,
-    $32,
-    $33
-)
-ON CONFLICT (team_id, direction, external_inner_id)
-DO UPDATE SET
-    external_id = EXCLUDED.external_id,
-    external_foreign_id = EXCLUDED.external_foreign_id,
-    worker_name = EXCLUDED.worker_name,
-    trader_id = EXCLUDED.trader_id,
-    requisite_raw = EXCLUDED.requisite_raw,
-    requisite_phone = EXCLUDED.requisite_phone,
-    requisite_external_id = EXCLUDED.requisite_external_id,
-    requisite_id = EXCLUDED.requisite_id,
-    device_name = EXCLUDED.device_name,
-    method_type = EXCLUDED.method_type,
-    method_name = EXCLUDED.method_name,
-    amount_minor = EXCLUDED.amount_minor,
-    currency = EXCLUDED.currency,
-    course = EXCLUDED.course,
-    course_worker = EXCLUDED.course_worker,
-    worker_amount = EXCLUDED.worker_amount,
-    worker_profit = EXCLUDED.worker_profit,
-    raw_status = EXCLUDED.raw_status,
-    normalized_status = EXCLUDED.normalized_status,
-    created_at_external = EXCLUDED.created_at_external,
-    closed_at_external = EXCLUDED.closed_at_external,
-    updated_at_external = EXCLUDED.updated_at_external,
-    old_amount_minor = EXCLUDED.old_amount_minor,
-    had_dispute = EXCLUDED.had_dispute,
-    receipt = EXCLUDED.receipt,
-    order_comment = EXCLUDED.order_comment,
-    ordered = EXCLUDED.ordered,
-    counted = EXCLUDED.counted,
-    initials = EXCLUDED.initials,
-    last_import_batch_id = EXCLUDED.last_import_batch_id,
-    updated_at = now()
-RETURNING id, (xmax = 0) AS inserted
-`
-
-type UpsertExternalOrderParams struct {
-	TeamID              int64
-	Direction           string
-	ExternalID          string
-	ExternalInnerID     string
-	ExternalForeignID   pgtype.Text
-	WorkerName          string
-	TraderID            pgtype.Int8
-	RequisiteRaw        pgtype.Text
-	RequisitePhone      pgtype.Text
-	RequisiteExternalID pgtype.Text
-	RequisiteID         pgtype.Int8
-	DeviceName          pgtype.Text
-	MethodType          pgtype.Text
-	MethodName          pgtype.Text
-	AmountMinor         int64
-	Currency            string
-	Course              pgtype.Numeric
-	CourseWorker        pgtype.Numeric
-	WorkerAmount        pgtype.Numeric
-	WorkerProfit        pgtype.Numeric
-	RawStatus           string
-	NormalizedStatus    string
-	CreatedAtExternal   pgtype.Timestamptz
-	ClosedAtExternal    pgtype.Timestamptz
-	UpdatedAtExternal   pgtype.Timestamptz
-	OldAmountMinor      pgtype.Int8
-	HadDispute          pgtype.Bool
-	Receipt             pgtype.Text
-	OrderComment        pgtype.Text
-	Ordered             pgtype.Bool
-	Counted             pgtype.Bool
-	Initials            pgtype.Text
-	LastImportBatchID   pgtype.Int8
-}
-
-type UpsertExternalOrderRow struct {
-	ID       int64
-	Inserted bool
-}
-
-func (q *Queries) UpsertExternalOrder(ctx context.Context, arg UpsertExternalOrderParams) (UpsertExternalOrderRow, error) {
-	row := q.db.QueryRow(ctx, upsertExternalOrder,
-		arg.TeamID,
-		arg.Direction,
-		arg.ExternalID,
-		arg.ExternalInnerID,
-		arg.ExternalForeignID,
-		arg.WorkerName,
-		arg.TraderID,
-		arg.RequisiteRaw,
-		arg.RequisitePhone,
-		arg.RequisiteExternalID,
-		arg.RequisiteID,
-		arg.DeviceName,
-		arg.MethodType,
-		arg.MethodName,
-		arg.AmountMinor,
-		arg.Currency,
-		arg.Course,
-		arg.CourseWorker,
-		arg.WorkerAmount,
-		arg.WorkerProfit,
-		arg.RawStatus,
-		arg.NormalizedStatus,
-		arg.CreatedAtExternal,
-		arg.ClosedAtExternal,
-		arg.UpdatedAtExternal,
-		arg.OldAmountMinor,
-		arg.HadDispute,
-		arg.Receipt,
-		arg.OrderComment,
-		arg.Ordered,
-		arg.Counted,
-		arg.Initials,
-		arg.LastImportBatchID,
-	)
-	var i UpsertExternalOrderRow
-	err := row.Scan(&i.ID, &i.Inserted)
-	return i, err
 }

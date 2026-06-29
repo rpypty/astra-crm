@@ -26,6 +26,9 @@ type Shift struct {
 	Status                       string
 	InboundReconciliationStatus  string
 	OutboundReconciliationStatus string
+	TLStatus                     string
+	LastTeamleadReconciliationID *int64
+	TLReconciledAt               *time.Time
 	CloseComment                 *string
 	CreatedAt                    time.Time
 	UpdatedAt                    time.Time
@@ -149,6 +152,7 @@ type ShiftReportRow struct {
 	CardNumber            *string
 	HolderName            *string
 	Status                string
+	TLStatus              string
 	InboundTurnoverMinor  int64
 	OutboundTurnoverMinor int64
 	ClosingBalanceMinor   int64

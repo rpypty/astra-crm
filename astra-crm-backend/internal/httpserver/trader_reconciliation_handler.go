@@ -445,11 +445,16 @@ func reconciliationRunIDFromRequest(w http.ResponseWriter, r *http.Request) (int
 }
 
 func mapReconciliationError(err error) error {
+	var csvErr *reconciliation.TeamleadCSVValidationError
 	switch {
+	case errors.As(err, &csvErr):
+		return csvValidationError(csvErr.Parse).WithCause(err)
 	case errors.Is(err, reconciliation.ErrInvalidInput):
 		return ValidationError(map[string]string{
 			"body": "Некоторые поля заполнены неверно",
 		}).WithCause(err)
+	case errors.Is(err, reconciliation.ErrInvalidState):
+		return DomainError("INVALID_RECONCILIATION_STATE", "Сверка находится в неподходящем статусе").WithCause(err)
 	case errors.Is(err, reconciliation.ErrRunNotFound):
 		return NotFoundError().WithCause(err)
 	case errors.Is(err, reconciliation.ErrRepositoryNotConfigured):

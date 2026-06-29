@@ -197,6 +197,11 @@ function TraderOrdersTable({ direction, periodFilter }: { direction: "inbound" |
           </div>
         ),
       },
+      {
+        accessorKey: "tlReconciliationStatus",
+        header: "TL",
+        cell: ({ row }) => <StatusBadge status={row.original.tlReconciliationStatus} />,
+      },
       { accessorKey: "innerId", header: "innerId" },
     ],
     [],
@@ -237,6 +242,10 @@ function TraderOrderDetailsDialog({ order, onClose }: { order: Order | null; onC
             <ReadOnlyField label="Реквизит" value={formatRussianPhone(order.requisite)} />
             <ReadOnlyField label="Метод/банк" value={order.bankName || order.method || "—"} />
             <ReadOnlyField label="Статус" value={order.rawStatus} />
+            <div className="rounded-md border border-border px-3 py-2">
+              <div className="mb-1 text-xs text-muted-foreground">TL-сверка</div>
+              <StatusBadge status={order.tlReconciliationStatus} />
+            </div>
             <ReadOnlyField label="innerId" value={order.innerId} />
           </div>
         ) : null}

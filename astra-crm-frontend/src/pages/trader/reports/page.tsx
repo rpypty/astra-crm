@@ -134,6 +134,7 @@ function toDraftShiftReport(shift: TraderShiftSummary): ShiftReport {
     status: "draft",
     inboundReconciliationStatus: shift.inboundReconciliationStatus ?? "unknown",
     outboundReconciliationStatus: shift.outboundReconciliationStatus ?? "unknown",
+    tlReconciliationStatus: "not_checked",
     closeComment: shift.closeComment,
   };
 }
@@ -602,6 +603,11 @@ function ShiftReportHistoryCard() {
         header: "Выплаты",
         cell: ({ row }) => <StatusBadge status={row.original.outboundReconciliationStatus} />,
       },
+      {
+        accessorKey: "tlReconciliationStatus",
+        header: "TL",
+        cell: ({ row }) => <StatusBadge status={row.original.tlReconciliationStatus} />,
+      },
       { accessorKey: "status", header: "Статус", cell: ({ row }) => <StatusBadge status={row.original.status} /> },
       {
         accessorKey: "closeComment",
@@ -697,6 +703,11 @@ function useTraderReportRowsColumns() {
         accessorKey: "status",
         header: "Статус",
         cell: ({ row }) => <StatusBadge status={row.original.status} />,
+      },
+      {
+        accessorKey: "tlReconciliationStatus",
+        header: "TL",
+        cell: ({ row }) => <StatusBadge status={row.original.tlReconciliationStatus} />,
       },
       {
         accessorKey: "inboundTurnoverMinor",

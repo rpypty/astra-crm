@@ -16,8 +16,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/shared/ui/dialog";
-import type { OrderDirection, OrderImportHistoryItem, ReconciliationItem, ReconciliationSummary } from "@/shared/model/domain";
-import { api } from "@/shared/api/api";
+import type {
+  OrderDirection,
+  OrderImportHistoryItem,
+  ReconciliationItem,
+  ReconciliationSummary,
+  TeamleadReconciliationItem,
+  TeamleadReconciliationRun,
+} from "@/shared/model/domain";
+import { api, type TeamleadReconciliationItemFilters } from "@/shared/api/api";
 import { queryKeys } from "@/shared/api/query-keys";
 import { paginationToQuery } from "@/shared/lib/pagination";
 import { cn, formatDateTime, formatMoneyMinor } from "@/shared/lib/utils";
@@ -58,69 +65,425 @@ type SelectedHistoryRun = {
 
 export function TeamleadPeriodsPage() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
-  const [selectedHistoryRun, setSelectedHistoryRun] = useState<SelectedHistoryRun | null>(null);
-  const inboundReconciliationQuery = useQuery({
-    queryKey: queryKeys.teamlead.reconciliation("inbound"),
-    queryFn: () => api.orders.reconciliation("teamlead", "inbound"),
+  const [selectedRunID, setSelectedRunID] = useState<number | null>(null);
+  const [activeDirection, setActiveDirection] = useState<OrderDirection>("inbound");
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 15 });
+  const listParams = paginationToQuery(pagination);
+  const runsQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliationV2(listParams),
+    queryFn: () => api.teamleadReconciliations.list(listParams),
+    placeholderData: keepPreviousData,
   });
-  const outboundReconciliationQuery = useQuery({
-    queryKey: queryKeys.teamlead.reconciliation("outbound"),
-    queryFn: () => api.orders.reconciliation("teamlead", "outbound"),
+  const selectedRunQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliationV2Run(selectedRunID ?? undefined),
+    queryFn: () => api.teamleadReconciliations.get(selectedRunID ?? 0),
+    enabled: selectedRunID !== null,
   });
-  const inboundItemsQuery = useQuery({
-    queryKey: queryKeys.teamlead.reconciliationItems("inbound", { onlyMismatch: true, page: 1, pageSize: 200 }),
-    queryFn: () => api.orders.reconciliationItems("teamlead", "inbound", { onlyMismatch: true, page: 1, pageSize: 200 }),
+  const itemFilters = useMemo<TeamleadReconciliationItemFilters>(
+    () => ({ direction: activeDirection, page: 1, pageSize: 200 }),
+    [activeDirection],
+  );
+  const itemsQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliationV2Items(selectedRunID ?? undefined, itemFilters),
+    queryFn: () => api.teamleadReconciliations.items(selectedRunID ?? 0, itemFilters),
+    enabled: selectedRunID !== null,
   });
-  const outboundItemsQuery = useQuery({
-    queryKey: queryKeys.teamlead.reconciliationItems("outbound", { onlyMismatch: true, page: 1, pageSize: 200 }),
-    queryFn: () => api.orders.reconciliationItems("teamlead", "outbound", { onlyMismatch: true, page: 1, pageSize: 200 }),
-  });
-  const hasMismatch =
-    inboundReconciliationQuery.data?.status === "mismatch" ||
-    outboundReconciliationQuery.data?.status === "mismatch";
-  const issueCount = (inboundItemsQuery.data?.total ?? 0) + (outboundItemsQuery.data?.total ?? 0);
+  const columns = useTeamleadV2HistoryColumns();
+  const latestRun = runsQuery.data?.items[0];
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Сверка"
-        description="CSV тимлида обновляет существующие ордера по innerId и показывает изменения статусов, сумм и назначений."
+        description="История сверок за период, расхождения и применение TL CSV к транзакциям."
         actions={
           <Button type="button" onClick={() => setUploadDialogOpen(true)}>
-            <FileText className="h-4 w-4" />
+            <Upload className="h-4 w-4" />
             Загрузить сверку
           </Button>
         }
       />
 
-      <TeamleadReconciliationStatusCard
-        inbound={inboundReconciliationQuery.data}
-        outbound={outboundReconciliationQuery.data}
-        issueCount={issueCount}
-        hasMismatch={hasMismatch}
-        isLoading={inboundReconciliationQuery.isLoading || outboundReconciliationQuery.isLoading}
+      <TeamleadV2Overview run={latestRun} total={runsQuery.data?.total ?? 0} />
+
+      <DataTable
+        columns={columns}
+        data={runsQuery.data?.items ?? []}
+        rowCount={runsQuery.data?.total ?? 0}
+        pagination={pagination}
+        onPaginationChange={setPagination}
+        isLoading={runsQuery.isLoading}
+        isFetching={runsQuery.isFetching}
+        serverSidePagination
+        emptyTitle="Сверок пока нет"
+        emptyDescription="Загрузите CSV входов или выходов за период, чтобы создать первый run."
+        actions={[
+          {
+            label: "Открыть",
+            onSelect: (row) => {
+              setSelectedRunID(row.id);
+              setActiveDirection(row.inboundImportBatchId ? "inbound" : "outbound");
+            },
+          },
+        ]}
+        onRowClick={(row) => {
+          setSelectedRunID(row.id);
+          setActiveDirection(row.inboundImportBatchId ? "inbound" : "outbound");
+        }}
       />
 
-      <TeamleadReconciliationResultsTabs
-        inboundSummary={inboundReconciliationQuery.data}
-        outboundSummary={outboundReconciliationQuery.data}
-        inboundItems={inboundItemsQuery.data?.items ?? []}
-        outboundItems={outboundItemsQuery.data?.items ?? []}
-        inboundLoading={inboundReconciliationQuery.isLoading || inboundItemsQuery.isLoading}
-        outboundLoading={outboundReconciliationQuery.isLoading || outboundItemsQuery.isLoading}
-      />
-
-      <TeamleadReconciliationHistoryCard
-        onOpen={(row) => setSelectedHistoryRun({ direction: row.direction, summary: row.summary })}
-      />
-
-      <TeamleadReconciliationUploadDialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen} />
-      <TeamleadReconciliationHistoryDialog
-        selected={selectedHistoryRun}
-        onClose={() => setSelectedHistoryRun(null)}
+      <TeamleadReconciliationV2UploadDialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen} />
+      <TeamleadReconciliationV2DetailsDialog
+        run={selectedRunQuery.data ?? null}
+        items={itemsQuery.data?.items ?? []}
+        activeDirection={activeDirection}
+        onDirectionChange={setActiveDirection}
+        open={selectedRunID !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedRunID(null);
+        }}
+        isLoading={selectedRunQuery.isLoading || itemsQuery.isLoading}
       />
     </div>
   );
+}
+
+function TeamleadV2Overview({ run, total }: { run?: TeamleadReconciliationRun; total: number }) {
+  const inboundAmount = run ? summaryNumber(run.inboundSummary, "successAmountMinor") : undefined;
+  const outboundAmount = run ? summaryNumber(run.outboundSummary, "successAmountMinor") : undefined;
+
+  return (
+    <div className="grid gap-3 md:grid-cols-4">
+      <Card>
+        <CardContent className="p-4">
+          <div className="text-xs font-medium uppercase tracking-normal text-muted-foreground">Run'ов</div>
+          <div className="mt-2 text-2xl font-semibold">{total}</div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="p-4">
+          <div className="text-xs font-medium uppercase tracking-normal text-muted-foreground">Последний статус</div>
+          <div className="mt-2">{run ? <StatusBadge status={run.status} /> : <span className="text-sm text-muted-foreground">Нет run'ов</span>}</div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="p-4">
+          <div className="text-xs font-medium uppercase tracking-normal text-muted-foreground">Входы последнего run</div>
+          <div className="mt-2 text-xl font-semibold">{inboundAmount === undefined ? "—" : formatMoneyMinor(inboundAmount)}</div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="p-4">
+          <div className="text-xs font-medium uppercase tracking-normal text-muted-foreground">Выходы последнего run</div>
+          <div className="mt-2 text-xl font-semibold">{outboundAmount === undefined ? "—" : formatMoneyMinor(outboundAmount)}</div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function useTeamleadV2HistoryColumns() {
+  return useMemo<ColumnDef<TeamleadReconciliationRun>[]>(
+    () => [
+      {
+        accessorKey: "id",
+        header: "Run",
+        cell: ({ row }) => <span className="font-medium">#{row.original.id}</span>,
+      },
+      {
+        id: "period",
+        header: "Период",
+        cell: ({ row }) => `${row.original.dateFrom} — ${row.original.dateTo}`,
+      },
+      {
+        accessorKey: "status",
+        header: "Статус",
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
+      },
+      {
+        id: "directions",
+        header: "Направления",
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-1">
+            {row.original.inboundImportBatchId ? <span className="rounded-md bg-emerald-50 px-2 py-1 text-xs text-emerald-700">Входы</span> : null}
+            {row.original.outboundImportBatchId ? <span className="rounded-md bg-sky-50 px-2 py-1 text-xs text-sky-700">Выходы</span> : null}
+          </div>
+        ),
+      },
+      {
+        id: "summary",
+        header: "Расхождения",
+        cell: ({ row }) => (
+          <span className={row.original.mismatchCount > 0 ? "font-semibold text-red-700" : "text-muted-foreground"}>
+            {row.original.mismatchCount}
+          </span>
+        ),
+      },
+      {
+        accessorKey: "createdAt",
+        header: "Запущена",
+        cell: ({ row }) => formatDateTime(row.original.createdAt),
+      },
+    ],
+    [],
+  );
+}
+
+function TeamleadReconciliationV2UploadDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const queryClient = useQueryClient();
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [inboundFile, setInboundFile] = useState<File | null>(null);
+  const [outboundFile, setOutboundFile] = useState<File | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const createMutation = useMutation({
+    mutationFn: () => api.teamleadReconciliations.create({ dateFrom, dateTo, inboundFile, outboundFile }),
+    onSuccess: async () => {
+      setDateFrom("");
+      setDateTo("");
+      setInboundFile(null);
+      setOutboundFile(null);
+      setError(null);
+      onOpenChange(false);
+      await queryClient.invalidateQueries({ queryKey: ["teamlead", "reconciliations"] });
+    },
+    onError: (mutationError) => setError(mutationError instanceof Error ? mutationError.message : "Не удалось создать сверку"),
+  });
+  const canSubmit = dateFrom !== "" && dateTo !== "" && (inboundFile !== null || outboundFile !== null);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[560px]">
+        <DialogHeader>
+          <DialogTitle>Загрузить сверку</DialogTitle>
+          <DialogDescription>Выберите период выгрузки и CSV входов, выходов или оба файла.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="space-y-1 text-sm font-medium">
+            <span>Дата начала</span>
+            <input className="h-10 w-full rounded-md border border-border px-3 text-sm" type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
+          </label>
+          <label className="space-y-1 text-sm font-medium">
+            <span>Дата окончания</span>
+            <input className="h-10 w-full rounded-md border border-border px-3 text-sm" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+          </label>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <TeamleadV2FileInput label="CSV входов" file={inboundFile} onChange={setInboundFile} />
+          <TeamleadV2FileInput label="CSV выходов" file={outboundFile} onChange={setOutboundFile} />
+        </div>
+        {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Отмена
+          </Button>
+          <Button type="button" disabled={!canSubmit || createMutation.isPending} onClick={() => createMutation.mutate()}>
+            <Upload className="h-4 w-4" />
+            Создать run
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function TeamleadV2FileInput({ label, file, onChange }: { label: string; file: File | null; onChange: (file: File | null) => void }) {
+  return (
+    <label className="space-y-1 text-sm font-medium">
+      <span>{label}</span>
+      <input
+        type="file"
+        accept=".csv,text/csv"
+        className="block w-full rounded-md border border-border px-3 py-2 text-sm file:mr-3 file:rounded-md file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-primary-foreground"
+        onChange={(event) => onChange(event.target.files?.[0] ?? null)}
+      />
+      <span className="block truncate text-xs text-muted-foreground">{file?.name ?? "Файл не выбран"}</span>
+    </label>
+  );
+}
+
+function TeamleadReconciliationV2DetailsDialog({
+  run,
+  items,
+  activeDirection,
+  onDirectionChange,
+  open,
+  onOpenChange,
+  isLoading,
+}: {
+  run: TeamleadReconciliationRun | null;
+  items: TeamleadReconciliationItem[];
+  activeDirection: OrderDirection;
+  onDirectionChange: (direction: OrderDirection) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  isLoading?: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [comment, setComment] = useState("");
+  const confirmMutation = useMutation({
+    mutationFn: () => api.teamleadReconciliations.confirm({ runId: run?.id ?? 0, comment }),
+    onSuccess: async () => {
+      setComment("");
+      await queryClient.invalidateQueries({ queryKey: ["teamlead", "reconciliations"] });
+    },
+  });
+  const rejectMutation = useMutation({
+    mutationFn: () => api.teamleadReconciliations.reject({ runId: run?.id ?? 0, comment }),
+    onSuccess: async () => {
+      setComment("");
+      await queryClient.invalidateQueries({ queryKey: ["teamlead", "reconciliations"] });
+    },
+  });
+  const canDecide = run?.status === "matched" || run?.status === "mismatch" || run?.status === "apply_failed";
+  const hasInbound = Boolean(run?.inboundImportBatchId);
+  const hasOutbound = Boolean(run?.outboundImportBatchId);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] max-w-[960px] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{run ? `Сверка #${run.id}` : "Сверка"}</DialogTitle>
+          <DialogDescription>{run ? `${run.dateFrom} — ${run.dateTo}` : "Загружаем детали run"}</DialogDescription>
+        </DialogHeader>
+        {isLoading || !run ? (
+          <EmptyState title="Загружаем детали" />
+        ) : (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusBadge status={run.status} />
+              <span className="text-sm text-muted-foreground">Расхождений: {run.mismatchCount}</span>
+              <span className="text-sm text-muted-foreground">Блокеров: {run.blockedCount}</span>
+            </div>
+            <TeamleadV2Pipeline run={run} />
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant={activeDirection === "inbound" ? "default" : "outline"} disabled={!hasInbound} onClick={() => onDirectionChange("inbound")}>
+                <ArrowDownLeft className="h-4 w-4" />
+                Входы
+              </Button>
+              <Button type="button" variant={activeDirection === "outbound" ? "default" : "outline"} disabled={!hasOutbound} onClick={() => onDirectionChange("outbound")}>
+                <ArrowUpRight className="h-4 w-4" />
+                Выходы
+              </Button>
+            </div>
+            <TeamleadV2DirectionSummary run={run} direction={activeDirection} />
+            <TeamleadV2ItemsTable items={items} />
+            {canDecide ? (
+              <div className="space-y-2 rounded-md border border-border p-3">
+                <textarea
+                  className="min-h-20 w-full rounded-md border border-border px-3 py-2 text-sm"
+                  value={comment}
+                  onChange={(event) => setComment(event.target.value)}
+                  placeholder={run.mismatchCount > 0 ? "Комментарий обязателен для расхождений" : "Комментарий к решению"}
+                />
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button type="button" variant="outline" disabled={rejectMutation.isPending || comment.trim() === ""} onClick={() => rejectMutation.mutate()}>
+                    Отклонить
+                  </Button>
+                  <Button type="button" disabled={confirmMutation.isPending || (run.mismatchCount > 0 && comment.trim() === "")} onClick={() => confirmMutation.mutate()}>
+                    <CheckCircle2 className="h-4 w-4" />
+                    Подтвердить и применить
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function TeamleadV2Pipeline({ run }: { run: TeamleadReconciliationRun }) {
+  const stages = Array.isArray(run.pipeline) ? run.pipeline : [];
+  if (!stages.length) return null;
+  return (
+    <div className="grid gap-2 md:grid-cols-4">
+      {stages.map((stage, index) => {
+        const item = stage as Record<string, unknown>;
+        const label = stageLabel(String(item.stage ?? ""));
+        const status = String(item.status ?? "matched");
+        return (
+          <div key={`${label}-${index}`} className="rounded-md border border-border p-3">
+            <div className="text-sm font-medium">{label}</div>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <StatusBadge status={status} />
+              <span className="text-xs text-muted-foreground">{Number(item.issuesCount ?? 0)} issues</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TeamleadV2DirectionSummary({ run, direction }: { run: TeamleadReconciliationRun; direction: OrderDirection }) {
+  const summary = direction === "inbound" ? run.inboundSummary : run.outboundSummary;
+  if (!summary || Object.keys(summary).length === 0) return <EmptyState title="Направление не загружалось" />;
+  return (
+    <div className="grid gap-3 md:grid-cols-4">
+      <Metric label="Строк в периоде" value={String(summaryNumber(summary, "rowsInPeriod") ?? 0)} />
+      <Metric label="Сумма TL" value={formatMoneyMinor(summaryNumber(summary, "successAmountMinor") ?? 0)} />
+      <Metric label="Сумма CRM" value={formatMoneyMinor(summaryNumber(summary, "crmAmountMinor") ?? 0)} />
+      <Metric label="Preview" value={`${summaryNumber(summary, "createCount") ?? 0}/${summaryNumber(summary, "updateCount") ?? 0}/${summaryNumber(summary, "unchangedCount") ?? 0}`} />
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border p-3">
+      <div className="text-xs font-medium uppercase tracking-normal text-muted-foreground">{label}</div>
+      <div className="mt-2 text-lg font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function TeamleadV2ItemsTable({ items }: { items: TeamleadReconciliationItem[] }) {
+  if (items.length === 0) return <EmptyState title="Деталей по направлению нет" />;
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="min-w-full text-sm">
+        <thead className="bg-slate-50 text-left text-xs uppercase tracking-normal text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2">Stage</th>
+            <th className="px-3 py-2">Issue</th>
+            <th className="px-3 py-2">Severity</th>
+            <th className="px-3 py-2">innerId</th>
+            <th className="px-3 py-2">Комментарий</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.id} className="border-t border-border">
+              <td className="px-3 py-2">{stageLabel(item.stage)}</td>
+              <td className="px-3 py-2">{issueTypeLabel(item.issueType)}</td>
+              <td className="px-3 py-2"><StatusBadge status={item.severity} /></td>
+              <td className="px-3 py-2">{item.externalInnerId ?? "—"}</td>
+              <td className="max-w-[360px] px-3 py-2 text-muted-foreground">{item.message ?? "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function summaryNumber(summary: Record<string, unknown> | undefined, key: string) {
+  const value = summary?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function stageLabel(stage: string) {
+  const labels: Record<string, string> = {
+    normalization: "Нормализация",
+    matching: "Матчинг",
+    turnover_check: "Проверка оборотов",
+    transaction_check: "Транзакции",
+    preview: "Preview",
+    apply: "Применение",
+  };
+  return labels[stage] ?? stage;
 }
 
 function TeamleadReconciliationStatusCard({

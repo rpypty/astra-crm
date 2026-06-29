@@ -262,6 +262,11 @@ export function OrdersPage({
           </div>
         ),
       },
+      {
+        accessorKey: "tlReconciliationStatus",
+        header: "TL",
+        cell: ({ row }) => <StatusBadge status={row.original.tlReconciliationStatus} />,
+      },
       { accessorKey: "innerId", header: "innerId" },
     ],
     [],
@@ -460,6 +465,10 @@ function OrderDetailsDialog({ order, onClose }: { order: Order | null; onClose: 
                 <StatusBadge status={order.normalizedStatus} />
                 <span className="text-sm text-muted-foreground">raw: {order.rawStatus}</span>
               </div>
+            </div>
+            <div className="rounded-md border border-border p-3">
+              <div className="mb-2 text-xs font-medium uppercase text-muted-foreground">TL-сверка</div>
+              <StatusBadge status={order.tlReconciliationStatus} />
             </div>
           </div>
         ) : null}

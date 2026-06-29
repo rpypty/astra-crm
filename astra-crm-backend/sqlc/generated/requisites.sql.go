@@ -195,7 +195,6 @@ func (q *Queries) CountRequisiteAssignmentHistory(ctx context.Context, arg Count
 const countRequisiteDetailsByTeam = `-- name: CountRequisiteDetailsByTeam :one
 SELECT count(*)::bigint
 FROM requisites r
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN LATERAL (
     SELECT ra.id, ra.trader_id, u.login AS trader_login, ra.status, ra.assigned_for_date, ra.target_turnover_minor
     FROM requisite_assignments ra
@@ -242,16 +241,19 @@ WHERE r.team_id = $1
   AND (
       $6::text = ''
       OR lower(r.phone) LIKE '%' || lower($6::text) || '%'
-      OR lower(b.name) LIKE '%' || lower($6::text) || '%'
+      OR (
+          COALESCE(cardinality($7::text[]), 0) > 0
+          AND r.bank_code = ANY($7::text[])
+      )
       OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower($6::text) || '%'
       OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower($6::text) || '%'
       OR lower(COALESCE(r.holder_name, '')) LIKE '%' || lower($6::text) || '%'
       OR lower(COALESCE(r.card_number, '')) LIKE '%' || lower($6::text) || '%'
       OR (
-          $7::text <> ''
+          $8::text <> ''
           AND (
-              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
-              OR regexp_replace(COALESCE(r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $8::text || '%'
+              OR regexp_replace(COALESCE(r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $8::text || '%'
           )
       )
   )
@@ -264,6 +266,7 @@ type CountRequisiteDetailsByTeamParams struct {
 	AvailableForPlanning bool
 	TraderFilter         string
 	Search               string
+	BankSearchCodes      []string
 	SearchDigits         string
 }
 
@@ -275,6 +278,7 @@ func (q *Queries) CountRequisiteDetailsByTeam(ctx context.Context, arg CountRequ
 		arg.AvailableForPlanning,
 		arg.TraderFilter,
 		arg.Search,
+		arg.BankSearchCodes,
 		arg.SearchDigits,
 	)
 	var column_1 int64
@@ -286,7 +290,6 @@ const countTeamleadRequisiteActivity = `-- name: CountTeamleadRequisiteActivity 
 SELECT count(*)::bigint
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 JOIN users u ON u.id = ra.trader_id
 LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = $1
@@ -308,29 +311,33 @@ WHERE ra.team_id = $1
   AND (
       $5::text = ''
       OR lower(r.phone) LIKE '%' || lower($5::text) || '%'
-      OR lower(b.name) LIKE '%' || lower($5::text) || '%'
+      OR (
+          COALESCE(cardinality($6::text[]), 0) > 0
+          AND r.bank_code = ANY($6::text[])
+      )
       OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower($5::text) || '%'
       OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower($5::text) || '%'
       OR lower(COALESCE(sr.holder_name, r.holder_name, '')) LIKE '%' || lower($5::text) || '%'
       OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower($5::text) || '%'
       OR lower(u.login) LIKE '%' || lower($5::text) || '%'
       OR (
-          $6::text <> ''
+          $7::text <> ''
           AND (
-              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $6::text || '%'
-              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $6::text || '%'
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
           )
       )
   )
 `
 
 type CountTeamleadRequisiteActivityParams struct {
-	TeamID       int64
-	BankCode     string
-	Status       string
-	TraderFilter string
-	Search       string
-	SearchDigits string
+	TeamID          int64
+	BankCode        string
+	Status          string
+	TraderFilter    string
+	Search          string
+	BankSearchCodes []string
+	SearchDigits    string
 }
 
 func (q *Queries) CountTeamleadRequisiteActivity(ctx context.Context, arg CountTeamleadRequisiteActivityParams) (int64, error) {
@@ -340,6 +347,7 @@ func (q *Queries) CountTeamleadRequisiteActivity(ctx context.Context, arg CountT
 		arg.Status,
 		arg.TraderFilter,
 		arg.Search,
+		arg.BankSearchCodes,
 		arg.SearchDigits,
 	)
 	var column_1 int64
@@ -362,8 +370,8 @@ func (q *Queries) CountTeamleadRequisitePlans(ctx context.Context, teamID int64)
 }
 
 const createRequisite = `-- name: CreateRequisite :one
-INSERT INTO requisites (team_id, phone, method_type, bank_code, proxy, employee_comment, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO requisites (team_id, phone, method_type, bank_code, card_number, proxy, employee_comment, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING id, team_id, phone, method_type, bank_code, proxy, employee_comment, holder_name, card_number, details_filled_at, details_filled_by, status, created_by, created_at, updated_at, deleted_at
 `
 
@@ -372,6 +380,7 @@ type CreateRequisiteParams struct {
 	Phone           string
 	MethodType      string
 	BankCode        string
+	CardNumber      pgtype.Text
 	Proxy           pgtype.Text
 	EmployeeComment pgtype.Text
 	CreatedBy       int64
@@ -402,6 +411,7 @@ func (q *Queries) CreateRequisite(ctx context.Context, arg CreateRequisiteParams
 		arg.Phone,
 		arg.MethodType,
 		arg.BankCode,
+		arg.CardNumber,
 		arg.Proxy,
 		arg.EmployeeComment,
 		arg.CreatedBy,
@@ -523,7 +533,7 @@ const fillRequisiteInitialDetails = `-- name: FillRequisiteInitialDetails :exec
 UPDATE requisites
 SET
     holder_name = $1,
-    card_number = $2,
+    card_number = COALESCE(card_number, $2),
     details_filled_at = now(),
     details_filled_by = $3,
     updated_at = now()
@@ -531,7 +541,6 @@ WHERE team_id = $4
   AND id = $5
   AND deleted_at IS NULL
   AND holder_name IS NULL
-  AND card_number IS NULL
 `
 
 type FillRequisiteInitialDetailsParams struct {
@@ -652,7 +661,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.holder_name,
@@ -671,7 +680,6 @@ SELECT
     ra.assigned_for_date,
     COALESCE(ra.target_turnover_minor, 0) AS target_turnover_minor
 FROM requisites r
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN LATERAL (
     SELECT ra.id, ra.trader_id, u.login AS trader_login, ra.status, ra.assigned_for_date, ra.target_turnover_minor
     FROM requisite_assignments ra
@@ -757,7 +765,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.holder_name,
@@ -770,7 +778,6 @@ SELECT
     r.last_activity_at,
     r.last_shift_requisite_id
 FROM requisites r
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN LATERAL (
     SELECT ra.status
     FROM requisite_assignments ra
@@ -1004,7 +1011,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.holder_name,
@@ -1023,7 +1030,6 @@ SELECT
     ra.assigned_for_date,
     COALESCE(ra.target_turnover_minor, 0) AS target_turnover_minor
 FROM requisites r
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN LATERAL (
     SELECT ra.id, ra.trader_id, u.login AS trader_login, ra.status, ra.assigned_for_date, ra.target_turnover_minor
     FROM requisite_assignments ra
@@ -1070,22 +1076,25 @@ WHERE r.team_id = $1
   AND (
       $6::text = ''
       OR lower(r.phone) LIKE '%' || lower($6::text) || '%'
-      OR lower(b.name) LIKE '%' || lower($6::text) || '%'
+      OR (
+          COALESCE(cardinality($7::text[]), 0) > 0
+          AND r.bank_code = ANY($7::text[])
+      )
       OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower($6::text) || '%'
       OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower($6::text) || '%'
       OR lower(COALESCE(r.holder_name, '')) LIKE '%' || lower($6::text) || '%'
       OR lower(COALESCE(r.card_number, '')) LIKE '%' || lower($6::text) || '%'
       OR (
-          $7::text <> ''
+          $8::text <> ''
           AND (
-              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
-              OR regexp_replace(COALESCE(r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $8::text || '%'
+              OR regexp_replace(COALESCE(r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $8::text || '%'
           )
       )
   )
 ORDER BY r.created_at DESC, r.id DESC
-LIMIT $9
-OFFSET $8
+LIMIT $10
+OFFSET $9
 `
 
 type ListRequisiteDetailsByTeamParams struct {
@@ -1095,6 +1104,7 @@ type ListRequisiteDetailsByTeamParams struct {
 	AvailableForPlanning bool
 	TraderFilter         string
 	Search               string
+	BankSearchCodes      []string
 	SearchDigits         string
 	OffsetCount          int32
 	LimitCount           int32
@@ -1134,6 +1144,7 @@ func (q *Queries) ListRequisiteDetailsByTeam(ctx context.Context, arg ListRequis
 		arg.AvailableForPlanning,
 		arg.TraderFilter,
 		arg.Search,
+		arg.BankSearchCodes,
 		arg.SearchDigits,
 		arg.OffsetCount,
 		arg.LimitCount,
@@ -1287,7 +1298,7 @@ SELECT
     ra.requisite_id,
     r.phone,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     ra.trader_id,
     u.login AS trader_login,
@@ -1308,7 +1319,6 @@ SELECT
     ra.shift_requisite_id
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 JOIN users u ON u.id = ra.trader_id
 LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = $1
@@ -1330,34 +1340,38 @@ WHERE ra.team_id = $1
   AND (
       $5::text = ''
       OR lower(r.phone) LIKE '%' || lower($5::text) || '%'
-      OR lower(b.name) LIKE '%' || lower($5::text) || '%'
+      OR (
+          COALESCE(cardinality($6::text[]), 0) > 0
+          AND r.bank_code = ANY($6::text[])
+      )
       OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower($5::text) || '%'
       OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower($5::text) || '%'
       OR lower(COALESCE(sr.holder_name, r.holder_name, '')) LIKE '%' || lower($5::text) || '%'
       OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower($5::text) || '%'
       OR lower(u.login) LIKE '%' || lower($5::text) || '%'
       OR (
-          $6::text <> ''
+          $7::text <> ''
           AND (
-              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $6::text || '%'
-              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $6::text || '%'
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
           )
       )
   )
 ORDER BY COALESCE(ra.completed_at, ra.started_at, ra.assigned_at) DESC, ra.id DESC
-LIMIT $8
-OFFSET $7
+LIMIT $9
+OFFSET $8
 `
 
 type ListTeamleadRequisiteActivityParams struct {
-	TeamID       int64
-	BankCode     string
-	Status       string
-	TraderFilter string
-	Search       string
-	SearchDigits string
-	OffsetCount  int32
-	LimitCount   int32
+	TeamID          int64
+	BankCode        string
+	Status          string
+	TraderFilter    string
+	Search          string
+	BankSearchCodes []string
+	SearchDigits    string
+	OffsetCount     int32
+	LimitCount      int32
 }
 
 type ListTeamleadRequisiteActivityRow struct {
@@ -1394,6 +1408,7 @@ func (q *Queries) ListTeamleadRequisiteActivity(ctx context.Context, arg ListTea
 		arg.Status,
 		arg.TraderFilter,
 		arg.Search,
+		arg.BankSearchCodes,
 		arg.SearchDigits,
 		arg.OffsetCount,
 		arg.LimitCount,
@@ -1448,7 +1463,7 @@ SELECT
     ra.requisite_id,
     r.phone,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     ra.trader_id,
     u.login AS trader_login,
@@ -1467,7 +1482,6 @@ SELECT
     ra.shift_requisite_id
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 JOIN users u ON u.id = ra.trader_id
 LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = $1
@@ -1670,16 +1684,17 @@ SET
     phone = $1,
     method_type = $2,
     bank_code = $3,
-    proxy = $4,
-    employee_comment = $5,
-    status = $6,
+    card_number = $4,
+    proxy = $5,
+    employee_comment = $6,
+    status = $7,
     updated_at = now(),
     deleted_at = CASE
-        WHEN $6 = 'archived' THEN COALESCE(requisites.deleted_at, now())
+        WHEN $7 = 'archived' THEN COALESCE(requisites.deleted_at, now())
         ELSE NULL
     END
-WHERE requisites.team_id = $7
-  AND requisites.id = $8
+WHERE requisites.team_id = $8
+  AND requisites.id = $9
   AND requisites.deleted_at IS NULL
 RETURNING id, team_id, phone, method_type, bank_code, proxy, employee_comment, holder_name, card_number, details_filled_at, details_filled_by, status, created_by, created_at, updated_at, deleted_at
 `
@@ -1688,6 +1703,7 @@ type UpdateRequisiteParams struct {
 	Phone           string
 	MethodType      string
 	BankCode        string
+	CardNumber      pgtype.Text
 	Proxy           pgtype.Text
 	EmployeeComment pgtype.Text
 	Status          string
@@ -1719,6 +1735,7 @@ func (q *Queries) UpdateRequisite(ctx context.Context, arg UpdateRequisiteParams
 		arg.Phone,
 		arg.MethodType,
 		arg.BankCode,
+		arg.CardNumber,
 		arg.Proxy,
 		arg.EmployeeComment,
 		arg.Status,

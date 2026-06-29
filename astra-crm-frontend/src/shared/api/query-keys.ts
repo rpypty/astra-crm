@@ -43,6 +43,10 @@ export const queryKeys = {
       ["teamlead", direction, "reconciliation", runId] as const,
     reconciliationRunItems: (direction: "inbound" | "outbound", runId: number | undefined, params?: QueryParams) =>
       withParams(["teamlead", direction, "reconciliation", runId, "items"] as const, params),
+    reconciliationV2: (params?: QueryParams) => withParams(["teamlead", "reconciliations"] as const, params),
+    reconciliationV2Run: (runId: number | undefined) => ["teamlead", "reconciliations", runId] as const,
+    reconciliationV2Items: (runId: number | undefined, params?: QueryParams) =>
+      withParams(["teamlead", "reconciliations", runId, "items"] as const, params),
     audit: (params?: QueryParams) => withParams(["teamlead", "audit"] as const, params),
   },
   trader: {

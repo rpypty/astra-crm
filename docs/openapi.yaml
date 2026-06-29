@@ -371,7 +371,7 @@ components:
         total: { type: integer, format: int64 }
     Shift:
       type: object
-      required: [id, teamId, traderId, startedAt, status, inboundReconciliationStatus, outboundReconciliationStatus, createdAt, updatedAt]
+      required: [id, teamId, traderId, startedAt, status, inboundReconciliationStatus, outboundReconciliationStatus, tlReconciliationStatus, createdAt, updatedAt]
       properties:
         id: { type: integer, format: int64 }
         teamId: { type: integer, format: int64 }
@@ -381,6 +381,9 @@ components:
         status: { type: string, enum: [open, closing, closed, closed_with_discrepancy] }
         inboundReconciliationStatus: { type: string }
         outboundReconciliationStatus: { type: string }
+        tlReconciliationStatus: { type: string, enum: [not_checked, confirmed_by_tl, updated_by_tl, tl_discrepancy, tl_accepted] }
+        lastTeamleadReconciliationId: { type: integer, format: int64 }
+        tlReconciledAt: { type: string, format: date-time }
         closeComment: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -685,7 +688,7 @@ components:
         transfer: { $ref: "#/components/schemas/PayoutTransfer" }
     Order:
       type: object
-      required: [id, externalOrderId, externalId, externalInnerId, workerName, amountMinor, currency, rawStatus, normalizedStatus, createdAtExternal, importBatchId]
+      required: [id, externalOrderId, externalId, externalInnerId, workerName, amountMinor, currency, rawStatus, normalizedStatus, tlReconciliationStatus, createdAtExternal, importBatchId]
       properties:
         id: { type: integer, format: int64 }
         externalOrderId: { type: integer, format: int64 }
@@ -702,6 +705,7 @@ components:
         currency: { type: string }
         rawStatus: { type: string }
         normalizedStatus: { type: string, enum: [success, corrected, failed, cancelled, unknown] }
+        tlReconciliationStatus: { type: string, enum: [not_checked, confirmed_by_tl, updated_by_tl, tl_discrepancy, tl_accepted] }
         createdAtExternal: { type: string, format: date-time }
         importBatchId: { type: integer, format: int64 }
     OrdersListResponse:
@@ -841,6 +845,147 @@ components:
         page: { type: integer, format: int64 }
         pageSize: { type: integer, format: int64 }
         total: { type: integer, format: int64 }
+    TeamleadReconciliationPipelineStep:
+      type: object
+      required: [stage, status, issuesCount, directionsCount]
+      properties:
+        stage: { type: string, enum: [normalization, matching, turnover_check, transaction_check, preview] }
+        status: { type: string, enum: [matched, mismatch] }
+        issuesCount: { type: integer, format: int64 }
+        directionsCount: { type: integer, format: int64 }
+    TeamleadReconciliationSummary:
+      type: object
+      properties:
+        rowsTotal: { type: integer, format: int64 }
+        rowsInPeriod: { type: integer, format: int64 }
+        successAmountMinor: { type: integer, format: int64 }
+        successCount: { type: integer, format: int64 }
+        failedAmountMinor: { type: integer, format: int64 }
+        failedCount: { type: integer, format: int64 }
+        totalAmountMinor: { type: integer, format: int64 }
+        totalCount: { type: integer, format: int64 }
+        crmAmountMinor: { type: integer, format: int64 }
+        crmCount: { type: integer, format: int64 }
+        diffAmountMinor: { type: integer, format: int64 }
+    TeamleadReconciliationPreview:
+      type: object
+      additionalProperties:
+        type: object
+        properties:
+          createCount: { type: integer, format: int64 }
+          updateCount: { type: integer, format: int64 }
+          unchangedCount: { type: integer, format: int64 }
+          blockedCount: { type: integer, format: int64 }
+    TeamleadReconciliationApplyDirectionResult:
+      type: object
+      required: [direction, rowsApplied, createdOrders, updatedOrders, confirmedOrders, discrepancyOrders]
+      properties:
+        direction: { type: string, enum: [inbound, outbound] }
+        rowsApplied: { type: integer, format: int64 }
+        createdOrders: { type: integer, format: int64 }
+        updatedOrders: { type: integer, format: int64 }
+        confirmedOrders: { type: integer, format: int64 }
+        discrepancyOrders: { type: integer, format: int64 }
+    TeamleadReconciliationApplyResult:
+      type: object
+      required: [runId, createdOrders, updatedOrders, confirmedOrders, discrepancyOrders, directions]
+      properties:
+        runId: { type: integer, format: int64 }
+        createdOrders: { type: integer, format: int64 }
+        updatedOrders: { type: integer, format: int64 }
+        confirmedOrders: { type: integer, format: int64 }
+        discrepancyOrders: { type: integer, format: int64 }
+        directions:
+          type: array
+          items: { $ref: "#/components/schemas/TeamleadReconciliationApplyDirectionResult" }
+    TeamleadReconciliationRun:
+      type: object
+      required: [id, teamId, dateFrom, dateTo, status, createdBy, mismatchCount, conflictCount, blockedCount, createdAt, updatedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        teamId: { type: integer, format: int64 }
+        dateFrom: { type: string, format: date }
+        dateTo: { type: string, format: date }
+        status: { type: string, enum: [draft, analyzing, matched, mismatch, apply_queued, applying, applied, apply_failed, rejected] }
+        createdBy: { type: integer, format: int64 }
+        confirmedBy: { type: integer, format: int64 }
+        rejectedBy: { type: integer, format: int64 }
+        inboundImportBatchId: { type: integer, format: int64 }
+        outboundImportBatchId: { type: integer, format: int64 }
+        comment: { type: string }
+        mismatchCount: { type: integer, format: int64 }
+        conflictCount: { type: integer, format: int64 }
+        blockedCount: { type: integer, format: int64 }
+        pipeline:
+          type: array
+          items: { $ref: "#/components/schemas/TeamleadReconciliationPipelineStep" }
+        inboundSummary: { $ref: "#/components/schemas/TeamleadReconciliationSummary" }
+        outboundSummary: { $ref: "#/components/schemas/TeamleadReconciliationSummary" }
+        preview: { $ref: "#/components/schemas/TeamleadReconciliationPreview" }
+        applyResult: { $ref: "#/components/schemas/TeamleadReconciliationApplyResult" }
+        errorMessage: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        analyzedAt: { type: string, format: date-time }
+        confirmedAt: { type: string, format: date-time }
+        rejectedAt: { type: string, format: date-time }
+        applyQueuedAt: { type: string, format: date-time }
+        appliedAt: { type: string, format: date-time }
+    TeamleadReconciliationResponse:
+      type: object
+      required: [reconciliation]
+      properties:
+        reconciliation: { $ref: "#/components/schemas/TeamleadReconciliationRun" }
+    TeamleadReconciliationsResponse:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TeamleadReconciliationRun" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
+    TeamleadReconciliationItem:
+      type: object
+      required: [id, teamleadReconciliationId, teamId, direction, stage, issueType, severity, isBlocking, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        teamleadReconciliationId: { type: integer, format: int64 }
+        teamId: { type: integer, format: int64 }
+        direction: { type: string, enum: [inbound, outbound] }
+        stage: { type: string }
+        issueType: { type: string }
+        severity: { type: string, enum: [info, warning, error, blocker] }
+        externalOrderId: { type: integer, format: int64 }
+        externalInnerId: { type: string }
+        traderId: { type: integer, format: int64 }
+        requisiteId: { type: integer, format: int64 }
+        shiftId: { type: integer, format: int64 }
+        before:
+          type: object
+          additionalProperties: true
+        after:
+          type: object
+          additionalProperties: true
+        message: { type: string }
+        isBlocking: { type: boolean }
+        appliedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    TeamleadReconciliationItemsResponse:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TeamleadReconciliationItem" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
+    TeamleadReconciliationDecisionRequest:
+      type: object
+      properties:
+        comment: { type: string }
     ImportResult:
       type: object
       required: [importBatchId, status, rowsCount, createdOrders, updatedOrders, deactivatedScopeItems, activeScopeItems, supersededBatches]
@@ -1010,6 +1155,36 @@ components:
       in: query
       required: false
       schema: { type: boolean, default: false }
+    TeamleadReconciliationDirection:
+      name: direction
+      in: query
+      required: false
+      schema: { type: string, enum: [inbound, outbound, all] }
+    TeamleadReconciliationStage:
+      name: stage
+      in: query
+      required: false
+      schema: { type: string }
+    TeamleadReconciliationIssueType:
+      name: issueType
+      in: query
+      required: false
+      schema: { type: string }
+    TeamleadReconciliationSeverity:
+      name: severity
+      in: query
+      required: false
+      schema: { type: string, enum: [info, warning, error, blocker, all] }
+    TeamleadReconciliationTraderId:
+      name: traderId
+      in: query
+      required: false
+      schema: { type: integer, format: int64 }
+    TeamleadReconciliationRequisiteId:
+      name: requisiteId
+      in: query
+      required: false
+      schema: { type: integer, format: int64 }
     Page:
       name: page
       in: query
@@ -1409,6 +1584,119 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReconciliationItemsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/reconciliations:
+    get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Teamlead reconciliation runs created from period CSV uploads
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamleadReconciliationsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [dateFrom, dateTo]
+              properties:
+                dateFrom: { type: string, format: date }
+                dateTo: { type: string, format: date }
+                inboundFile:
+                  type: string
+                  format: binary
+                  description: Optional inbound CSV file. At least one CSV file is required.
+                outboundFile:
+                  type: string
+                  format: binary
+                  description: Optional outbound CSV file. At least one CSV file is required.
+      responses:
+        "201":
+          description: Teamlead reconciliation run analyzed and stored
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamleadReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/reconciliations/{runId}:
+    parameters:
+      - name: runId
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      responses:
+        "200":
+          description: Teamlead reconciliation run details
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamleadReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/reconciliations/{runId}/items:
+    get:
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/TeamleadReconciliationDirection"
+        - $ref: "#/components/parameters/TeamleadReconciliationStage"
+        - $ref: "#/components/parameters/TeamleadReconciliationIssueType"
+        - $ref: "#/components/parameters/TeamleadReconciliationSeverity"
+        - $ref: "#/components/parameters/TeamleadReconciliationTraderId"
+        - $ref: "#/components/parameters/TeamleadReconciliationRequisiteId"
+        - $ref: "#/components/parameters/ReconciliationOnlyMismatch"
+      responses:
+        "200":
+          description: Teamlead reconciliation issues and preview items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamleadReconciliationItemsResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/reconciliations/{runId}/confirm:
+    post:
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeamleadReconciliationDecisionRequest" }
+      responses:
+        "200":
+          description: Teamlead reconciliation accepted and queued for apply
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamleadReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /teamlead/reconciliations/{runId}/reject:
+    post:
+      parameters:
+        - name: runId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TeamleadReconciliationDecisionRequest" }
+      responses:
+        "200":
+          description: Teamlead reconciliation rejected without applying changes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamleadReconciliationResponse" }
         default: { $ref: "#/components/responses/Error" }
   /trader/profile:
     get:

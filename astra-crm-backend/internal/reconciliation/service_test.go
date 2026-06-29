@@ -2,6 +2,7 @@ package reconciliation
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -189,6 +190,410 @@ func TestServiceAfterImportAppliedRecalculatesTeamleadPeriodOutbound(t *testing.
 	}
 	if record.ImportBatchID == nil || *record.ImportBatchID != 500 {
 		t.Fatalf("teamlead outbound import batch id = %v, want 500", record.ImportBatchID)
+	}
+}
+
+func TestServiceCreateTeamleadReconciliationAlwaysRunsTransactionDiff(t *testing.T) {
+	cardNumber := "1234567890123456"
+	store := &fakeStore{
+		teamleadTraders: []TeamleadTraderMatch{
+			{TraderID: 3, ExternalWorkerName: "Bliss_OP1"},
+		},
+		teamleadRequisites: []TeamleadRequisiteMatch{
+			{
+				ID:                   20,
+				BankCode:             "sber",
+				Phone:                "79991234567",
+				CardNumber:           &cardNumber,
+				NormalizedPhone:      "79991234567",
+				NormalizedCardNumber: cardNumber,
+			},
+		},
+		teamleadInboundTurnover: TeamleadTurnoverSnapshot{
+			AmountMinor: 1000,
+			Count:       1,
+		},
+	}
+	auditService := &fakeAuditService{}
+	service := NewService(store, auditService)
+	inboundCSV := []byte("id|foreignId|innerId|requisite|requisitePhone|methodName|amount|currency|status|createdAt|workerName\n" +
+		"1|f1|in-1|1234567890123456|+7 (999) 123-45-67|Сбер|10.00|RUB|hand_success|10.06.2026 12:00:00|Bliss_OP1\n" +
+		"2|f2|outside-period|1234567890123456|+7 (999) 123-45-67|Сбер|20.00|RUB|hand_success|01.05.2026 12:00:00|Bliss_OP1\n")
+
+	run, err := service.CreateTeamleadReconciliation(context.Background(), CreateTeamleadReconciliationParams{
+		ActorID:  1,
+		TeamID:   2,
+		DateFrom: time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		DateTo:   time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		Inbound: &TeamleadCSVInput{
+			FileName: "inbound.csv",
+			Payload:  inboundCSV,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTeamleadReconciliation() error = %v", err)
+	}
+	if run.Status != TeamleadRunStatusMismatch {
+		t.Fatalf("run status = %q, want mismatch", run.Status)
+	}
+	if len(store.createdTeamleadAnalysis.Directions) != 1 {
+		t.Fatalf("directions count = %d, want 1", len(store.createdTeamleadAnalysis.Directions))
+	}
+	summary := store.createdTeamleadAnalysis.Directions[0].Summary
+	if summary.RowsTotal != 2 || summary.RowsInPeriod != 1 {
+		t.Fatalf("summary rows = total:%d period:%d, want 2/1", summary.RowsTotal, summary.RowsInPeriod)
+	}
+	if summary.SuccessAmountMinor != 1000 || summary.CRMAmountMinor != 1000 || summary.DiffAmountMinor != 0 {
+		t.Fatalf("summary amounts = success:%d crm:%d diff:%d, want 1000/1000/0", summary.SuccessAmountMinor, summary.CRMAmountMinor, summary.DiffAmountMinor)
+	}
+	if summary.CreateCount != 1 || summary.UpdateCount != 0 || summary.UnchangedCount != 0 {
+		t.Fatalf("preview counts = create:%d update:%d unchanged:%d, want 1/0/0", summary.CreateCount, summary.UpdateCount, summary.UnchangedCount)
+	}
+	if !hasTeamleadItem(store.createdTeamleadAnalysis.Items, TeamleadItemStageTransactionCheck, "missing_in_crm") {
+		t.Fatalf("items = %+v, want missing_in_crm transaction diff item", store.createdTeamleadAnalysis.Items)
+	}
+	if hasTeamleadItem(store.createdTeamleadAnalysis.Items, TeamleadItemStageTurnoverCheck, "turnover_mismatch") {
+		t.Fatalf("items = %+v, did not expect turnover mismatch when totals match", store.createdTeamleadAnalysis.Items)
+	}
+	if len(auditService.events) != 1 || auditService.events[0].Action != audit.ActionReconciliationCreated {
+		t.Fatalf("audit events = %+v, want reconciliation.created", auditService.events)
+	}
+}
+
+func TestServiceCreateTeamleadReconciliationRejectsDuplicateInnerID(t *testing.T) {
+	store := &fakeStore{}
+	service := NewService(store, nil)
+	inboundCSV := []byte("id|innerId|amount|currency|status|createdAt|workerName\n" +
+		"1|dup-1|10.00|RUB|hand_success|10.06.2026 12:00:00|Bliss_OP1\n" +
+		"2|dup-1|20.00|RUB|hand_success|10.06.2026 13:00:00|Bliss_OP1\n")
+
+	_, err := service.CreateTeamleadReconciliation(context.Background(), CreateTeamleadReconciliationParams{
+		ActorID:  1,
+		TeamID:   2,
+		DateFrom: time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		DateTo:   time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		Inbound: &TeamleadCSVInput{
+			FileName: "inbound.csv",
+			Payload:  inboundCSV,
+		},
+	})
+	var csvErr *TeamleadCSVValidationError
+	if !errors.As(err, &csvErr) {
+		t.Fatalf("CreateTeamleadReconciliation() error = %v, want TeamleadCSVValidationError", err)
+	}
+	if len(csvErr.Parse.Errors) != 1 || csvErr.Parse.Errors[0].Code != imports.ParseCodeDuplicateInnerID {
+		t.Fatalf("parse errors = %+v, want duplicate innerId", csvErr.Parse.Errors)
+	}
+	if store.createdTeamleadAnalysis.TeamID != 0 {
+		t.Fatalf("created analysis = %+v, want no persisted run", store.createdTeamleadAnalysis)
+	}
+}
+
+func TestServiceCreateTeamleadReconciliationReportsTurnoverMismatchAndTransactionDiff(t *testing.T) {
+	cardNumber := "1234567890123456"
+	traderID := int64(3)
+	requisiteID := int64(20)
+	store := &fakeStore{
+		teamleadTraders: []TeamleadTraderMatch{
+			{TraderID: traderID, ExternalWorkerName: "Bliss_OP1"},
+		},
+		teamleadRequisites: []TeamleadRequisiteMatch{
+			{
+				ID:                   requisiteID,
+				BankCode:             "sber",
+				Phone:                "79991234567",
+				CardNumber:           &cardNumber,
+				NormalizedPhone:      "79991234567",
+				NormalizedCardNumber: cardNumber,
+			},
+		},
+		teamleadInboundTurnover: TeamleadTurnoverSnapshot{
+			AmountMinor: 700,
+			Count:       1,
+		},
+		teamleadExternalOrders: []TeamleadExternalOrderSnapshot{
+			{
+				ID:                900,
+				Direction:         imports.DirectionInbound,
+				ExternalInnerID:   "in-1",
+				WorkerName:        "Bliss_OP1",
+				TraderID:          &traderID,
+				RequisiteID:       &requisiteID,
+				AmountMinor:       500,
+				RawStatus:         "hand_success",
+				NormalizedStatus:  imports.NormalizedStatusSuccess,
+				CreatedAtExternal: time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	service := NewService(store, nil)
+	inboundCSV := []byte("id|foreignId|innerId|requisite|requisitePhone|methodName|amount|currency|status|createdAt|workerName\n" +
+		"1|f1|in-1|1234567890123456|+7 (999) 123-45-67|Сбер|10.00|RUB|hand_success|10.06.2026 12:00:00|Bliss_OP1\n")
+
+	run, err := service.CreateTeamleadReconciliation(context.Background(), CreateTeamleadReconciliationParams{
+		ActorID:  1,
+		TeamID:   2,
+		DateFrom: time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		DateTo:   time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		Inbound: &TeamleadCSVInput{
+			FileName: "inbound.csv",
+			Payload:  inboundCSV,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTeamleadReconciliation() error = %v", err)
+	}
+	if run.Status != TeamleadRunStatusMismatch {
+		t.Fatalf("run status = %q, want mismatch", run.Status)
+	}
+	if !hasTeamleadItem(store.createdTeamleadAnalysis.Items, TeamleadItemStageTurnoverCheck, "turnover_mismatch") {
+		t.Fatalf("items = %+v, want turnover_mismatch", store.createdTeamleadAnalysis.Items)
+	}
+	if !hasTeamleadItem(store.createdTeamleadAnalysis.Items, TeamleadItemStageTransactionCheck, "amount_changed") {
+		t.Fatalf("items = %+v, want amount_changed transaction diff", store.createdTeamleadAnalysis.Items)
+	}
+	summary := store.createdTeamleadAnalysis.Directions[0].Summary
+	if summary.DiffAmountMinor != -300 || summary.UpdateCount != 1 {
+		t.Fatalf("summary diff/update = %d/%d, want -300/1", summary.DiffAmountMinor, summary.UpdateCount)
+	}
+}
+
+func TestServiceCreateTeamleadReconciliationDetectsAmbiguousPhoneOnlyRequisite(t *testing.T) {
+	firstCard := "1111222233334444"
+	secondCard := "5555666677778888"
+	store := &fakeStore{
+		teamleadTraders: []TeamleadTraderMatch{
+			{TraderID: 3, ExternalWorkerName: "Bliss_OP1"},
+		},
+		teamleadRequisites: []TeamleadRequisiteMatch{
+			{
+				ID:                   20,
+				BankCode:             "sber",
+				Phone:                "79991234567",
+				CardNumber:           &firstCard,
+				NormalizedPhone:      "79991234567",
+				NormalizedCardNumber: firstCard,
+			},
+			{
+				ID:                   21,
+				BankCode:             "sber",
+				Phone:                "79991234567",
+				CardNumber:           &secondCard,
+				NormalizedPhone:      "79991234567",
+				NormalizedCardNumber: secondCard,
+			},
+		},
+		teamleadInboundTurnover: TeamleadTurnoverSnapshot{
+			AmountMinor: 1000,
+			Count:       1,
+		},
+	}
+	service := NewService(store, nil)
+	inboundCSV := []byte("id|foreignId|innerId|requisite|requisitePhone|methodName|amount|currency|status|createdAt|workerName\n" +
+		"1|f1|in-1||+7 (999) 123-45-67|Сбер|10.00|RUB|hand_success|10.06.2026 12:00:00|Bliss_OP1\n")
+
+	run, err := service.CreateTeamleadReconciliation(context.Background(), CreateTeamleadReconciliationParams{
+		ActorID:  1,
+		TeamID:   2,
+		DateFrom: time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		DateTo:   time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		Inbound: &TeamleadCSVInput{
+			FileName: "inbound.csv",
+			Payload:  inboundCSV,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTeamleadReconciliation() error = %v", err)
+	}
+	if run.BlockedCount == 0 {
+		t.Fatalf("blocked count = %d, want blocker for ambiguous requisite", run.BlockedCount)
+	}
+	if !hasTeamleadItem(store.createdTeamleadAnalysis.Items, TeamleadItemStageMatching, "ambiguous_requisite") {
+		t.Fatalf("items = %+v, want ambiguous_requisite", store.createdTeamleadAnalysis.Items)
+	}
+}
+
+func TestServiceCreateTeamleadReconciliationDetectsCardPhoneConflict(t *testing.T) {
+	cardNumber := "1234567890123456"
+	store := &fakeStore{
+		teamleadTraders: []TeamleadTraderMatch{
+			{TraderID: 3, ExternalWorkerName: "Bliss_OP1"},
+		},
+		teamleadRequisites: []TeamleadRequisiteMatch{
+			{
+				ID:                   20,
+				BankCode:             "sber",
+				Phone:                "70000000000",
+				CardNumber:           &cardNumber,
+				NormalizedPhone:      "70000000000",
+				NormalizedCardNumber: cardNumber,
+			},
+		},
+		teamleadInboundTurnover: TeamleadTurnoverSnapshot{
+			AmountMinor: 1000,
+			Count:       1,
+		},
+	}
+	service := NewService(store, nil)
+	inboundCSV := []byte("id|foreignId|innerId|requisite|requisitePhone|methodName|amount|currency|status|createdAt|workerName\n" +
+		"1|f1|in-1|1234567890123456|+7 (999) 123-45-67|Сбер|10.00|RUB|hand_success|10.06.2026 12:00:00|Bliss_OP1\n")
+
+	run, err := service.CreateTeamleadReconciliation(context.Background(), CreateTeamleadReconciliationParams{
+		ActorID:  1,
+		TeamID:   2,
+		DateFrom: time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		DateTo:   time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		Inbound: &TeamleadCSVInput{
+			FileName: "inbound.csv",
+			Payload:  inboundCSV,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTeamleadReconciliation() error = %v", err)
+	}
+	if run.ConflictCount == 0 || run.BlockedCount == 0 {
+		t.Fatalf("conflict/blocker counts = %d/%d, want both > 0", run.ConflictCount, run.BlockedCount)
+	}
+	if !hasTeamleadItem(store.createdTeamleadAnalysis.Items, TeamleadItemStageMatching, "conflict_requisite") {
+		t.Fatalf("items = %+v, want conflict_requisite", store.createdTeamleadAnalysis.Items)
+	}
+}
+
+func TestServiceConfirmTeamleadReconciliationRequiresCommentForMismatch(t *testing.T) {
+	store := &fakeStore{
+		teamleadRun: TeamleadRun{
+			ID:            500,
+			TeamID:        2,
+			Status:        TeamleadRunStatusMismatch,
+			MismatchCount: 1,
+		},
+	}
+	scheduler := &fakeTeamleadApplyScheduler{}
+	service := NewService(store, nil, scheduler)
+
+	_, err := service.ConfirmTeamleadReconciliation(context.Background(), ConfirmTeamleadReconciliationParams{
+		ActorID: 1,
+		TeamID:  2,
+		RunID:   500,
+		Comment: " ",
+	})
+	if err != ErrInvalidInput {
+		t.Fatalf("ConfirmTeamleadReconciliation() error = %v, want ErrInvalidInput", err)
+	}
+	if store.queuedTeamleadApplyRecord.RunID != 0 {
+		t.Fatalf("queued record = %+v, want no queue", store.queuedTeamleadApplyRecord)
+	}
+	if scheduler.runID != 0 {
+		t.Fatalf("scheduled run id = %d, want 0", scheduler.runID)
+	}
+}
+
+func TestServiceConfirmTeamleadReconciliationQueuesAsyncApplyAndAudits(t *testing.T) {
+	store := &fakeStore{
+		teamleadRun: TeamleadRun{
+			ID:     500,
+			TeamID: 2,
+			Status: TeamleadRunStatusMatched,
+		},
+		queuedTeamleadRun: TeamleadRun{
+			ID:            500,
+			TeamID:        2,
+			Status:        TeamleadRunStatusApplyQueued,
+			CreatedBy:     1,
+			ApplyQueuedAt: timeValuePtr(time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)),
+		},
+	}
+	auditService := &fakeAuditService{}
+	scheduler := &fakeTeamleadApplyScheduler{}
+	service := NewService(store, auditService, scheduler)
+
+	run, err := service.ConfirmTeamleadReconciliation(context.Background(), ConfirmTeamleadReconciliationParams{
+		ActorID: 1,
+		TeamID:  2,
+		RunID:   500,
+	})
+	if err != nil {
+		t.Fatalf("ConfirmTeamleadReconciliation() error = %v", err)
+	}
+	if run.Status != TeamleadRunStatusApplyQueued {
+		t.Fatalf("run status = %q, want apply_queued", run.Status)
+	}
+	if store.queuedTeamleadApplyRecord.RunID != 500 || store.queuedTeamleadApplyRecord.ActorID != 1 {
+		t.Fatalf("queued record = %+v, want run 500 actor 1", store.queuedTeamleadApplyRecord)
+	}
+	if scheduler.teamID != 2 || scheduler.runID != 500 {
+		t.Fatalf("scheduler call = team:%d run:%d, want 2/500", scheduler.teamID, scheduler.runID)
+	}
+	if len(auditService.events) != 1 || auditService.events[0].Action != audit.ActionReconciliationConfirmed {
+		t.Fatalf("audit events = %+v, want reconciliation.confirmed", auditService.events)
+	}
+}
+
+func TestServiceRejectTeamleadReconciliationAuditsWithoutSchedulingApply(t *testing.T) {
+	store := &fakeStore{
+		teamleadRun: TeamleadRun{
+			ID:     500,
+			TeamID: 2,
+			Status: TeamleadRunStatusMismatch,
+		},
+		rejectedTeamleadRun: TeamleadRun{
+			ID:        500,
+			TeamID:    2,
+			Status:    TeamleadRunStatusRejected,
+			CreatedBy: 1,
+			Comment:   stringPtr("bad export"),
+		},
+	}
+	auditService := &fakeAuditService{}
+	scheduler := &fakeTeamleadApplyScheduler{}
+	service := NewService(store, auditService, scheduler)
+
+	run, err := service.RejectTeamleadReconciliation(context.Background(), RejectTeamleadReconciliationParams{
+		ActorID: 1,
+		TeamID:  2,
+		RunID:   500,
+		Comment: " bad export ",
+	})
+	if err != nil {
+		t.Fatalf("RejectTeamleadReconciliation() error = %v", err)
+	}
+	if run.Status != TeamleadRunStatusRejected {
+		t.Fatalf("run status = %q, want rejected", run.Status)
+	}
+	if store.rejectedTeamleadRecord.Comment != "bad export" {
+		t.Fatalf("reject comment = %q, want trimmed comment", store.rejectedTeamleadRecord.Comment)
+	}
+	if scheduler.runID != 0 {
+		t.Fatalf("scheduled run id = %d, want 0", scheduler.runID)
+	}
+	if len(auditService.events) != 1 || auditService.events[0].Action != audit.ActionReconciliationRejected {
+		t.Fatalf("audit events = %+v, want reconciliation.rejected", auditService.events)
+	}
+}
+
+func TestServiceApplyQueuedTeamleadReconciliationAuditsMutation(t *testing.T) {
+	store := &fakeStore{
+		appliedTeamleadRun: TeamleadRun{
+			ID:     500,
+			TeamID: 2,
+			Status: TeamleadRunStatusApplied,
+		},
+	}
+	auditService := &fakeAuditService{}
+	service := NewService(store, auditService)
+
+	run, err := service.ApplyQueuedTeamleadReconciliation(context.Background(), 2, 500)
+	if err != nil {
+		t.Fatalf("ApplyQueuedTeamleadReconciliation() error = %v", err)
+	}
+	if run.Status != TeamleadRunStatusApplied {
+		t.Fatalf("run status = %q, want applied", run.Status)
+	}
+	if store.appliedTeamleadTeamID != 2 || store.appliedTeamleadRunID != 500 {
+		t.Fatalf("apply call = team:%d run:%d, want 2/500", store.appliedTeamleadTeamID, store.appliedTeamleadRunID)
+	}
+	if len(auditService.events) != 1 || auditService.events[0].Action != audit.ActionReconciliationApplied {
+		t.Fatalf("audit events = %+v, want reconciliation.applied", auditService.events)
 	}
 }
 
@@ -394,6 +799,15 @@ func TestServiceAcceptTraderOutboundAuditsMutation(t *testing.T) {
 	}
 }
 
+func hasTeamleadItem(items []TeamleadItemRecord, stage string, issueType string) bool {
+	for _, item := range items {
+		if item.Stage == stage && item.IssueType == issueType {
+			return true
+		}
+	}
+	return false
+}
+
 type fakeStore struct {
 	recalculateCalled                        bool
 	recalculateRecord                        RecalculateTraderInboundRecord
@@ -419,6 +833,24 @@ type fakeStore struct {
 	activeTeamleadScopes                     []TeamleadInboundPeriodScope
 	activeTeamleadOutboundScopes             []TeamleadOutboundPeriodScope
 	items                                    []Item
+	createdTeamleadAnalysis                  CreateTeamleadAnalysisRecord
+	teamleadRun                              TeamleadRun
+	teamleadRuns                             []TeamleadRun
+	teamleadItems                            []TeamleadItem
+	teamleadItemsFilters                     TeamleadItemFilters
+	queuedTeamleadApplyRecord                QueueTeamleadApplyRecord
+	queuedTeamleadRun                        TeamleadRun
+	rejectedTeamleadRecord                   RejectTeamleadReconciliationRecord
+	rejectedTeamleadRun                      TeamleadRun
+	appliedTeamleadTeamID                    int64
+	appliedTeamleadRunID                     int64
+	appliedTeamleadRun                       TeamleadRun
+	teamleadTraders                          []TeamleadTraderMatch
+	teamleadRequisites                       []TeamleadRequisiteMatch
+	teamleadExternalOrders                   []TeamleadExternalOrderSnapshot
+	teamleadExternalOrdersInPeriod           []TeamleadExternalOrderSnapshot
+	teamleadInboundTurnover                  TeamleadTurnoverSnapshot
+	teamleadOutboundTransfers                TeamleadTurnoverSnapshot
 }
 
 func (s *fakeStore) RecalculateTraderInbound(ctx context.Context, record RecalculateTraderInboundRecord) (Run, error) {
@@ -628,6 +1060,103 @@ func (s *fakeStore) AcceptTeamleadCurrent(ctx context.Context, record AcceptTeam
 	return s.acceptedTeamleadCurrentRun, nil
 }
 
+func (s *fakeStore) CreateTeamleadAnalysis(ctx context.Context, record CreateTeamleadAnalysisRecord) (TeamleadRun, error) {
+	s.createdTeamleadAnalysis = record
+	return TeamleadRun{
+		ID:                  500,
+		TeamID:              record.TeamID,
+		DateFrom:            record.DateFrom,
+		DateTo:              record.DateTo,
+		Status:              record.Status,
+		CreatedBy:           record.ActorID,
+		MismatchCount:       record.MismatchCount,
+		ConflictCount:       record.ConflictCount,
+		BlockedCount:        record.BlockedCount,
+		PipelineJSON:        record.PipelineJSON,
+		InboundSummaryJSON:  record.InboundSummary,
+		OutboundSummaryJSON: record.OutboundSummary,
+		PreviewJSON:         record.PreviewJSON,
+		CreatedAt:           time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+		UpdatedAt:           time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC),
+		AnalyzedAt:          timeValuePtr(time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)),
+	}, nil
+}
+
+func (s *fakeStore) GetTeamleadReconciliation(ctx context.Context, teamID int64, runID int64) (TeamleadRun, error) {
+	if s.teamleadRun.ID == 0 {
+		return TeamleadRun{}, ErrRunNotFound
+	}
+	return s.teamleadRun, nil
+}
+
+func (s *fakeStore) ListTeamleadReconciliations(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[TeamleadRun], error) {
+	return pagination.FromSlice(s.teamleadRuns, page), nil
+}
+
+func (s *fakeStore) ListTeamleadReconciliationItems(ctx context.Context, teamID int64, runID int64, filters TeamleadItemFilters, page pagination.Params) (pagination.Result[TeamleadItem], error) {
+	s.teamleadItemsFilters = filters
+	return pagination.FromSlice(s.teamleadItems, page), nil
+}
+
+func (s *fakeStore) QueueTeamleadReconciliationApply(ctx context.Context, record QueueTeamleadApplyRecord) (TeamleadRun, error) {
+	s.queuedTeamleadApplyRecord = record
+	return s.queuedTeamleadRun, nil
+}
+
+func (s *fakeStore) RejectTeamleadReconciliation(ctx context.Context, record RejectTeamleadReconciliationRecord) (TeamleadRun, error) {
+	s.rejectedTeamleadRecord = record
+	return s.rejectedTeamleadRun, nil
+}
+
+func (s *fakeStore) ApplyQueuedTeamleadReconciliation(ctx context.Context, teamID int64, runID int64) (TeamleadRun, error) {
+	s.appliedTeamleadTeamID = teamID
+	s.appliedTeamleadRunID = runID
+	return s.appliedTeamleadRun, nil
+}
+
+func (s *fakeStore) ListTeamleadReconciliationTraders(ctx context.Context, teamID int64) ([]TeamleadTraderMatch, error) {
+	return s.teamleadTraders, nil
+}
+
+func (s *fakeStore) ListTeamleadReconciliationRequisites(ctx context.Context, teamID int64) ([]TeamleadRequisiteMatch, error) {
+	return s.teamleadRequisites, nil
+}
+
+func (s *fakeStore) ListTeamleadReconciliationExternalOrders(ctx context.Context, teamID int64, direction string, innerIDs []string) ([]TeamleadExternalOrderSnapshot, error) {
+	result := make([]TeamleadExternalOrderSnapshot, 0, len(s.teamleadExternalOrders))
+	allowed := map[string]struct{}{}
+	for _, innerID := range innerIDs {
+		allowed[innerID] = struct{}{}
+	}
+	for _, order := range s.teamleadExternalOrders {
+		if order.Direction != direction {
+			continue
+		}
+		if _, ok := allowed[order.ExternalInnerID]; ok {
+			result = append(result, order)
+		}
+	}
+	return result, nil
+}
+
+func (s *fakeStore) ListTeamleadReconciliationExternalOrdersInPeriod(ctx context.Context, teamID int64, direction string, dateFrom time.Time, dateTo time.Time) ([]TeamleadExternalOrderSnapshot, error) {
+	result := make([]TeamleadExternalOrderSnapshot, 0, len(s.teamleadExternalOrdersInPeriod))
+	for _, order := range s.teamleadExternalOrdersInPeriod {
+		if order.Direction == direction {
+			result = append(result, order)
+		}
+	}
+	return result, nil
+}
+
+func (s *fakeStore) CalculateTeamleadV2InboundTurnover(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time) (TeamleadTurnoverSnapshot, error) {
+	return s.teamleadInboundTurnover, nil
+}
+
+func (s *fakeStore) CalculateTeamleadV2OutboundTransfers(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time) (TeamleadTurnoverSnapshot, error) {
+	return s.teamleadOutboundTransfers, nil
+}
+
 type fakeAuditService struct {
 	events []audit.Event
 }
@@ -637,10 +1166,24 @@ func (s *fakeAuditService) Write(ctx context.Context, event audit.Event) error {
 	return nil
 }
 
+type fakeTeamleadApplyScheduler struct {
+	teamID int64
+	runID  int64
+}
+
+func (s *fakeTeamleadApplyScheduler) EnqueueTeamleadApply(teamID int64, runID int64) {
+	s.teamID = teamID
+	s.runID = runID
+}
+
 func int64Ptr(value int64) *int64 {
 	return &value
 }
 
 func stringPtr(value string) *string {
+	return &value
+}
+
+func timeValuePtr(value time.Time) *time.Time {
 	return &value
 }

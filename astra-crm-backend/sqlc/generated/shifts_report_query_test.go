@@ -5,17 +5,27 @@ import (
 	"testing"
 )
 
-func TestListShiftReportRowsResolvesCsvCardsToShiftRequisites(t *testing.T) {
-	if !strings.Contains(listShiftReportRows, "'card:' || card_match_key") {
-		t.Fatalf("report rows query should index CRM shift requisites by full card number")
+func TestShiftReportQueriesAreSimpleReads(t *testing.T) {
+	reportQueries := []string{
+		listShiftReportRequisites,
+		listShiftReportInboundScopeItems,
+		listShiftReportOutboundTransfers,
 	}
-	if !strings.Contains(listShiftReportRows, "card_match.lookup_key = 'card:' || source.csv_digits") {
-		t.Fatalf("report rows query should resolve CSV card values to CRM shift requisite rows")
+	for _, query := range reportQueries {
+		for _, forbidden := range []string{"regexp_replace", "UNION", "GROUP BY", "jsonb_build_object"} {
+			if strings.Contains(query, forbidden) {
+				t.Fatalf("report query contains %q, want simple read:\n%s", forbidden, query)
+			}
+		}
 	}
-	if !strings.Contains(listShiftReportRows, "length(source.csv_digits) >= 12") {
-		t.Fatalf("report rows query should treat long digit values as card numbers, not phone tails")
+
+	if !strings.Contains(listShiftReportRequisites, "r.card_number AS requisite_card_number") {
+		t.Fatalf("report requisites query should load requisite card fallback:\n%s", listShiftReportRequisites)
 	}
-	if !strings.Contains(listShiftReportRows, "HAVING count(DISTINCT shift_requisite_id) = 1") {
-		t.Fatalf("report rows query should avoid auto-matching ambiguous card or phone keys")
+	if !strings.Contains(listShiftReportInboundScopeItems, "direction = 'inbound'") {
+		t.Fatalf("report inbound query should load only active inbound scope items:\n%s", listShiftReportInboundScopeItems)
+	}
+	if !strings.Contains(listShiftReportOutboundTransfers, "source_shift_requisite_id") {
+		t.Fatalf("report transfers query should expose source shift requisite:\n%s", listShiftReportOutboundTransfers)
 	}
 }

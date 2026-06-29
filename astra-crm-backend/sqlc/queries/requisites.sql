@@ -6,8 +6,8 @@ WHERE id = $1
   AND deleted_at IS NULL;
 
 -- name: CreateRequisite :one
-INSERT INTO requisites (team_id, phone, method_type, bank_code, proxy, employee_comment, created_by)
-VALUES (sqlc.arg(team_id), sqlc.arg(phone), sqlc.arg(method_type), sqlc.arg(bank_code), sqlc.arg(proxy), sqlc.arg(employee_comment), sqlc.arg(created_by))
+INSERT INTO requisites (team_id, phone, method_type, bank_code, card_number, proxy, employee_comment, created_by)
+VALUES (sqlc.arg(team_id), sqlc.arg(phone), sqlc.arg(method_type), sqlc.arg(bank_code), sqlc.arg(card_number), sqlc.arg(proxy), sqlc.arg(employee_comment), sqlc.arg(created_by))
 RETURNING id, team_id, phone, method_type, bank_code, proxy, employee_comment, holder_name, card_number, details_filled_at, details_filled_by, status, created_by, created_at, updated_at, deleted_at;
 
 -- name: GetRequisiteDetailsByIDForTeam :one
@@ -17,7 +17,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.holder_name,
@@ -36,7 +36,6 @@ SELECT
     ra.assigned_for_date,
     COALESCE(ra.target_turnover_minor, 0) AS target_turnover_minor
 FROM requisites r
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN LATERAL (
     SELECT ra.id, ra.trader_id, u.login AS trader_login, ra.status, ra.assigned_for_date, ra.target_turnover_minor
     FROM requisite_assignments ra
@@ -59,7 +58,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.holder_name,
@@ -78,7 +77,6 @@ SELECT
     ra.assigned_for_date,
     COALESCE(ra.target_turnover_minor, 0) AS target_turnover_minor
 FROM requisites r
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN LATERAL (
     SELECT ra.id, ra.trader_id, u.login AS trader_login, ra.status, ra.assigned_for_date, ra.target_turnover_minor
     FROM requisite_assignments ra
@@ -125,7 +123,10 @@ WHERE r.team_id = sqlc.arg(team_id)
   AND (
       sqlc.arg(search)::text = ''
       OR lower(r.phone) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
-      OR lower(b.name) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR (
+          COALESCE(cardinality(sqlc.arg(bank_search_codes)::text[]), 0) > 0
+          AND r.bank_code = ANY(sqlc.arg(bank_search_codes)::text[])
+      )
       OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
       OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
       OR lower(COALESCE(r.holder_name, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
@@ -145,7 +146,6 @@ OFFSET sqlc.arg(offset_count);
 -- name: CountRequisiteDetailsByTeam :one
 SELECT count(*)::bigint
 FROM requisites r
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN LATERAL (
     SELECT ra.id, ra.trader_id, u.login AS trader_login, ra.status, ra.assigned_for_date, ra.target_turnover_minor
     FROM requisite_assignments ra
@@ -192,7 +192,10 @@ WHERE r.team_id = sqlc.arg(team_id)
   AND (
       sqlc.arg(search)::text = ''
       OR lower(r.phone) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
-      OR lower(b.name) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR (
+          COALESCE(cardinality(sqlc.arg(bank_search_codes)::text[]), 0) > 0
+          AND r.bank_code = ANY(sqlc.arg(bank_search_codes)::text[])
+      )
       OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
       OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
       OR lower(COALESCE(r.holder_name, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
@@ -212,6 +215,7 @@ SET
     phone = sqlc.arg(phone),
     method_type = sqlc.arg(method_type),
     bank_code = sqlc.arg(bank_code),
+    card_number = sqlc.arg(card_number),
     proxy = sqlc.arg(proxy),
     employee_comment = sqlc.arg(employee_comment),
     status = sqlc.arg(status),
@@ -229,15 +233,14 @@ RETURNING id, team_id, phone, method_type, bank_code, proxy, employee_comment, h
 UPDATE requisites
 SET
     holder_name = sqlc.arg(holder_name),
-    card_number = sqlc.arg(card_number),
+    card_number = COALESCE(card_number, sqlc.arg(card_number)),
     details_filled_at = now(),
     details_filled_by = sqlc.arg(details_filled_by),
     updated_at = now()
 WHERE team_id = sqlc.arg(team_id)
   AND id = sqlc.arg(requisite_id)
   AND deleted_at IS NULL
-  AND holder_name IS NULL
-  AND card_number IS NULL;
+  AND holder_name IS NULL;
 
 -- name: LockAssignableRequisiteForAssignment :one
 SELECT r.id
@@ -387,7 +390,7 @@ SELECT
     ra.requisite_id,
     r.phone,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     ra.trader_id,
     u.login AS trader_login,
@@ -406,7 +409,6 @@ SELECT
     ra.shift_requisite_id
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 JOIN users u ON u.id = ra.trader_id
 LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = sqlc.arg(team_id)
@@ -428,7 +430,7 @@ SELECT
     ra.requisite_id,
     r.phone,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     ra.trader_id,
     u.login AS trader_login,
@@ -449,7 +451,6 @@ SELECT
     ra.shift_requisite_id
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 JOIN users u ON u.id = ra.trader_id
 LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = sqlc.arg(team_id)
@@ -471,7 +472,10 @@ WHERE ra.team_id = sqlc.arg(team_id)
   AND (
       sqlc.arg(search)::text = ''
       OR lower(r.phone) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
-      OR lower(b.name) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR (
+          COALESCE(cardinality(sqlc.arg(bank_search_codes)::text[]), 0) > 0
+          AND r.bank_code = ANY(sqlc.arg(bank_search_codes)::text[])
+      )
       OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
       OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
       OR lower(COALESCE(sr.holder_name, r.holder_name, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
@@ -493,7 +497,6 @@ OFFSET sqlc.arg(offset_count);
 SELECT count(*)::bigint
 FROM requisite_assignments ra
 JOIN requisites r ON r.id = ra.requisite_id
-JOIN banks b ON b.code = r.bank_code
 JOIN users u ON u.id = ra.trader_id
 LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = sqlc.arg(team_id)
@@ -515,7 +518,10 @@ WHERE ra.team_id = sqlc.arg(team_id)
   AND (
       sqlc.arg(search)::text = ''
       OR lower(r.phone) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
-      OR lower(b.name) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR (
+          COALESCE(cardinality(sqlc.arg(bank_search_codes)::text[]), 0) > 0
+          AND r.bank_code = ANY(sqlc.arg(bank_search_codes)::text[])
+      )
       OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
       OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
       OR lower(COALESCE(sr.holder_name, r.holder_name, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
@@ -537,7 +543,7 @@ SELECT
     r.phone,
     r.method_type,
     r.bank_code,
-    b.name AS bank_name,
+    ''::text AS bank_name,
     r.proxy,
     r.employee_comment,
     r.holder_name,
@@ -550,7 +556,6 @@ SELECT
     r.last_activity_at,
     r.last_shift_requisite_id
 FROM requisites r
-JOIN banks b ON b.code = r.bank_code
 LEFT JOIN LATERAL (
     SELECT ra.status
     FROM requisite_assignments ra
