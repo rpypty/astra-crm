@@ -566,6 +566,59 @@ func (q *Queries) CalculateTraderOutboundExpected(ctx context.Context, arg Calcu
 	return i, err
 }
 
+const countReconciliationItemsForRun = `-- name: CountReconciliationItemsForRun :one
+SELECT count(*)::bigint
+FROM reconciliation_items
+WHERE reconciliation_run_id = $1
+  AND (
+      (NOT $2::boolean AND $3::text IN ('', 'all'))
+      OR issue_type IS NOT NULL
+  )
+`
+
+type CountReconciliationItemsForRunParams struct {
+	RunID        int64
+	OnlyMismatch bool
+	Status       string
+}
+
+func (q *Queries) CountReconciliationItemsForRun(ctx context.Context, arg CountReconciliationItemsForRunParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countReconciliationItemsForRun, arg.RunID, arg.OnlyMismatch, arg.Status)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countTeamleadCurrentReconciliationRuns = `-- name: CountTeamleadCurrentReconciliationRuns :one
+SELECT count(*)::bigint
+FROM reconciliation_runs
+WHERE reconciliation_runs.team_id = $1
+  AND reconciliation_runs.type = CASE
+      WHEN $2::text = 'inbound' THEN 'teamlead_period_inbound'
+      ELSE 'teamlead_period_outbound'
+  END
+  AND reconciliation_runs.accounting_period_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = reconciliation_runs.import_batch_id
+        AND ib.uploaded_by = $3
+  )
+`
+
+type CountTeamleadCurrentReconciliationRunsParams struct {
+	TeamID     int64
+	Direction  string
+	UploadedBy int64
+}
+
+func (q *Queries) CountTeamleadCurrentReconciliationRuns(ctx context.Context, arg CountTeamleadCurrentReconciliationRunsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTeamleadCurrentReconciliationRuns, arg.TeamID, arg.Direction, arg.UploadedBy)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countTraderInboundRequisiteMismatches = `-- name: CountTraderInboundRequisiteMismatches :one
 WITH crm_requisites AS (
     SELECT
@@ -2057,6 +2110,96 @@ func (q *Queries) GetTeamleadCurrentReconciliationRun(ctx context.Context, arg G
 	return i, err
 }
 
+const getTraderInboundReconciliationRun = `-- name: GetTraderInboundReconciliationRun :one
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE id = $1
+  AND team_id = $2
+  AND trader_id = $3
+  AND type = 'trader_shift_inbound'
+`
+
+type GetTraderInboundReconciliationRunParams struct {
+	RunID    int64
+	TeamID   int64
+	TraderID pgtype.Int8
+}
+
+func (q *Queries) GetTraderInboundReconciliationRun(ctx context.Context, arg GetTraderInboundReconciliationRunParams) (ReconciliationRun, error) {
+	row := q.db.QueryRow(ctx, getTraderInboundReconciliationRun, arg.RunID, arg.TeamID, arg.TraderID)
+	var i ReconciliationRun
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.Type,
+		&i.ScopeType,
+		&i.ShiftID,
+		&i.AccountingPeriodID,
+		&i.TraderID,
+		&i.ImportBatchID,
+		&i.ExpectedAmountMinor,
+		&i.ActualAmountMinor,
+		&i.DiffAmountMinor,
+		&i.SuccessAmountMinor,
+		&i.SuccessCount,
+		&i.FailedAmountMinor,
+		&i.FailedCount,
+		&i.TotalAmountMinor,
+		&i.TotalCount,
+		&i.Status,
+		&i.Comment,
+		&i.ConfirmedBy,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getTraderOutboundReconciliationRun = `-- name: GetTraderOutboundReconciliationRun :one
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE id = $1
+  AND team_id = $2
+  AND trader_id = $3
+  AND type = 'trader_shift_outbound'
+`
+
+type GetTraderOutboundReconciliationRunParams struct {
+	RunID    int64
+	TeamID   int64
+	TraderID pgtype.Int8
+}
+
+func (q *Queries) GetTraderOutboundReconciliationRun(ctx context.Context, arg GetTraderOutboundReconciliationRunParams) (ReconciliationRun, error) {
+	row := q.db.QueryRow(ctx, getTraderOutboundReconciliationRun, arg.RunID, arg.TeamID, arg.TraderID)
+	var i ReconciliationRun
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.Type,
+		&i.ScopeType,
+		&i.ShiftID,
+		&i.AccountingPeriodID,
+		&i.TraderID,
+		&i.ImportBatchID,
+		&i.ExpectedAmountMinor,
+		&i.ActualAmountMinor,
+		&i.DiffAmountMinor,
+		&i.SuccessAmountMinor,
+		&i.SuccessCount,
+		&i.FailedAmountMinor,
+		&i.FailedCount,
+		&i.TotalAmountMinor,
+		&i.TotalCount,
+		&i.Status,
+		&i.Comment,
+		&i.ConfirmedBy,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const latestActiveTeamleadCurrentImportBatch = `-- name: LatestActiveTeamleadCurrentImportBatch :one
 SELECT id, team_id, uploaded_by, scope_type, direction, shift_id, accounting_period_id, trader_id, file_name, file_hash, rows_count, status, superseded_by_batch_id, error_message, created_at, applied_at
 FROM import_batches
@@ -2559,11 +2702,31 @@ const listReconciliationItemsForRun = `-- name: ListReconciliationItemsForRun :m
 SELECT id, reconciliation_run_id, issue_type, external_order_id, external_inner_id, teamlead_value_json, trader_value_json, message, created_at
 FROM reconciliation_items
 WHERE reconciliation_run_id = $1
+  AND (
+      (NOT $2::boolean AND $3::text IN ('', 'all'))
+      OR issue_type IS NOT NULL
+  )
 ORDER BY id
+LIMIT $5
+OFFSET $4
 `
 
-func (q *Queries) ListReconciliationItemsForRun(ctx context.Context, runID int64) ([]ReconciliationItem, error) {
-	rows, err := q.db.Query(ctx, listReconciliationItemsForRun, runID)
+type ListReconciliationItemsForRunParams struct {
+	RunID        int64
+	OnlyMismatch bool
+	Status       string
+	OffsetCount  int32
+	LimitCount   int32
+}
+
+func (q *Queries) ListReconciliationItemsForRun(ctx context.Context, arg ListReconciliationItemsForRunParams) ([]ReconciliationItem, error) {
+	rows, err := q.db.Query(ctx, listReconciliationItemsForRun,
+		arg.RunID,
+		arg.OnlyMismatch,
+		arg.Status,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2608,14 +2771,16 @@ WHERE reconciliation_runs.team_id = $1
         AND ib.uploaded_by = $3
   )
 ORDER BY reconciliation_runs.created_at DESC, reconciliation_runs.id DESC
-LIMIT $4
+LIMIT $5
+OFFSET $4
 `
 
 type ListTeamleadCurrentReconciliationRunsParams struct {
-	TeamID     int64
-	Direction  string
-	UploadedBy int64
-	LimitCount int32
+	TeamID      int64
+	Direction   string
+	UploadedBy  int64
+	OffsetCount int32
+	LimitCount  int32
 }
 
 func (q *Queries) ListTeamleadCurrentReconciliationRuns(ctx context.Context, arg ListTeamleadCurrentReconciliationRunsParams) ([]ReconciliationRun, error) {
@@ -2623,6 +2788,7 @@ func (q *Queries) ListTeamleadCurrentReconciliationRuns(ctx context.Context, arg
 		arg.TeamID,
 		arg.Direction,
 		arg.UploadedBy,
+		arg.OffsetCount,
 		arg.LimitCount,
 	)
 	if err != nil {

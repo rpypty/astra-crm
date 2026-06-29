@@ -498,6 +498,301 @@ func (q *Queries) CorrectClosedShiftRequisiteTurnovers(ctx context.Context, arg 
 	return i, err
 }
 
+const countAssignedRequisitesForShift = `-- name: CountAssignedRequisitesForShift :one
+SELECT count(*)::bigint
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+WHERE sr.team_id = $1
+  AND sr.trader_id = $2
+  AND sr.shift_id = $3
+  AND ts.team_id = $1
+  AND ts.trader_id = $2
+`
+
+type CountAssignedRequisitesForShiftParams struct {
+	TeamID   int64
+	TraderID int64
+	ShiftID  int64
+}
+
+func (q *Queries) CountAssignedRequisitesForShift(ctx context.Context, arg CountAssignedRequisitesForShiftParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAssignedRequisitesForShift, arg.TeamID, arg.TraderID, arg.ShiftID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countAssignedRequisitesForTeamShift = `-- name: CountAssignedRequisitesForTeamShift :one
+SELECT count(*)::bigint
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+WHERE sr.team_id = $1
+  AND sr.shift_id = $2
+  AND ts.team_id = $1
+`
+
+type CountAssignedRequisitesForTeamShiftParams struct {
+	TeamID  int64
+	ShiftID int64
+}
+
+func (q *Queries) CountAssignedRequisitesForTeamShift(ctx context.Context, arg CountAssignedRequisitesForTeamShiftParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAssignedRequisitesForTeamShift, arg.TeamID, arg.ShiftID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countAssignedRequisitesForTrader = `-- name: CountAssignedRequisitesForTrader :one
+WITH current_shift AS (
+    SELECT trader_shifts.id
+    FROM trader_shifts
+    WHERE trader_shifts.team_id = $1
+      AND trader_shifts.trader_id = $2
+      AND trader_shifts.status IN ('open', 'closing')
+    ORDER BY trader_shifts.started_at DESC, trader_shifts.id DESC
+    LIMIT 1
+)
+SELECT count(*)::bigint
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+JOIN banks b ON b.code = r.bank_code
+LEFT JOIN current_shift cs ON true
+LEFT JOIN LATERAL (
+    SELECT sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id, sr.assignment_id, sr.card_number, sr.holder_name, sr.taken_at, sr.released_at, sr.status, sr.created_at, sr.updated_at, sr.inbound_turnover_minor, sr.outbound_turnover_minor, sr.closing_balance_minor
+    FROM shift_requisites sr
+    WHERE sr.shift_id = cs.id
+      AND sr.requisite_id = r.id
+    ORDER BY sr.taken_at DESC, sr.id DESC
+    LIMIT 1
+) sr ON true
+WHERE ra.team_id = $1
+  AND ra.trader_id = $2
+  AND ra.unassigned_at IS NULL
+  AND ra.status IN ('planned', 'assigned', 'in_work')
+  AND ra.assigned_for_date <= $3::date
+  AND r.deleted_at IS NULL
+  AND r.status = 'active'
+  AND (
+      $4::bigint IS NULL
+      OR COALESCE(sr.id, 0) <> $4::bigint
+  )
+  AND (
+      COALESCE(cardinality($5::text[]), 0) = 0
+      OR (
+          ('assigned' = ANY($5::text[]) AND sr.id IS NULL)
+          OR ('in_work' = ANY($5::text[]) AND sr.status = 'active')
+          OR ('correction' = ANY($5::text[]) AND sr.status = 'correction')
+          OR ('blocked' = ANY($5::text[]) AND sr.status = 'blocked')
+          OR (sr.status = ANY($5::text[]))
+      )
+  )
+  AND (
+      $6::text = ''
+      OR lower(r.phone) LIKE '%' || lower($6::text) || '%'
+      OR lower(b.name) LIKE '%' || lower($6::text) || '%'
+      OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower($6::text) || '%'
+      OR (
+          $7::text <> ''
+          AND (
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+          )
+      )
+  )
+`
+
+type CountAssignedRequisitesForTraderParams struct {
+	TeamID       int64
+	TraderID     int64
+	Today        pgtype.Date
+	ExcludeID    pgtype.Int8
+	Statuses     []string
+	Search       string
+	SearchDigits string
+}
+
+func (q *Queries) CountAssignedRequisitesForTrader(ctx context.Context, arg CountAssignedRequisitesForTraderParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAssignedRequisitesForTrader,
+		arg.TeamID,
+		arg.TraderID,
+		arg.Today,
+		arg.ExcludeID,
+		arg.Statuses,
+		arg.Search,
+		arg.SearchDigits,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countFutureAssignedRequisitesForTrader = `-- name: CountFutureAssignedRequisitesForTrader :one
+SELECT count(*)::bigint
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+WHERE ra.team_id = $1
+  AND ra.trader_id = $2
+  AND ra.unassigned_at IS NULL
+  AND ra.status IN ('planned', 'assigned')
+  AND ra.assigned_for_date > $3::date
+  AND r.deleted_at IS NULL
+  AND r.status = 'active'
+`
+
+type CountFutureAssignedRequisitesForTraderParams struct {
+	TeamID   int64
+	TraderID int64
+	Today    pgtype.Date
+}
+
+func (q *Queries) CountFutureAssignedRequisitesForTrader(ctx context.Context, arg CountFutureAssignedRequisitesForTraderParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countFutureAssignedRequisitesForTrader, arg.TeamID, arg.TraderID, arg.Today)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countHistoricalAssignedRequisitesForTrader = `-- name: CountHistoricalAssignedRequisitesForTrader :one
+SELECT count(*)::bigint
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
+WHERE ra.team_id = $1
+  AND ra.trader_id = $2
+  AND ra.status IN ('worked', 'blocked')
+  AND sr.id IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM requisite_assignments active_ra
+      WHERE active_ra.team_id = ra.team_id
+        AND active_ra.trader_id = ra.trader_id
+        AND active_ra.requisite_id = ra.requisite_id
+        AND active_ra.id <> ra.id
+        AND active_ra.unassigned_at IS NULL
+        AND active_ra.status IN ('planned', 'assigned', 'in_work')
+        AND active_ra.assigned_for_date <= $3::date
+  )
+`
+
+type CountHistoricalAssignedRequisitesForTraderParams struct {
+	TeamID   int64
+	TraderID int64
+	Today    pgtype.Date
+}
+
+func (q *Queries) CountHistoricalAssignedRequisitesForTrader(ctx context.Context, arg CountHistoricalAssignedRequisitesForTraderParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countHistoricalAssignedRequisitesForTrader, arg.TeamID, arg.TraderID, arg.Today)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countInternalTransfersForShiftRequisite = `-- name: CountInternalTransfersForShiftRequisite :one
+SELECT count(*)::bigint
+FROM shift_requisite_internal_transfers t
+WHERE t.team_id = $1
+  AND t.trader_id = $2
+  AND t.status = 'active'
+  AND (
+      t.source_shift_requisite_id = $3
+      OR t.destination_shift_requisite_id = $3
+  )
+`
+
+type CountInternalTransfersForShiftRequisiteParams struct {
+	TeamID           int64
+	TraderID         int64
+	ShiftRequisiteID int64
+}
+
+func (q *Queries) CountInternalTransfersForShiftRequisite(ctx context.Context, arg CountInternalTransfersForShiftRequisiteParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countInternalTransfersForShiftRequisite, arg.TeamID, arg.TraderID, arg.ShiftRequisiteID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countShiftRequisitesByTrader = `-- name: CountShiftRequisitesByTrader :one
+SELECT count(*)::bigint
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+WHERE sr.team_id = $1
+  AND sr.trader_id = $2
+  AND ts.status IN ('open', 'closing')
+`
+
+type CountShiftRequisitesByTraderParams struct {
+	TeamID   int64
+	TraderID int64
+}
+
+func (q *Queries) CountShiftRequisitesByTrader(ctx context.Context, arg CountShiftRequisitesByTraderParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countShiftRequisitesByTrader, arg.TeamID, arg.TraderID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countTeamShiftHistory = `-- name: CountTeamShiftHistory :one
+SELECT count(*)::bigint
+FROM trader_shifts
+WHERE team_id = $1
+  AND status IN ('closed', 'closed_with_discrepancy')
+`
+
+func (q *Queries) CountTeamShiftHistory(ctx context.Context, teamID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countTeamShiftHistory, teamID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countTraderShiftHistory = `-- name: CountTraderShiftHistory :one
+SELECT count(*)::bigint
+FROM trader_shifts
+WHERE team_id = $1
+  AND trader_id = $2
+  AND status IN ('closed', 'closed_with_discrepancy')
+`
+
+type CountTraderShiftHistoryParams struct {
+	TeamID   int64
+	TraderID int64
+}
+
+func (q *Queries) CountTraderShiftHistory(ctx context.Context, arg CountTraderShiftHistoryParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTraderShiftHistory, arg.TeamID, arg.TraderID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countTurnoversByShiftRequisite = `-- name: CountTurnoversByShiftRequisite :one
+SELECT count(*)::bigint
+FROM requisite_turnover_entries e
+JOIN shift_requisites sr ON sr.id = e.shift_requisite_id
+JOIN trader_shifts ts ON ts.id = e.shift_id
+WHERE e.team_id = $1
+  AND e.trader_id = $2
+  AND e.shift_requisite_id = $3
+  AND sr.trader_id = $2
+  AND ts.status IN ('open', 'closing')
+`
+
+type CountTurnoversByShiftRequisiteParams struct {
+	TeamID           int64
+	TraderID         int64
+	ShiftRequisiteID int64
+}
+
+func (q *Queries) CountTurnoversByShiftRequisite(ctx context.Context, arg CountTurnoversByShiftRequisiteParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTurnoversByShiftRequisite, arg.TeamID, arg.TraderID, arg.ShiftRequisiteID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createInternalTransfer = `-- name: CreateInternalTransfer :one
 WITH source_sr AS (
     SELECT sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id
@@ -884,6 +1179,14 @@ SELECT
     (ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment')) AS inbound_ok,
     (ts.outbound_reconciliation_status <> 'not_started') AS outbound_imported,
     (ts.outbound_reconciliation_status IN ('matched', 'accepted_with_comment')) AS outbound_ok,
+    (
+        SELECT count(*)::bigint
+        FROM shift_requisites sr
+        WHERE sr.team_id = ts.team_id
+          AND sr.trader_id = ts.trader_id
+          AND sr.shift_id = ts.id
+          AND sr.status IN ('active', 'correction')
+    ) AS open_requisite_count,
     NOT EXISTS (
         SELECT 1
         FROM manual_payout_orders mpo
@@ -937,6 +1240,7 @@ type GetCurrentShiftChecklistRow struct {
 	InboundOk                    bool
 	OutboundImported             bool
 	OutboundOk                   bool
+	OpenRequisiteCount           int64
 	AllPayoutsFullyPaid          bool
 	UnpaidPayoutCount            int64
 }
@@ -961,6 +1265,7 @@ func (q *Queries) GetCurrentShiftChecklist(ctx context.Context, arg GetCurrentSh
 		&i.InboundOk,
 		&i.OutboundImported,
 		&i.OutboundOk,
+		&i.OpenRequisiteCount,
 		&i.AllPayoutsFullyPaid,
 		&i.UnpaidPayoutCount,
 	)
@@ -1162,12 +1467,16 @@ WHERE sr.team_id = $1
   AND ts.team_id = $1
   AND ts.trader_id = $2
 ORDER BY sr.taken_at DESC, sr.id DESC
+LIMIT $5
+OFFSET $4
 `
 
 type ListAssignedRequisitesForShiftParams struct {
-	TeamID   int64
-	TraderID int64
-	ShiftID  int64
+	TeamID      int64
+	TraderID    int64
+	ShiftID     int64
+	OffsetCount int32
+	LimitCount  int32
 }
 
 type ListAssignedRequisitesForShiftRow struct {
@@ -1196,7 +1505,13 @@ type ListAssignedRequisitesForShiftRow struct {
 }
 
 func (q *Queries) ListAssignedRequisitesForShift(ctx context.Context, arg ListAssignedRequisitesForShiftParams) ([]ListAssignedRequisitesForShiftRow, error) {
-	rows, err := q.db.Query(ctx, listAssignedRequisitesForShift, arg.TeamID, arg.TraderID, arg.ShiftID)
+	rows, err := q.db.Query(ctx, listAssignedRequisitesForShift,
+		arg.TeamID,
+		arg.TraderID,
+		arg.ShiftID,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1271,11 +1586,15 @@ WHERE sr.team_id = $1
   AND sr.shift_id = $2
   AND ts.team_id = $1
 ORDER BY sr.taken_at DESC, sr.id DESC
+LIMIT $4
+OFFSET $3
 `
 
 type ListAssignedRequisitesForTeamShiftParams struct {
-	TeamID  int64
-	ShiftID int64
+	TeamID      int64
+	ShiftID     int64
+	OffsetCount int32
+	LimitCount  int32
 }
 
 type ListAssignedRequisitesForTeamShiftRow struct {
@@ -1304,7 +1623,12 @@ type ListAssignedRequisitesForTeamShiftRow struct {
 }
 
 func (q *Queries) ListAssignedRequisitesForTeamShift(ctx context.Context, arg ListAssignedRequisitesForTeamShiftParams) ([]ListAssignedRequisitesForTeamShiftRow, error) {
-	rows, err := q.db.Query(ctx, listAssignedRequisitesForTeamShift, arg.TeamID, arg.ShiftID)
+	rows, err := q.db.Query(ctx, listAssignedRequisitesForTeamShift,
+		arg.TeamID,
+		arg.ShiftID,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1398,13 +1722,48 @@ WHERE ra.team_id = $1
   AND ra.assigned_for_date <= $3::date
   AND r.deleted_at IS NULL
   AND r.status = 'active'
+  AND (
+      $4::bigint IS NULL
+      OR COALESCE(sr.id, 0) <> $4::bigint
+  )
+  AND (
+      COALESCE(cardinality($5::text[]), 0) = 0
+      OR (
+          ('assigned' = ANY($5::text[]) AND sr.id IS NULL)
+          OR ('in_work' = ANY($5::text[]) AND sr.status = 'active')
+          OR ('correction' = ANY($5::text[]) AND sr.status = 'correction')
+          OR ('blocked' = ANY($5::text[]) AND sr.status = 'blocked')
+          OR (sr.status = ANY($5::text[]))
+      )
+  )
+  AND (
+      $6::text = ''
+      OR lower(r.phone) LIKE '%' || lower($6::text) || '%'
+      OR lower(b.name) LIKE '%' || lower($6::text) || '%'
+      OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower($6::text) || '%'
+      OR (
+          $7::text <> ''
+          AND (
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+          )
+      )
+  )
 ORDER BY ra.assigned_for_date DESC, r.created_at DESC, r.id DESC
+LIMIT $9
+OFFSET $8
 `
 
 type ListAssignedRequisitesForTraderParams struct {
-	TeamID   int64
-	TraderID int64
-	Today    pgtype.Date
+	TeamID       int64
+	TraderID     int64
+	Today        pgtype.Date
+	ExcludeID    pgtype.Int8
+	Statuses     []string
+	Search       string
+	SearchDigits string
+	OffsetCount  int32
+	LimitCount   int32
 }
 
 type ListAssignedRequisitesForTraderRow struct {
@@ -1433,7 +1792,17 @@ type ListAssignedRequisitesForTraderRow struct {
 }
 
 func (q *Queries) ListAssignedRequisitesForTrader(ctx context.Context, arg ListAssignedRequisitesForTraderParams) ([]ListAssignedRequisitesForTraderRow, error) {
-	rows, err := q.db.Query(ctx, listAssignedRequisitesForTrader, arg.TeamID, arg.TraderID, arg.Today)
+	rows, err := q.db.Query(ctx, listAssignedRequisitesForTrader,
+		arg.TeamID,
+		arg.TraderID,
+		arg.Today,
+		arg.ExcludeID,
+		arg.Statuses,
+		arg.Search,
+		arg.SearchDigits,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1510,12 +1879,16 @@ WHERE ra.team_id = $1
   AND r.deleted_at IS NULL
   AND r.status = 'active'
 ORDER BY ra.assigned_for_date ASC, r.created_at DESC, r.id DESC
+LIMIT $5
+OFFSET $4
 `
 
 type ListFutureAssignedRequisitesForTraderParams struct {
-	TeamID   int64
-	TraderID int64
-	Today    pgtype.Date
+	TeamID      int64
+	TraderID    int64
+	Today       pgtype.Date
+	OffsetCount int32
+	LimitCount  int32
 }
 
 type ListFutureAssignedRequisitesForTraderRow struct {
@@ -1544,7 +1917,13 @@ type ListFutureAssignedRequisitesForTraderRow struct {
 }
 
 func (q *Queries) ListFutureAssignedRequisitesForTrader(ctx context.Context, arg ListFutureAssignedRequisitesForTraderParams) ([]ListFutureAssignedRequisitesForTraderRow, error) {
-	rows, err := q.db.Query(ctx, listFutureAssignedRequisitesForTrader, arg.TeamID, arg.TraderID, arg.Today)
+	rows, err := q.db.Query(ctx, listFutureAssignedRequisitesForTrader,
+		arg.TeamID,
+		arg.TraderID,
+		arg.Today,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1630,12 +2009,16 @@ WHERE ra.team_id = $1
         AND active_ra.assigned_for_date <= $3::date
   )
 ORDER BY COALESCE(ra.completed_at, ra.cancelled_at, ra.unassigned_at, ra.updated_at) DESC, ra.id DESC
+LIMIT $5
+OFFSET $4
 `
 
 type ListHistoricalAssignedRequisitesForTraderParams struct {
-	TeamID   int64
-	TraderID int64
-	Today    pgtype.Date
+	TeamID      int64
+	TraderID    int64
+	Today       pgtype.Date
+	OffsetCount int32
+	LimitCount  int32
 }
 
 type ListHistoricalAssignedRequisitesForTraderRow struct {
@@ -1664,7 +2047,13 @@ type ListHistoricalAssignedRequisitesForTraderRow struct {
 }
 
 func (q *Queries) ListHistoricalAssignedRequisitesForTrader(ctx context.Context, arg ListHistoricalAssignedRequisitesForTraderParams) ([]ListHistoricalAssignedRequisitesForTraderRow, error) {
-	rows, err := q.db.Query(ctx, listHistoricalAssignedRequisitesForTrader, arg.TeamID, arg.TraderID, arg.Today)
+	rows, err := q.db.Query(ctx, listHistoricalAssignedRequisitesForTrader,
+		arg.TeamID,
+		arg.TraderID,
+		arg.Today,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1742,12 +2131,16 @@ WHERE t.team_id = $1
       OR t.destination_shift_requisite_id = $3
   )
 ORDER BY t.created_at DESC, t.id DESC
+LIMIT $5
+OFFSET $4
 `
 
 type ListInternalTransfersForShiftRequisiteParams struct {
 	TeamID           int64
 	TraderID         int64
 	ShiftRequisiteID int64
+	OffsetCount      int32
+	LimitCount       int32
 }
 
 type ListInternalTransfersForShiftRequisiteRow struct {
@@ -1775,7 +2168,13 @@ type ListInternalTransfersForShiftRequisiteRow struct {
 }
 
 func (q *Queries) ListInternalTransfersForShiftRequisite(ctx context.Context, arg ListInternalTransfersForShiftRequisiteParams) ([]ListInternalTransfersForShiftRequisiteRow, error) {
-	rows, err := q.db.Query(ctx, listInternalTransfersForShiftRequisite, arg.TeamID, arg.TraderID, arg.ShiftRequisiteID)
+	rows, err := q.db.Query(ctx, listInternalTransfersForShiftRequisite,
+		arg.TeamID,
+		arg.TraderID,
+		arg.ShiftRequisiteID,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2112,11 +2511,15 @@ WHERE sr.team_id = $1
   AND sr.trader_id = $2
   AND ts.status IN ('open', 'closing')
 ORDER BY sr.taken_at DESC, sr.id DESC
+LIMIT $4
+OFFSET $3
 `
 
 type ListShiftRequisitesByTraderParams struct {
-	TeamID   int64
-	TraderID int64
+	TeamID      int64
+	TraderID    int64
+	OffsetCount int32
+	LimitCount  int32
 }
 
 type ListShiftRequisitesByTraderRow struct {
@@ -2139,7 +2542,12 @@ type ListShiftRequisitesByTraderRow struct {
 }
 
 func (q *Queries) ListShiftRequisitesByTrader(ctx context.Context, arg ListShiftRequisitesByTraderParams) ([]ListShiftRequisitesByTraderRow, error) {
-	rows, err := q.db.Query(ctx, listShiftRequisitesByTrader, arg.TeamID, arg.TraderID)
+	rows, err := q.db.Query(ctx, listShiftRequisitesByTrader,
+		arg.TeamID,
+		arg.TraderID,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2181,16 +2589,18 @@ FROM trader_shifts
 WHERE team_id = $1
   AND status IN ('closed', 'closed_with_discrepancy')
 ORDER BY COALESCE(closed_at, ended_at, updated_at) DESC, id DESC
-LIMIT $2
+LIMIT $3
+OFFSET $2
 `
 
 type ListTeamShiftHistoryParams struct {
-	TeamID     int64
-	LimitCount int32
+	TeamID      int64
+	OffsetCount int32
+	LimitCount  int32
 }
 
 func (q *Queries) ListTeamShiftHistory(ctx context.Context, arg ListTeamShiftHistoryParams) ([]TraderShift, error) {
-	rows, err := q.db.Query(ctx, listTeamShiftHistory, arg.TeamID, arg.LimitCount)
+	rows, err := q.db.Query(ctx, listTeamShiftHistory, arg.TeamID, arg.OffsetCount, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -2229,17 +2639,24 @@ WHERE team_id = $1
   AND trader_id = $2
   AND status IN ('closed', 'closed_with_discrepancy')
 ORDER BY COALESCE(closed_at, ended_at, updated_at) DESC, id DESC
-LIMIT $3
+LIMIT $4
+OFFSET $3
 `
 
 type ListTraderShiftHistoryParams struct {
-	TeamID     int64
-	TraderID   int64
-	LimitCount int32
+	TeamID      int64
+	TraderID    int64
+	OffsetCount int32
+	LimitCount  int32
 }
 
 func (q *Queries) ListTraderShiftHistory(ctx context.Context, arg ListTraderShiftHistoryParams) ([]TraderShift, error) {
-	rows, err := q.db.Query(ctx, listTraderShiftHistory, arg.TeamID, arg.TraderID, arg.LimitCount)
+	rows, err := q.db.Query(ctx, listTraderShiftHistory,
+		arg.TeamID,
+		arg.TraderID,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2282,16 +2699,26 @@ WHERE e.team_id = $1
   AND sr.trader_id = $2
   AND ts.status IN ('open', 'closing')
 ORDER BY e.created_at DESC, e.id DESC
+LIMIT $5
+OFFSET $4
 `
 
 type ListTurnoversByShiftRequisiteParams struct {
 	TeamID           int64
 	TraderID         int64
 	ShiftRequisiteID int64
+	OffsetCount      int32
+	LimitCount       int32
 }
 
 func (q *Queries) ListTurnoversByShiftRequisite(ctx context.Context, arg ListTurnoversByShiftRequisiteParams) ([]RequisiteTurnoverEntry, error) {
-	rows, err := q.db.Query(ctx, listTurnoversByShiftRequisite, arg.TeamID, arg.TraderID, arg.ShiftRequisiteID)
+	rows, err := q.db.Query(ctx, listTurnoversByShiftRequisite,
+		arg.TeamID,
+		arg.TraderID,
+		arg.ShiftRequisiteID,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}

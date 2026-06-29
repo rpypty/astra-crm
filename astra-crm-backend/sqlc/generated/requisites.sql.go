@@ -154,6 +154,213 @@ func (q *Queries) CompleteRequisiteAssignmentWork(ctx context.Context, arg Compl
 	return i, err
 }
 
+const countRequisiteAssignmentEvents = `-- name: CountRequisiteAssignmentEvents :one
+SELECT count(*)::bigint
+FROM requisite_assignment_events
+WHERE team_id = $1
+  AND assignment_id = $2
+`
+
+type CountRequisiteAssignmentEventsParams struct {
+	TeamID       int64
+	AssignmentID int64
+}
+
+func (q *Queries) CountRequisiteAssignmentEvents(ctx context.Context, arg CountRequisiteAssignmentEventsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countRequisiteAssignmentEvents, arg.TeamID, arg.AssignmentID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countRequisiteAssignmentHistory = `-- name: CountRequisiteAssignmentHistory :one
+SELECT count(*)::bigint
+FROM requisite_assignments
+WHERE team_id = $1
+  AND requisite_id = $2
+`
+
+type CountRequisiteAssignmentHistoryParams struct {
+	TeamID      int64
+	RequisiteID int64
+}
+
+func (q *Queries) CountRequisiteAssignmentHistory(ctx context.Context, arg CountRequisiteAssignmentHistoryParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countRequisiteAssignmentHistory, arg.TeamID, arg.RequisiteID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countRequisiteDetailsByTeam = `-- name: CountRequisiteDetailsByTeam :one
+SELECT count(*)::bigint
+FROM requisites r
+JOIN banks b ON b.code = r.bank_code
+LEFT JOIN LATERAL (
+    SELECT ra.id, ra.trader_id, u.login AS trader_login, ra.status, ra.assigned_for_date, ra.target_turnover_minor
+    FROM requisite_assignments ra
+    JOIN users u ON u.id = ra.trader_id
+    WHERE ra.team_id = r.team_id
+      AND ra.requisite_id = r.id
+      AND ra.unassigned_at IS NULL
+      AND ra.status IN ('planned', 'assigned', 'in_work')
+    ORDER BY ra.assigned_for_date DESC, ra.assigned_at DESC, ra.id DESC
+    LIMIT 1
+) ra ON true
+WHERE r.team_id = $1
+  AND r.deleted_at IS NULL
+  AND (
+      $2::text = ''
+      OR $2::text = 'all'
+      OR r.bank_code = $2::text
+  )
+  AND (
+      $3::text = ''
+      OR $3::text = 'all'
+      OR r.status = $3::text
+  )
+  AND (
+      NOT $4::boolean
+      OR (
+          r.status = 'active'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM requisite_assignments blocked_ra
+              WHERE blocked_ra.team_id = r.team_id
+                AND blocked_ra.requisite_id = r.id
+                AND blocked_ra.unassigned_at IS NULL
+                AND blocked_ra.status = 'blocked'
+          )
+      )
+  )
+  AND (
+      $5::text = ''
+      OR $5::text = 'all'
+      OR ($5::text = 'unassigned' AND ra.trader_id IS NULL)
+      OR ($5::text NOT IN ('unassigned', 'all') AND ra.trader_id::text = $5::text)
+  )
+  AND (
+      $6::text = ''
+      OR lower(r.phone) LIKE '%' || lower($6::text) || '%'
+      OR lower(b.name) LIKE '%' || lower($6::text) || '%'
+      OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower($6::text) || '%'
+      OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower($6::text) || '%'
+      OR lower(COALESCE(r.holder_name, '')) LIKE '%' || lower($6::text) || '%'
+      OR lower(COALESCE(r.card_number, '')) LIKE '%' || lower($6::text) || '%'
+      OR (
+          $7::text <> ''
+          AND (
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+              OR regexp_replace(COALESCE(r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+          )
+      )
+  )
+`
+
+type CountRequisiteDetailsByTeamParams struct {
+	TeamID               int64
+	BankCode             string
+	Status               string
+	AvailableForPlanning bool
+	TraderFilter         string
+	Search               string
+	SearchDigits         string
+}
+
+func (q *Queries) CountRequisiteDetailsByTeam(ctx context.Context, arg CountRequisiteDetailsByTeamParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countRequisiteDetailsByTeam,
+		arg.TeamID,
+		arg.BankCode,
+		arg.Status,
+		arg.AvailableForPlanning,
+		arg.TraderFilter,
+		arg.Search,
+		arg.SearchDigits,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countTeamleadRequisiteActivity = `-- name: CountTeamleadRequisiteActivity :one
+SELECT count(*)::bigint
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+JOIN banks b ON b.code = r.bank_code
+JOIN users u ON u.id = ra.trader_id
+LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
+WHERE ra.team_id = $1
+  AND (
+      $2::text = ''
+      OR $2::text = 'all'
+      OR r.bank_code = $2::text
+  )
+  AND (
+      $3::text = ''
+      OR $3::text = 'all'
+      OR r.status = $3::text
+  )
+  AND (
+      $4::text = ''
+      OR $4::text = 'all'
+      OR ($4::text NOT IN ('unassigned', 'all') AND ra.trader_id::text = $4::text)
+  )
+  AND (
+      $5::text = ''
+      OR lower(r.phone) LIKE '%' || lower($5::text) || '%'
+      OR lower(b.name) LIKE '%' || lower($5::text) || '%'
+      OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower($5::text) || '%'
+      OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower($5::text) || '%'
+      OR lower(COALESCE(sr.holder_name, r.holder_name, '')) LIKE '%' || lower($5::text) || '%'
+      OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower($5::text) || '%'
+      OR lower(u.login) LIKE '%' || lower($5::text) || '%'
+      OR (
+          $6::text <> ''
+          AND (
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $6::text || '%'
+              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $6::text || '%'
+          )
+      )
+  )
+`
+
+type CountTeamleadRequisiteActivityParams struct {
+	TeamID       int64
+	BankCode     string
+	Status       string
+	TraderFilter string
+	Search       string
+	SearchDigits string
+}
+
+func (q *Queries) CountTeamleadRequisiteActivity(ctx context.Context, arg CountTeamleadRequisiteActivityParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countTeamleadRequisiteActivity,
+		arg.TeamID,
+		arg.BankCode,
+		arg.Status,
+		arg.TraderFilter,
+		arg.Search,
+		arg.SearchDigits,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countTeamleadRequisitePlans = `-- name: CountTeamleadRequisitePlans :one
+SELECT count(*)::bigint
+FROM requisite_assignments ra
+WHERE ra.team_id = $1
+  AND ra.status IN ('planned', 'assigned')
+`
+
+func (q *Queries) CountTeamleadRequisitePlans(ctx context.Context, teamID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countTeamleadRequisitePlans, teamID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createRequisite = `-- name: CreateRequisite :one
 INSERT INTO requisites (team_id, phone, method_type, bank_code, proxy, employee_comment, created_by)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -685,15 +892,24 @@ FROM requisite_assignment_events
 WHERE team_id = $1
   AND assignment_id = $2
 ORDER BY created_at DESC, id DESC
+LIMIT $4
+OFFSET $3
 `
 
 type ListRequisiteAssignmentEventsParams struct {
 	TeamID       int64
 	AssignmentID int64
+	OffsetCount  int32
+	LimitCount   int32
 }
 
 func (q *Queries) ListRequisiteAssignmentEvents(ctx context.Context, arg ListRequisiteAssignmentEventsParams) ([]RequisiteAssignmentEvent, error) {
-	rows, err := q.db.Query(ctx, listRequisiteAssignmentEvents, arg.TeamID, arg.AssignmentID)
+	rows, err := q.db.Query(ctx, listRequisiteAssignmentEvents,
+		arg.TeamID,
+		arg.AssignmentID,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -728,15 +944,24 @@ FROM requisite_assignments
 WHERE team_id = $1
   AND requisite_id = $2
 ORDER BY assigned_at DESC, id DESC
+LIMIT $4
+OFFSET $3
 `
 
 type ListRequisiteAssignmentHistoryParams struct {
 	TeamID      int64
 	RequisiteID int64
+	OffsetCount int32
+	LimitCount  int32
 }
 
 func (q *Queries) ListRequisiteAssignmentHistory(ctx context.Context, arg ListRequisiteAssignmentHistoryParams) ([]RequisiteAssignment, error) {
-	rows, err := q.db.Query(ctx, listRequisiteAssignmentHistory, arg.TeamID, arg.RequisiteID)
+	rows, err := q.db.Query(ctx, listRequisiteAssignmentHistory,
+		arg.TeamID,
+		arg.RequisiteID,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -812,8 +1037,68 @@ LEFT JOIN LATERAL (
 ) ra ON true
 WHERE r.team_id = $1
   AND r.deleted_at IS NULL
+  AND (
+      $2::text = ''
+      OR $2::text = 'all'
+      OR r.bank_code = $2::text
+  )
+  AND (
+      $3::text = ''
+      OR $3::text = 'all'
+      OR r.status = $3::text
+  )
+  AND (
+      NOT $4::boolean
+      OR (
+          r.status = 'active'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM requisite_assignments blocked_ra
+              WHERE blocked_ra.team_id = r.team_id
+                AND blocked_ra.requisite_id = r.id
+                AND blocked_ra.unassigned_at IS NULL
+                AND blocked_ra.status = 'blocked'
+          )
+      )
+  )
+  AND (
+      $5::text = ''
+      OR $5::text = 'all'
+      OR ($5::text = 'unassigned' AND ra.trader_id IS NULL)
+      OR ($5::text NOT IN ('unassigned', 'all') AND ra.trader_id::text = $5::text)
+  )
+  AND (
+      $6::text = ''
+      OR lower(r.phone) LIKE '%' || lower($6::text) || '%'
+      OR lower(b.name) LIKE '%' || lower($6::text) || '%'
+      OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower($6::text) || '%'
+      OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower($6::text) || '%'
+      OR lower(COALESCE(r.holder_name, '')) LIKE '%' || lower($6::text) || '%'
+      OR lower(COALESCE(r.card_number, '')) LIKE '%' || lower($6::text) || '%'
+      OR (
+          $7::text <> ''
+          AND (
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+              OR regexp_replace(COALESCE(r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $7::text || '%'
+          )
+      )
+  )
 ORDER BY r.created_at DESC, r.id DESC
+LIMIT $9
+OFFSET $8
 `
+
+type ListRequisiteDetailsByTeamParams struct {
+	TeamID               int64
+	BankCode             string
+	Status               string
+	AvailableForPlanning bool
+	TraderFilter         string
+	Search               string
+	SearchDigits         string
+	OffsetCount          int32
+	LimitCount           int32
+}
 
 type ListRequisiteDetailsByTeamRow struct {
 	ID                  int64
@@ -841,8 +1126,18 @@ type ListRequisiteDetailsByTeamRow struct {
 	TargetTurnoverMinor int64
 }
 
-func (q *Queries) ListRequisiteDetailsByTeam(ctx context.Context, teamID int64) ([]ListRequisiteDetailsByTeamRow, error) {
-	rows, err := q.db.Query(ctx, listRequisiteDetailsByTeam, teamID)
+func (q *Queries) ListRequisiteDetailsByTeam(ctx context.Context, arg ListRequisiteDetailsByTeamParams) ([]ListRequisiteDetailsByTeamRow, error) {
+	rows, err := q.db.Query(ctx, listRequisiteDetailsByTeam,
+		arg.TeamID,
+		arg.BankCode,
+		arg.Status,
+		arg.AvailableForPlanning,
+		arg.TraderFilter,
+		arg.Search,
+		arg.SearchDigits,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1017,8 +1312,53 @@ JOIN banks b ON b.code = r.bank_code
 JOIN users u ON u.id = ra.trader_id
 LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = $1
+  AND (
+      $2::text = ''
+      OR $2::text = 'all'
+      OR r.bank_code = $2::text
+  )
+  AND (
+      $3::text = ''
+      OR $3::text = 'all'
+      OR r.status = $3::text
+  )
+  AND (
+      $4::text = ''
+      OR $4::text = 'all'
+      OR ($4::text NOT IN ('unassigned', 'all') AND ra.trader_id::text = $4::text)
+  )
+  AND (
+      $5::text = ''
+      OR lower(r.phone) LIKE '%' || lower($5::text) || '%'
+      OR lower(b.name) LIKE '%' || lower($5::text) || '%'
+      OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower($5::text) || '%'
+      OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower($5::text) || '%'
+      OR lower(COALESCE(sr.holder_name, r.holder_name, '')) LIKE '%' || lower($5::text) || '%'
+      OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower($5::text) || '%'
+      OR lower(u.login) LIKE '%' || lower($5::text) || '%'
+      OR (
+          $6::text <> ''
+          AND (
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || $6::text || '%'
+              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || $6::text || '%'
+          )
+      )
+  )
 ORDER BY COALESCE(ra.completed_at, ra.started_at, ra.assigned_at) DESC, ra.id DESC
+LIMIT $8
+OFFSET $7
 `
+
+type ListTeamleadRequisiteActivityParams struct {
+	TeamID       int64
+	BankCode     string
+	Status       string
+	TraderFilter string
+	Search       string
+	SearchDigits string
+	OffsetCount  int32
+	LimitCount   int32
+}
 
 type ListTeamleadRequisiteActivityRow struct {
 	AssignmentID          int64
@@ -1047,8 +1387,17 @@ type ListTeamleadRequisiteActivityRow struct {
 	ShiftRequisiteID      pgtype.Int8
 }
 
-func (q *Queries) ListTeamleadRequisiteActivity(ctx context.Context, teamID int64) ([]ListTeamleadRequisiteActivityRow, error) {
-	rows, err := q.db.Query(ctx, listTeamleadRequisiteActivity, teamID)
+func (q *Queries) ListTeamleadRequisiteActivity(ctx context.Context, arg ListTeamleadRequisiteActivityParams) ([]ListTeamleadRequisiteActivityRow, error) {
+	rows, err := q.db.Query(ctx, listTeamleadRequisiteActivity,
+		arg.TeamID,
+		arg.BankCode,
+		arg.Status,
+		arg.TraderFilter,
+		arg.Search,
+		arg.SearchDigits,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1124,7 +1473,15 @@ LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = $1
   AND ra.status IN ('planned', 'assigned')
 ORDER BY ra.assigned_for_date DESC, ra.updated_at DESC, ra.id DESC
+LIMIT $3
+OFFSET $2
 `
+
+type ListTeamleadRequisitePlansParams struct {
+	TeamID      int64
+	OffsetCount int32
+	LimitCount  int32
+}
 
 type ListTeamleadRequisitePlansRow struct {
 	AssignmentID          int64
@@ -1151,8 +1508,8 @@ type ListTeamleadRequisitePlansRow struct {
 	ShiftRequisiteID      pgtype.Int8
 }
 
-func (q *Queries) ListTeamleadRequisitePlans(ctx context.Context, teamID int64) ([]ListTeamleadRequisitePlansRow, error) {
-	rows, err := q.db.Query(ctx, listTeamleadRequisitePlans, teamID)
+func (q *Queries) ListTeamleadRequisitePlans(ctx context.Context, arg ListTeamleadRequisitePlansParams) ([]ListTeamleadRequisitePlansRow, error) {
+	rows, err := q.db.Query(ctx, listTeamleadRequisitePlans, arg.TeamID, arg.OffsetCount, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}

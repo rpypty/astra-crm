@@ -53,6 +53,11 @@ type Item struct {
 	CreatedAt           time.Time
 }
 
+type ItemFilters struct {
+	Status       string
+	OnlyMismatch bool
+}
+
 type RecalculateTraderInboundRecord struct {
 	TeamID        int64
 	TraderID      int64

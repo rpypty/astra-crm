@@ -321,7 +321,7 @@ export function RequisiteCommentDialog({
 function AssignmentHistoryDialog({ requisiteId }: { requisiteId: number }) {
   const historyQuery = useQuery({
     queryKey: ["teamlead", "requisites", requisiteId, "history"],
-    queryFn: () => api.requisites.history(requisiteId),
+    queryFn: () => api.requisites.history(requisiteId, { page: 1, pageSize: 100 }),
     enabled: false,
   });
   return (
@@ -336,7 +336,7 @@ function AssignmentHistoryDialog({ requisiteId }: { requisiteId: number }) {
         <DialogHeader>
           <DialogTitle className="text-base font-semibold">История назначений</DialogTitle>
         </DialogHeader>
-        <AssignmentHistoryList items={historyQuery.data ?? []} isLoading={historyQuery.isLoading} />
+        <AssignmentHistoryList items={historyQuery.data?.items ?? []} isLoading={historyQuery.isLoading} />
       </DialogContent>
     </Dialog>
   );
@@ -345,7 +345,7 @@ function AssignmentHistoryDialog({ requisiteId }: { requisiteId: number }) {
 export function AssignmentHistoryViewer({ requisite, onClose }: { requisite: Requisite | null; onClose: () => void }) {
   const historyQuery = useQuery({
     queryKey: ["teamlead", "requisites", requisite?.id, "history"],
-    queryFn: () => api.requisites.history(requisite?.id ?? 0),
+    queryFn: () => api.requisites.history(requisite?.id ?? 0, { page: 1, pageSize: 100 }),
     enabled: Boolean(requisite),
   });
 
@@ -356,7 +356,7 @@ export function AssignmentHistoryViewer({ requisite, onClose }: { requisite: Req
           <DialogTitle className="text-base font-semibold">История назначений</DialogTitle>
           <DialogDescription>{requisite?.phone}</DialogDescription>
         </DialogHeader>
-        <AssignmentHistoryList items={historyQuery.data ?? []} isLoading={historyQuery.isLoading} />
+        <AssignmentHistoryList items={historyQuery.data?.items ?? []} isLoading={historyQuery.isLoading} />
       </DialogContent>
     </Dialog>
   );
@@ -371,11 +371,11 @@ function AssignmentHistoryList({
 }) {
   const tradersQuery = useQuery({
     queryKey: queryKeys.teamlead.traders({ status: "active" }),
-    queryFn: () => api.traders.list({ status: "active" }),
+    queryFn: () => api.traders.list({ status: "active", page: 1, pageSize: 200 }),
   });
   const tradersById = useMemo(
-    () => new Map((tradersQuery.data ?? []).map((trader) => [trader.id, trader.login])),
-    [tradersQuery.data],
+    () => new Map((tradersQuery.data?.items ?? []).map((trader) => [trader.id, trader.login])),
+    [tradersQuery.data?.items],
   );
 
   return (

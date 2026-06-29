@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 )
 
 type Service struct {
@@ -58,10 +60,11 @@ type PeriodFilter struct {
 	DateTo   *time.Time
 }
 
-func (s *Service) ListPeriods(ctx context.Context, teamID int64) ([]AccountingPeriod, error) {
+func (s *Service) ListPeriods(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[AccountingPeriod], error) {
 	if s == nil || s.pool == nil {
-		return nil, fmt.Errorf("readmodels: repository is not configured")
+		return pagination.Result[AccountingPeriod]{}, fmt.Errorf("readmodels: repository is not configured")
 	}
+	page = pagination.Normalize(page)
 
 	rows, err := s.pool.Query(ctx, `
 SELECT
@@ -87,9 +90,11 @@ SELECT
 	ap.status
 FROM accounting_periods ap
 WHERE ap.team_id = $1
-ORDER BY ap.date_from DESC, ap.id DESC`, teamID)
+ORDER BY ap.date_from DESC, ap.id DESC
+LIMIT $2
+OFFSET $3`, teamID, page.PageSize, pagination.Offset(page))
 	if err != nil {
-		return nil, fmt.Errorf("list periods: %w", err)
+		return pagination.Result[AccountingPeriod]{}, fmt.Errorf("list periods: %w", err)
 	}
 	defer rows.Close()
 
@@ -106,21 +111,30 @@ ORDER BY ap.date_from DESC, ap.id DESC`, teamID)
 			&item.OutboundStatus,
 			&item.Status,
 		); err != nil {
-			return nil, fmt.Errorf("scan period: %w", err)
+			return pagination.Result[AccountingPeriod]{}, fmt.Errorf("scan period: %w", err)
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate periods: %w", err)
+		return pagination.Result[AccountingPeriod]{}, fmt.Errorf("iterate periods: %w", err)
 	}
 
-	return items, nil
+	var total int64
+	if err := s.pool.QueryRow(ctx, `
+SELECT count(*)::bigint
+FROM accounting_periods ap
+WHERE ap.team_id = $1`, teamID).Scan(&total); err != nil {
+		return pagination.Result[AccountingPeriod]{}, fmt.Errorf("count periods: %w", err)
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
-func (s *Service) ListAudit(ctx context.Context, teamID int64) ([]AuditLogEntry, error) {
+func (s *Service) ListAudit(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[AuditLogEntry], error) {
 	if s == nil || s.pool == nil {
-		return nil, fmt.Errorf("readmodels: repository is not configured")
+		return pagination.Result[AuditLogEntry]{}, fmt.Errorf("readmodels: repository is not configured")
 	}
+	page = pagination.Normalize(page)
 
 	rows, err := s.pool.Query(ctx, `
 SELECT
@@ -136,9 +150,10 @@ FROM audit_logs al
 JOIN users u ON u.id = al.actor_id
 WHERE al.team_id = $1
 ORDER BY al.created_at DESC, al.id DESC
-LIMIT 200`, teamID)
+LIMIT $2
+OFFSET $3`, teamID, page.PageSize, pagination.Offset(page))
 	if err != nil {
-		return nil, fmt.Errorf("list audit: %w", err)
+		return pagination.Result[AuditLogEntry]{}, fmt.Errorf("list audit: %w", err)
 	}
 	defer rows.Close()
 
@@ -156,21 +171,29 @@ LIMIT 200`, teamID)
 			&item.Comment,
 			&payload,
 		); err != nil {
-			return nil, fmt.Errorf("scan audit: %w", err)
+			return pagination.Result[AuditLogEntry]{}, fmt.Errorf("scan audit: %w", err)
 		}
 		item.MaskedPayload = map[string]any{}
 		if len(payload) > 0 {
 			if err := json.Unmarshal(payload, &item.MaskedPayload); err != nil {
-				return nil, fmt.Errorf("decode audit payload: %w", err)
+				return pagination.Result[AuditLogEntry]{}, fmt.Errorf("decode audit payload: %w", err)
 			}
 		}
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate audit: %w", err)
+		return pagination.Result[AuditLogEntry]{}, fmt.Errorf("iterate audit: %w", err)
 	}
 
-	return items, nil
+	var total int64
+	if err := s.pool.QueryRow(ctx, `
+SELECT count(*)::bigint
+FROM audit_logs al
+WHERE al.team_id = $1`, teamID).Scan(&total); err != nil {
+		return pagination.Result[AuditLogEntry]{}, fmt.Errorf("count audit: %w", err)
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
 func (s *Service) TraderProfile(ctx context.Context, teamID int64, traderID int64, filters PeriodFilter) (TraderProfile, error) {

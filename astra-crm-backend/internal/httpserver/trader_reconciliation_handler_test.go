@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/reconciliation"
 	"github.com/ashpak/astra-crm-backend/internal/shifts"
 	"github.com/ashpak/astra-crm-backend/internal/users"
@@ -239,12 +240,12 @@ func (s *fakeTraderReconciliationService) LatestTraderInbound(ctx context.Contex
 	return s.inboundRun, nil
 }
 
-func (s *fakeTraderReconciliationService) ListTraderInboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]reconciliation.Item, error) {
+func (s *fakeTraderReconciliationService) ListTraderInboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error) {
 	s.latestShiftID = shiftID
 	if s.latestErr != nil {
-		return nil, s.latestErr
+		return pagination.Result[reconciliation.Item]{}, s.latestErr
 	}
-	return nil, nil
+	return pagination.FromSlice([]reconciliation.Item{}, page), nil
 }
 
 func (s *fakeTraderReconciliationService) AcceptTraderInbound(ctx context.Context, params reconciliation.AcceptTraderInboundParams) (reconciliation.Run, error) {
@@ -263,12 +264,26 @@ func (s *fakeTraderReconciliationService) LatestTraderOutbound(ctx context.Conte
 	return s.outboundRun, nil
 }
 
-func (s *fakeTraderReconciliationService) ListTraderOutboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]reconciliation.Item, error) {
+func (s *fakeTraderReconciliationService) ListTraderOutboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error) {
 	s.latestOutboundShiftID = shiftID
 	if s.latestOutboundErr != nil {
-		return nil, s.latestOutboundErr
+		return pagination.Result[reconciliation.Item]{}, s.latestOutboundErr
 	}
-	return nil, nil
+	return pagination.FromSlice([]reconciliation.Item{}, page), nil
+}
+
+func (s *fakeTraderReconciliationService) ListTraderInboundRunItems(ctx context.Context, teamID int64, traderID int64, runID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error) {
+	if s.latestErr != nil {
+		return pagination.Result[reconciliation.Item]{}, s.latestErr
+	}
+	return pagination.FromSlice([]reconciliation.Item{}, page), nil
+}
+
+func (s *fakeTraderReconciliationService) ListTraderOutboundRunItems(ctx context.Context, teamID int64, traderID int64, runID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error) {
+	if s.latestOutboundErr != nil {
+		return pagination.Result[reconciliation.Item]{}, s.latestOutboundErr
+	}
+	return pagination.FromSlice([]reconciliation.Item{}, page), nil
 }
 
 func (s *fakeTraderReconciliationService) AcceptTraderOutbound(ctx context.Context, params reconciliation.AcceptTraderOutboundParams) (reconciliation.Run, error) {

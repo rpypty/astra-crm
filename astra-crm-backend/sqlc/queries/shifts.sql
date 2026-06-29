@@ -19,7 +19,15 @@ WHERE team_id = sqlc.arg(team_id)
   AND trader_id = sqlc.arg(trader_id)
   AND status IN ('closed', 'closed_with_discrepancy')
 ORDER BY COALESCE(closed_at, ended_at, updated_at) DESC, id DESC
-LIMIT sqlc.arg(limit_count);
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountTraderShiftHistory :one
+SELECT count(*)::bigint
+FROM trader_shifts
+WHERE team_id = sqlc.arg(team_id)
+  AND trader_id = sqlc.arg(trader_id)
+  AND status IN ('closed', 'closed_with_discrepancy');
 
 -- name: ListTeamShiftHistory :many
 SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
@@ -27,7 +35,14 @@ FROM trader_shifts
 WHERE team_id = sqlc.arg(team_id)
   AND status IN ('closed', 'closed_with_discrepancy')
 ORDER BY COALESCE(closed_at, ended_at, updated_at) DESC, id DESC
-LIMIT sqlc.arg(limit_count);
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountTeamShiftHistory :one
+SELECT count(*)::bigint
+FROM trader_shifts
+WHERE team_id = sqlc.arg(team_id)
+  AND status IN ('closed', 'closed_with_discrepancy');
 
 -- name: GetTraderShiftByIDForTrader :one
 SELECT id, team_id, trader_id, started_at, ended_at, status, inbound_reconciliation_status, outbound_reconciliation_status, close_comment, created_at, updated_at, closed_at
@@ -109,7 +124,94 @@ WHERE ra.team_id = sqlc.arg(team_id)
   AND ra.assigned_for_date <= sqlc.arg(today)::date
   AND r.deleted_at IS NULL
   AND r.status = 'active'
-ORDER BY ra.assigned_for_date DESC, r.created_at DESC, r.id DESC;
+  AND (
+      sqlc.narg(exclude_id)::bigint IS NULL
+      OR COALESCE(sr.id, 0) <> sqlc.narg(exclude_id)::bigint
+  )
+  AND (
+      COALESCE(cardinality(sqlc.arg(statuses)::text[]), 0) = 0
+      OR (
+          ('assigned' = ANY(sqlc.arg(statuses)::text[]) AND sr.id IS NULL)
+          OR ('in_work' = ANY(sqlc.arg(statuses)::text[]) AND sr.status = 'active')
+          OR ('correction' = ANY(sqlc.arg(statuses)::text[]) AND sr.status = 'correction')
+          OR ('blocked' = ANY(sqlc.arg(statuses)::text[]) AND sr.status = 'blocked')
+          OR (sr.status = ANY(sqlc.arg(statuses)::text[]))
+      )
+  )
+  AND (
+      sqlc.arg(search)::text = ''
+      OR lower(r.phone) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(b.name) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR (
+          sqlc.arg(search_digits)::text <> ''
+          AND (
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || sqlc.arg(search_digits)::text || '%'
+              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || sqlc.arg(search_digits)::text || '%'
+          )
+      )
+  )
+ORDER BY ra.assigned_for_date DESC, r.created_at DESC, r.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountAssignedRequisitesForTrader :one
+WITH current_shift AS (
+    SELECT trader_shifts.id
+    FROM trader_shifts
+    WHERE trader_shifts.team_id = sqlc.arg(team_id)
+      AND trader_shifts.trader_id = sqlc.arg(trader_id)
+      AND trader_shifts.status IN ('open', 'closing')
+    ORDER BY trader_shifts.started_at DESC, trader_shifts.id DESC
+    LIMIT 1
+)
+SELECT count(*)::bigint
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+JOIN banks b ON b.code = r.bank_code
+LEFT JOIN current_shift cs ON true
+LEFT JOIN LATERAL (
+    SELECT sr.*
+    FROM shift_requisites sr
+    WHERE sr.shift_id = cs.id
+      AND sr.requisite_id = r.id
+    ORDER BY sr.taken_at DESC, sr.id DESC
+    LIMIT 1
+) sr ON true
+WHERE ra.team_id = sqlc.arg(team_id)
+  AND ra.trader_id = sqlc.arg(trader_id)
+  AND ra.unassigned_at IS NULL
+  AND ra.status IN ('planned', 'assigned', 'in_work')
+  AND ra.assigned_for_date <= sqlc.arg(today)::date
+  AND r.deleted_at IS NULL
+  AND r.status = 'active'
+  AND (
+      sqlc.narg(exclude_id)::bigint IS NULL
+      OR COALESCE(sr.id, 0) <> sqlc.narg(exclude_id)::bigint
+  )
+  AND (
+      COALESCE(cardinality(sqlc.arg(statuses)::text[]), 0) = 0
+      OR (
+          ('assigned' = ANY(sqlc.arg(statuses)::text[]) AND sr.id IS NULL)
+          OR ('in_work' = ANY(sqlc.arg(statuses)::text[]) AND sr.status = 'active')
+          OR ('correction' = ANY(sqlc.arg(statuses)::text[]) AND sr.status = 'correction')
+          OR ('blocked' = ANY(sqlc.arg(statuses)::text[]) AND sr.status = 'blocked')
+          OR (sr.status = ANY(sqlc.arg(statuses)::text[]))
+      )
+  )
+  AND (
+      sqlc.arg(search)::text = ''
+      OR lower(r.phone) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(b.name) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR (
+          sqlc.arg(search_digits)::text <> ''
+          AND (
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || sqlc.arg(search_digits)::text || '%'
+              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || sqlc.arg(search_digits)::text || '%'
+          )
+      )
+  );
 
 -- name: ListFutureAssignedRequisitesForTrader :many
 SELECT
@@ -145,7 +247,21 @@ WHERE ra.team_id = sqlc.arg(team_id)
   AND ra.assigned_for_date > sqlc.arg(today)::date
   AND r.deleted_at IS NULL
   AND r.status = 'active'
-ORDER BY ra.assigned_for_date ASC, r.created_at DESC, r.id DESC;
+ORDER BY ra.assigned_for_date ASC, r.created_at DESC, r.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountFutureAssignedRequisitesForTrader :one
+SELECT count(*)::bigint
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+WHERE ra.team_id = sqlc.arg(team_id)
+  AND ra.trader_id = sqlc.arg(trader_id)
+  AND ra.unassigned_at IS NULL
+  AND ra.status IN ('planned', 'assigned')
+  AND ra.assigned_for_date > sqlc.arg(today)::date
+  AND r.deleted_at IS NULL
+  AND r.status = 'active';
 
 -- name: ListHistoricalAssignedRequisitesForTrader :many
 SELECT
@@ -190,7 +306,30 @@ WHERE ra.team_id = sqlc.arg(team_id)
         AND active_ra.status IN ('planned', 'assigned', 'in_work')
         AND active_ra.assigned_for_date <= sqlc.arg(today)::date
   )
-ORDER BY COALESCE(ra.completed_at, ra.cancelled_at, ra.unassigned_at, ra.updated_at) DESC, ra.id DESC;
+ORDER BY COALESCE(ra.completed_at, ra.cancelled_at, ra.unassigned_at, ra.updated_at) DESC, ra.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountHistoricalAssignedRequisitesForTrader :one
+SELECT count(*)::bigint
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
+WHERE ra.team_id = sqlc.arg(team_id)
+  AND ra.trader_id = sqlc.arg(trader_id)
+  AND ra.status IN ('worked', 'blocked')
+  AND sr.id IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM requisite_assignments active_ra
+      WHERE active_ra.team_id = ra.team_id
+        AND active_ra.trader_id = ra.trader_id
+        AND active_ra.requisite_id = ra.requisite_id
+        AND active_ra.id <> ra.id
+        AND active_ra.unassigned_at IS NULL
+        AND active_ra.status IN ('planned', 'assigned', 'in_work')
+        AND active_ra.assigned_for_date <= sqlc.arg(today)::date
+  );
 
 -- name: ListAssignedRequisitesForShift :many
 SELECT
@@ -226,7 +365,19 @@ WHERE sr.team_id = sqlc.arg(team_id)
   AND sr.shift_id = sqlc.arg(shift_id)
   AND ts.team_id = sqlc.arg(team_id)
   AND ts.trader_id = sqlc.arg(trader_id)
-ORDER BY sr.taken_at DESC, sr.id DESC;
+ORDER BY sr.taken_at DESC, sr.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountAssignedRequisitesForShift :one
+SELECT count(*)::bigint
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+WHERE sr.team_id = sqlc.arg(team_id)
+  AND sr.trader_id = sqlc.arg(trader_id)
+  AND sr.shift_id = sqlc.arg(shift_id)
+  AND ts.team_id = sqlc.arg(team_id)
+  AND ts.trader_id = sqlc.arg(trader_id);
 
 -- name: ListAssignedRequisitesForTeamShift :many
 SELECT
@@ -260,7 +411,17 @@ LEFT JOIN requisite_assignments ra ON ra.id = sr.assignment_id
 WHERE sr.team_id = sqlc.arg(team_id)
   AND sr.shift_id = sqlc.arg(shift_id)
   AND ts.team_id = sqlc.arg(team_id)
-ORDER BY sr.taken_at DESC, sr.id DESC;
+ORDER BY sr.taken_at DESC, sr.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountAssignedRequisitesForTeamShift :one
+SELECT count(*)::bigint
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+WHERE sr.team_id = sqlc.arg(team_id)
+  AND sr.shift_id = sqlc.arg(shift_id)
+  AND ts.team_id = sqlc.arg(team_id);
 
 -- name: CreateShiftRequisite :one
 INSERT INTO shift_requisites (team_id, shift_id, trader_id, requisite_id, assignment_id, card_number, holder_name)
@@ -274,7 +435,17 @@ JOIN trader_shifts ts ON ts.id = sr.shift_id
 WHERE sr.team_id = sqlc.arg(team_id)
   AND sr.trader_id = sqlc.arg(trader_id)
   AND ts.status IN ('open', 'closing')
-ORDER BY sr.taken_at DESC, sr.id DESC;
+ORDER BY sr.taken_at DESC, sr.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountShiftRequisitesByTrader :one
+SELECT count(*)::bigint
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+WHERE sr.team_id = sqlc.arg(team_id)
+  AND sr.trader_id = sqlc.arg(trader_id)
+  AND ts.status IN ('open', 'closing');
 
 -- name: ListShiftReportRows :many
 WITH crm_requisites AS (
@@ -748,7 +919,20 @@ WHERE t.team_id = sqlc.arg(team_id)
       t.source_shift_requisite_id = sqlc.arg(shift_requisite_id)
       OR t.destination_shift_requisite_id = sqlc.arg(shift_requisite_id)
   )
-ORDER BY t.created_at DESC, t.id DESC;
+ORDER BY t.created_at DESC, t.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountInternalTransfersForShiftRequisite :one
+SELECT count(*)::bigint
+FROM shift_requisite_internal_transfers t
+WHERE t.team_id = sqlc.arg(team_id)
+  AND t.trader_id = sqlc.arg(trader_id)
+  AND t.status = 'active'
+  AND (
+      t.source_shift_requisite_id = sqlc.arg(shift_requisite_id)
+      OR t.destination_shift_requisite_id = sqlc.arg(shift_requisite_id)
+  );
 
 -- name: CreateInternalTransfer :one
 WITH source_sr AS (
@@ -930,7 +1114,20 @@ WHERE e.team_id = sqlc.arg(team_id)
   AND e.shift_requisite_id = sqlc.arg(shift_requisite_id)
   AND sr.trader_id = sqlc.arg(trader_id)
   AND ts.status IN ('open', 'closing')
-ORDER BY e.created_at DESC, e.id DESC;
+ORDER BY e.created_at DESC, e.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountTurnoversByShiftRequisite :one
+SELECT count(*)::bigint
+FROM requisite_turnover_entries e
+JOIN shift_requisites sr ON sr.id = e.shift_requisite_id
+JOIN trader_shifts ts ON ts.id = e.shift_id
+WHERE e.team_id = sqlc.arg(team_id)
+  AND e.trader_id = sqlc.arg(trader_id)
+  AND e.shift_requisite_id = sqlc.arg(shift_requisite_id)
+  AND sr.trader_id = sqlc.arg(trader_id)
+  AND ts.status IN ('open', 'closing');
 
 -- name: GetCurrentShiftChecklist :one
 SELECT
@@ -950,6 +1147,14 @@ SELECT
     (ts.inbound_reconciliation_status IN ('matched', 'accepted_with_comment')) AS inbound_ok,
     (ts.outbound_reconciliation_status <> 'not_started') AS outbound_imported,
     (ts.outbound_reconciliation_status IN ('matched', 'accepted_with_comment')) AS outbound_ok,
+    (
+        SELECT count(*)::bigint
+        FROM shift_requisites sr
+        WHERE sr.team_id = ts.team_id
+          AND sr.trader_id = ts.trader_id
+          AND sr.shift_id = ts.id
+          AND sr.status IN ('active', 'correction')
+    ) AS open_requisite_count,
     NOT EXISTS (
         SELECT 1
         FROM manual_payout_orders mpo

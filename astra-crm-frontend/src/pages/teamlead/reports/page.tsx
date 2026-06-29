@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
 import { ArrowDownLeft, ArrowUpRight, CalendarDays, Copy, Eye, FileText, History, Pencil, Plus, UserRound, X } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
@@ -62,6 +62,7 @@ import { filterOrdersBySearch } from "@/shared/lib/order-filters";
 import type { PeriodFilter } from "@/shared/lib/period-filter";
 import { usePersistentPeriodFilter } from "@/shared/lib/period-filter";
 import { queryKeys } from "@/shared/api/query-keys";
+import { paginationToQuery } from "@/shared/lib/pagination";
 import {
   bpsToPercent,
   cn,
@@ -125,15 +126,19 @@ type RequisiteReportTarget = {
 const TEAMLEAD_PERIOD_FILTER_STORAGE_KEY = "astra-crm:teamlead-period-filter";
 
 export function TeamleadReportsPage() {
-  const reportsQuery = useQuery({ queryKey: queryKeys.teamlead.shiftHistory, queryFn: api.teamleadReports.history });
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 10 });
+  const reportsQuery = useQuery({
+    queryKey: queryKeys.teamlead.shiftHistory(paginationToQuery(pagination)),
+    queryFn: () => api.teamleadReports.history(paginationToQuery(pagination)),
+    placeholderData: keepPreviousData,
+  });
   const tradersQuery = useQuery({
     queryKey: queryKeys.teamlead.traders({ status: "active" }),
-    queryFn: () => api.traders.list({ status: "active" }),
+    queryFn: () => api.traders.list({ status: "active", page: 1, pageSize: 200 }),
   });
-  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 10 });
   const [selectedReport, setSelectedReport] = useState<ShiftReport | null>(null);
-  const tradersById = useMemo(() => new Map((tradersQuery.data ?? []).map((trader) => [trader.id, trader])), [tradersQuery.data]);
-  const reports = reportsQuery.data ?? [];
+  const tradersById = useMemo(() => new Map((tradersQuery.data?.items ?? []).map((trader) => [trader.id, trader])), [tradersQuery.data?.items]);
+  const reports = reportsQuery.data?.items ?? [];
   const discrepancyCount = reports.filter((report) => report.status === "closed_with_discrepancy").length;
   const traderCount = new Set(reports.map((report) => report.traderId)).size;
   const columns = useMemo<ColumnDef<ShiftReport>[]>(
@@ -201,10 +206,12 @@ export function TeamleadReportsPage() {
       <DataTable
         columns={columns}
         data={reports}
-        rowCount={reports.length}
+        rowCount={reportsQuery.data?.total ?? 0}
         pagination={pagination}
         onPaginationChange={setPagination}
+        serverSidePagination
         isLoading={reportsQuery.isLoading || tradersQuery.isLoading}
+        isFetching={reportsQuery.isFetching || tradersQuery.isFetching}
         error={reportsQuery.error instanceof Error ? reportsQuery.error.message : null}
         emptyTitle="Отчетов пока нет"
         emptyDescription="Закрытые смены трейдеров будут появляться здесь после сдачи отчетов."

@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
 import { AlertTriangle, ArrowDownLeft, ArrowUpRight, CalendarDays, CheckCircle2, ChevronDown, Eye, FileText, History, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
@@ -37,6 +37,7 @@ import { filterOrdersBySearch } from "@/shared/lib/order-filters";
 import type { PeriodFilter } from "@/shared/lib/period-filter";
 import { usePersistentPeriodFilter } from "@/shared/lib/period-filter";
 import { queryKeys } from "@/shared/api/query-keys";
+import { paginationToQuery } from "@/shared/lib/pagination";
 import {
 
   formatCardNumber,
@@ -100,16 +101,22 @@ export function TraderRequisitesPage() {
   const [historyPagination, setHistoryPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
   const [selectedRequisite, setSelectedRequisite] = useState<ShiftRequisite | null>(null);
   const [copiedMessage, setCopiedMessage] = useState<string | null>(null);
-  const requisitesQuery = useQuery({ queryKey: queryKeys.trader.requisites(), queryFn: api.traderShift.requisites });
+  const requisitesQuery = useQuery({
+    queryKey: queryKeys.trader.requisites(paginationToQuery(pagination)),
+    queryFn: () => api.traderShift.requisites(paginationToQuery(pagination)),
+    placeholderData: keepPreviousData,
+  });
   const futureRequisitesQuery = useQuery({
-    queryKey: queryKeys.trader.futureRequisites,
-    queryFn: api.traderShift.futureRequisites,
+    queryKey: queryKeys.trader.futureRequisites(paginationToQuery(futurePagination)),
+    queryFn: () => api.traderShift.futureRequisites(paginationToQuery(futurePagination)),
     enabled: activeTab === "future",
+    placeholderData: keepPreviousData,
   });
   const historicalRequisitesQuery = useQuery({
-    queryKey: queryKeys.trader.historicalRequisites,
-    queryFn: api.traderShift.historicalRequisites,
+    queryKey: queryKeys.trader.historicalRequisites(paginationToQuery(historyPagination)),
+    queryFn: () => api.traderShift.historicalRequisites(paginationToQuery(historyPagination)),
     enabled: activeTab === "history",
+    placeholderData: keepPreviousData,
   });
   const copyToClipboard = useCallback((value: string | undefined | null, label: string) => {
     if (!value) return;
@@ -260,10 +267,12 @@ export function TraderRequisitesPage() {
       {activeTab === "current" ? (
         <CurrentRequisitesTab
           columns={currentColumns}
-          data={requisitesQuery.data ?? []}
+          data={requisitesQuery.data?.items ?? []}
+          rowCount={requisitesQuery.data?.total ?? 0}
           pagination={pagination}
           onPaginationChange={setPagination}
           isLoading={requisitesQuery.isLoading}
+          isFetching={requisitesQuery.isFetching}
           error={requisitesQuery.error instanceof Error ? requisitesQuery.error.message : null}
           onRowClick={setSelectedRequisite}
         />
@@ -271,20 +280,24 @@ export function TraderRequisitesPage() {
       {activeTab === "future" ? (
         <FutureRequisitesTab
           columns={futureColumns}
-          data={futureRequisitesQuery.data ?? []}
+          data={futureRequisitesQuery.data?.items ?? []}
+          rowCount={futureRequisitesQuery.data?.total ?? 0}
           pagination={futurePagination}
           onPaginationChange={setFuturePagination}
           isLoading={futureRequisitesQuery.isLoading}
+          isFetching={futureRequisitesQuery.isFetching}
           error={futureRequisitesQuery.error instanceof Error ? futureRequisitesQuery.error.message : null}
         />
       ) : null}
       {activeTab === "history" ? (
         <HistoricalRequisitesTab
           columns={historyColumns}
-          data={historicalRequisitesQuery.data ?? []}
+          data={historicalRequisitesQuery.data?.items ?? []}
+          rowCount={historicalRequisitesQuery.data?.total ?? 0}
           pagination={historyPagination}
           onPaginationChange={setHistoryPagination}
           isLoading={historicalRequisitesQuery.isLoading}
+          isFetching={historicalRequisitesQuery.isFetching}
           error={historicalRequisitesQuery.error instanceof Error ? historicalRequisitesQuery.error.message : null}
         />
       ) : null}
@@ -517,6 +530,8 @@ function CloseRequisiteDialog({ item }: { item: ShiftRequisite }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [transfersCollapsed, setTransfersCollapsed] = useState(false);
+  const [transferSearch, setTransferSearch] = useState("");
+  const deferredTransferSearch = useDeferredValue(transferSearch);
   const form = useForm<z.infer<typeof closeRequisiteSchema>>({
     resolver: zodResolver(closeRequisiteSchema),
     defaultValues: { inboundTurnover: "", outboundTurnover: "", closingBalance: "", releasedAt: todayDateInputValue(), blocked: false, comment: "" },
@@ -526,27 +541,33 @@ function CloseRequisiteDialog({ item }: { item: ShiftRequisite }) {
     defaultValues: { direction: "outgoing", counterpartyShiftRequisiteId: "", amount: "", comment: "" },
   });
   const currentRequisitesQuery = useQuery({
-    queryKey: queryKeys.trader.requisites(),
-    queryFn: api.traderShift.requisites,
+    queryKey: queryKeys.trader.requisites({ statuses: ["in_work", "correction"], excludeId: item.id, search: deferredTransferSearch, page: 1, pageSize: 50 }),
+    queryFn: () =>
+      api.traderShift.requisites({
+        statuses: ["in_work", "correction"],
+        excludeId: item.id,
+        search: deferredTransferSearch,
+        page: 1,
+        pageSize: 50,
+      }),
     enabled: open,
   });
   const internalTransfersQuery = useQuery({
-    queryKey: queryKeys.trader.internalTransfers(item.id),
-    queryFn: () => api.traderShift.internalTransfers(item.id),
+    queryKey: queryKeys.trader.internalTransfers(item.id, { page: 1, pageSize: 100 }),
+    queryFn: () => api.traderShift.internalTransfers(item.id, { page: 1, pageSize: 100 }),
     enabled: open && item.id > 0,
   });
   const transferOptions = useMemo<SearchableSelectOption[]>(
     () =>
-      (currentRequisitesQuery.data ?? [])
-        .filter((requisite) => requisite.id !== item.id && (requisite.status === "in_work" || requisite.status === "correction"))
+      (currentRequisitesQuery.data?.items ?? [])
         .map((requisite) => ({
           value: String(requisite.id),
           label: `${formatRussianPhone(requisite.phone)} · ${requisite.bankName}`,
           searchText: `${requisite.phone} ${requisite.bankName} ${requisite.cardNumber ?? ""}`,
         })),
-    [currentRequisitesQuery.data, item.id],
+    [currentRequisitesQuery.data?.items],
   );
-  const internalTransfers = internalTransfersQuery.data ?? [];
+  const internalTransfers = internalTransfersQuery.data?.items ?? [];
   const incomingTotalMinor = internalTransfers
     .filter((transfer) => transfer.destinationShiftRequisiteId === item.id)
     .reduce((sum, transfer) => sum + transfer.amountMinor, 0);
@@ -658,6 +679,7 @@ function CloseRequisiteDialog({ item }: { item: ShiftRequisite }) {
                       value={transferForm.watch("counterpartyShiftRequisiteId")}
                       options={transferOptions}
                       onValueChange={(value) => transferForm.setValue("counterpartyShiftRequisiteId", value, { shouldValidate: true })}
+                      onSearchChange={setTransferSearch}
                       placeholder="Выберите реквизит"
                       searchPlaceholder="Найти реквизит"
                       emptyText="Нет доступных реквизитов"

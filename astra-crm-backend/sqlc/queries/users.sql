@@ -93,7 +93,17 @@ JOIN trader_profiles p ON p.user_id = u.id
 WHERE u.team_id = $1
   AND u.role = 'trader'
   AND u.deleted_at IS NULL
-ORDER BY u.created_at DESC, u.id DESC;
+ORDER BY u.created_at DESC, u.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountTraderDetailsByTeam :one
+SELECT count(*)::bigint
+FROM users u
+JOIN trader_profiles p ON p.user_id = u.id
+WHERE u.team_id = $1
+  AND u.role = 'trader'
+  AND u.deleted_at IS NULL;
 
 -- name: UpdateTrader :one
 WITH updated_user AS (

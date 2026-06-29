@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 )
 
 var (
@@ -20,18 +21,18 @@ var (
 type Store interface {
 	CurrentShift(ctx context.Context, teamID int64, traderID int64) (Shift, error)
 	CreateShift(ctx context.Context, teamID int64, traderID int64) (Shift, error)
-	ShiftHistory(ctx context.Context, teamID int64, traderID int64, limit int32) ([]Shift, error)
-	TeamShiftHistory(ctx context.Context, teamID int64, limit int32) ([]Shift, error)
+	ShiftHistory(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[Shift], error)
+	TeamShiftHistory(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[Shift], error)
 	ShiftReport(ctx context.Context, teamID int64, traderID int64, shiftID int64) (ShiftReportDetails, error)
 	TeamShiftReport(ctx context.Context, teamID int64, shiftID int64) (ShiftReportDetails, error)
 	ActiveAssignment(ctx context.Context, teamID int64, traderID int64, requisiteID int64) (int64, error)
-	AssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error)
-	FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error)
-	HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error)
-	AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]AssignedRequisite, error)
-	AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64) ([]AssignedRequisite, error)
+	AssignedRequisites(ctx context.Context, teamID int64, traderID int64, filters AssignedRequisitesFilters, page pagination.Params) (pagination.Result[AssignedRequisite], error)
+	FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error)
+	HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error)
+	AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error)
+	AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error)
 	CreateShiftRequisite(ctx context.Context, params CreateShiftRequisiteRecord) (ShiftRequisite, error)
-	ShiftRequisites(ctx context.Context, teamID int64, traderID int64) ([]ShiftRequisite, error)
+	ShiftRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[ShiftRequisite], error)
 	UpdateShiftRequisiteDetails(ctx context.Context, params UpdateShiftRequisiteDetailsRecord) (ShiftRequisite, error)
 	CloseShiftRequisite(ctx context.Context, params CloseShiftRequisiteRecord) (ShiftRequisite, error)
 	CorrectClosedShiftRequisiteTurnovers(ctx context.Context, params CorrectShiftRequisiteTurnoversRecord) (ShiftRequisite, error)
@@ -39,8 +40,8 @@ type Store interface {
 	GetShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) (ShiftRequisite, error)
 	CreateTurnoverEntry(ctx context.Context, params CreateTurnoverEntryRecord) (TurnoverEntry, error)
 	LatestTurnovers(ctx context.Context, teamID int64, traderID int64) ([]TurnoverEntry, error)
-	TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]TurnoverEntry, error)
-	InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]InternalTransfer, error)
+	TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64, page pagination.Params) (pagination.Result[TurnoverEntry], error)
+	InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64, page pagination.Params) (pagination.Result[InternalTransfer], error)
 	CreateInternalTransfer(ctx context.Context, params CreateInternalTransferRecord) (InternalTransfer, error)
 	CancelInternalTransfer(ctx context.Context, params CancelInternalTransferRecord) (InternalTransfer, error)
 	CurrentShiftChecklist(ctx context.Context, teamID int64, traderID int64) (CloseChecklist, error)
@@ -144,6 +145,12 @@ type CloseShiftParams struct {
 	CloseComment *string
 }
 
+type AssignedRequisitesFilters struct {
+	Statuses  []string
+	Search    string
+	ExcludeID *int64
+}
+
 type CreateInternalTransferParams struct {
 	ActorID                     int64
 	TeamID                      int64
@@ -173,26 +180,20 @@ func (s *Service) Current(ctx context.Context, teamID int64, traderID int64) (*S
 	return &shift, nil
 }
 
-func (s *Service) ShiftHistory(ctx context.Context, teamID int64, traderID int64, limit int32) ([]Shift, error) {
+func (s *Service) ShiftHistory(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[Shift], error) {
 	if teamID <= 0 || traderID <= 0 {
-		return nil, ErrInvalidInput
-	}
-	if limit <= 0 || limit > 100 {
-		limit = 30
+		return pagination.Result[Shift]{}, ErrInvalidInput
 	}
 
-	return s.store.ShiftHistory(ctx, teamID, traderID, limit)
+	return s.store.ShiftHistory(ctx, teamID, traderID, page)
 }
 
-func (s *Service) TeamShiftHistory(ctx context.Context, teamID int64, limit int32) ([]Shift, error) {
+func (s *Service) TeamShiftHistory(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[Shift], error) {
 	if teamID <= 0 {
-		return nil, ErrInvalidInput
-	}
-	if limit <= 0 || limit > 200 {
-		limit = 100
+		return pagination.Result[Shift]{}, ErrInvalidInput
 	}
 
-	return s.store.TeamShiftHistory(ctx, teamID, limit)
+	return s.store.TeamShiftHistory(ctx, teamID, page)
 }
 
 func (s *Service) ShiftReport(ctx context.Context, teamID int64, traderID int64, shiftID int64) (ShiftReportDetails, error) {
@@ -211,56 +212,56 @@ func (s *Service) TeamShiftReport(ctx context.Context, teamID int64, shiftID int
 	return s.store.TeamShiftReport(ctx, teamID, shiftID)
 }
 
-func (s *Service) AssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
-	return s.store.AssignedRequisites(ctx, teamID, traderID)
+func (s *Service) AssignedRequisites(ctx context.Context, teamID int64, traderID int64, filters AssignedRequisitesFilters, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
+	return s.store.AssignedRequisites(ctx, teamID, traderID, normalizeAssignedRequisitesFilters(filters), page)
 }
 
-func (s *Service) FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
-	return s.store.FutureAssignedRequisites(ctx, teamID, traderID)
+func (s *Service) FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
+	return s.store.FutureAssignedRequisites(ctx, teamID, traderID, page)
 }
 
-func (s *Service) HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
-	return s.store.HistoricalAssignedRequisites(ctx, teamID, traderID)
+func (s *Service) HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
+	return s.store.HistoricalAssignedRequisites(ctx, teamID, traderID, page)
 }
 
-func (s *Service) AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]AssignedRequisite, error) {
+func (s *Service) AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
 	if teamID <= 0 || traderID <= 0 || shiftID <= 0 {
-		return nil, ErrInvalidInput
+		return pagination.Result[AssignedRequisite]{}, ErrInvalidInput
 	}
 
-	return s.store.AssignedRequisitesByShift(ctx, teamID, traderID, shiftID)
+	return s.store.AssignedRequisitesByShift(ctx, teamID, traderID, shiftID, page)
 }
 
-func (s *Service) AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64) ([]AssignedRequisite, error) {
+func (s *Service) AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
 	if teamID <= 0 || shiftID <= 0 {
-		return nil, ErrInvalidInput
+		return pagination.Result[AssignedRequisite]{}, ErrInvalidInput
 	}
 
-	return s.store.AssignedRequisitesByTeamShift(ctx, teamID, shiftID)
+	return s.store.AssignedRequisitesByTeamShift(ctx, teamID, shiftID, page)
 }
 
-func (s *Service) ShiftRequisites(ctx context.Context, teamID int64, traderID int64) ([]ShiftRequisite, error) {
-	return s.store.ShiftRequisites(ctx, teamID, traderID)
+func (s *Service) ShiftRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[ShiftRequisite], error) {
+	return s.store.ShiftRequisites(ctx, teamID, traderID, page)
 }
 
 func (s *Service) LatestTurnovers(ctx context.Context, teamID int64, traderID int64) ([]TurnoverEntry, error) {
 	return s.store.LatestTurnovers(ctx, teamID, traderID)
 }
 
-func (s *Service) TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]TurnoverEntry, error) {
+func (s *Service) TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64, page pagination.Params) (pagination.Result[TurnoverEntry], error) {
 	if teamID <= 0 || traderID <= 0 || shiftRequisiteID <= 0 {
-		return nil, ErrInvalidInput
+		return pagination.Result[TurnoverEntry]{}, ErrInvalidInput
 	}
 
-	return s.store.TurnoversByShiftRequisite(ctx, teamID, traderID, shiftRequisiteID)
+	return s.store.TurnoversByShiftRequisite(ctx, teamID, traderID, shiftRequisiteID, page)
 }
 
-func (s *Service) InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]InternalTransfer, error) {
+func (s *Service) InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64, page pagination.Params) (pagination.Result[InternalTransfer], error) {
 	if teamID <= 0 || traderID <= 0 || shiftRequisiteID <= 0 {
-		return nil, ErrInvalidInput
+		return pagination.Result[InternalTransfer]{}, ErrInvalidInput
 	}
 
-	return s.store.InternalTransfersByShiftRequisite(ctx, teamID, traderID, shiftRequisiteID)
+	return s.store.InternalTransfersByShiftRequisite(ctx, teamID, traderID, shiftRequisiteID, page)
 }
 
 func (s *Service) TakeRequisite(ctx context.Context, params TakeRequisiteParams) (TakeRequisiteResult, error) {
@@ -592,23 +593,7 @@ func (s *Service) CloseChecklist(ctx context.Context, teamID int64, traderID int
 		return CloseChecklist{}, err
 	}
 
-	items, err := s.store.ShiftRequisites(ctx, teamID, traderID)
-	if err != nil {
-		return CloseChecklist{}, err
-	}
-
-	var openCount int64
-	for _, item := range items {
-		if item.ShiftID != checklist.Shift.ID {
-			continue
-		}
-		if item.Status == RequisiteStatusActive || item.Status == RequisiteStatusCorrection {
-			openCount++
-		}
-	}
-
-	checklist.OpenRequisiteCount = openCount
-	checklist.AllRequisitesClosed = openCount == 0
+	checklist.AllRequisitesClosed = checklist.OpenRequisiteCount == 0
 	checklist.CanClose = checklist.InboundImported &&
 		checklist.InboundOk &&
 		checklist.OutboundImported &&
@@ -664,6 +649,25 @@ func cleanOptionalString(value *string) *string {
 	}
 
 	return &trimmed
+}
+
+func normalizeAssignedRequisitesFilters(filters AssignedRequisitesFilters) AssignedRequisitesFilters {
+	statuses := make([]string, 0, len(filters.Statuses))
+	seen := map[string]bool{}
+	for _, status := range filters.Statuses {
+		status = strings.TrimSpace(status)
+		if status == "" || status == "all" || seen[status] {
+			continue
+		}
+		seen[status] = true
+		statuses = append(statuses, status)
+	}
+
+	return AssignedRequisitesFilters{
+		Statuses:  statuses,
+		Search:    strings.TrimSpace(filters.Search),
+		ExcludeID: filters.ExcludeID,
+	}
 }
 
 func (s *Service) writeAudit(ctx context.Context, event audit.Event) error {

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 )
 
 var (
@@ -21,7 +22,7 @@ var (
 type TraderStore interface {
 	CreateTrader(ctx context.Context, params CreateTraderRecord) (Trader, error)
 	GetTraderByID(ctx context.Context, teamID int64, traderID int64) (Trader, error)
-	ListTraderDetailsByTeam(ctx context.Context, teamID int64) ([]Trader, error)
+	ListTraderDetailsByTeam(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[Trader], error)
 	UpdateTrader(ctx context.Context, params UpdateTraderRecord) (Trader, error)
 	UpdateTraderPasswordHash(ctx context.Context, teamID int64, traderID int64, passwordHash string) error
 }
@@ -129,8 +130,8 @@ func (s *TraderService) Create(ctx context.Context, params CreateTraderParams) (
 	return trader, nil
 }
 
-func (s *TraderService) List(ctx context.Context, teamID int64) ([]Trader, error) {
-	return s.store.ListTraderDetailsByTeam(ctx, teamID)
+func (s *TraderService) List(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[Trader], error) {
+	return s.store.ListTraderDetailsByTeam(ctx, teamID, page)
 }
 
 func (s *TraderService) Get(ctx context.Context, teamID int64, traderID int64) (Trader, error) {

@@ -11,6 +11,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countTraderDetailsByTeam = `-- name: CountTraderDetailsByTeam :one
+SELECT count(*)::bigint
+FROM users u
+JOIN trader_profiles p ON p.user_id = u.id
+WHERE u.team_id = $1
+  AND u.role = 'trader'
+  AND u.deleted_at IS NULL
+`
+
+func (q *Queries) CountTraderDetailsByTeam(ctx context.Context, teamID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countTraderDetailsByTeam, teamID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createTrader = `-- name: CreateTrader :one
 WITH created_user AS (
     INSERT INTO users (team_id, role, login, password_hash, status)
@@ -245,7 +261,15 @@ WHERE u.team_id = $1
   AND u.role = 'trader'
   AND u.deleted_at IS NULL
 ORDER BY u.created_at DESC, u.id DESC
+LIMIT $3
+OFFSET $2
 `
+
+type ListTraderDetailsByTeamParams struct {
+	TeamID      int64
+	OffsetCount int32
+	LimitCount  int32
+}
 
 type ListTraderDetailsByTeamRow struct {
 	ID                 int64
@@ -263,8 +287,8 @@ type ListTraderDetailsByTeamRow struct {
 	ProfileUpdatedAt   pgtype.Timestamptz
 }
 
-func (q *Queries) ListTraderDetailsByTeam(ctx context.Context, teamID int64) ([]ListTraderDetailsByTeamRow, error) {
-	rows, err := q.db.Query(ctx, listTraderDetailsByTeam, teamID)
+func (q *Queries) ListTraderDetailsByTeam(ctx context.Context, arg ListTraderDetailsByTeamParams) ([]ListTraderDetailsByTeamRow, error) {
+	rows, err := q.db.Query(ctx, listTraderDetailsByTeam, arg.TeamID, arg.OffsetCount, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}

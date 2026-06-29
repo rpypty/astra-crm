@@ -29,6 +29,7 @@
 5. Frontend foundation.
 6. Frontend feature flows.
 7. Integration, release hardening, deployment.
+8. Backend SQL optimization stream.
 
 Backend идет первым, потому что основные риски продукта находятся в доменных инвариантах, CSV-импортах, переимпортах, сверке и аудитах.
 
@@ -45,6 +46,8 @@ roadmap/04-backend-imports-reconciliation.md
 roadmap/05-frontend-foundation.md
 roadmap/06-frontend-flows.md
 roadmap/07-integration-release.md
+roadmap/08-openapi-seed-v2-tasks.md
+roadmap/09-backend-sql-optimization.md
 roadmap/backlog-open-questions.md
 ```
 
@@ -72,4 +75,3 @@ Milestone считается готовым, если:
 - frontend имеет loading/empty/error states для реализованных экранов;
 - destructive actions требуют подтверждения;
 - mismatches визуально очевидны.
-

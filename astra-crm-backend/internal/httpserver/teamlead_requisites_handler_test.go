@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/requisites"
 	"github.com/ashpak/astra-crm-backend/internal/users"
 	"github.com/go-chi/chi/v5"
@@ -175,9 +176,9 @@ func (s *fakeTeamleadRequisiteService) Create(ctx context.Context, params requis
 	return s.createResult, nil
 }
 
-func (s *fakeTeamleadRequisiteService) List(ctx context.Context, teamID int64, params requisites.ListParams) ([]requisites.RequisiteDetails, error) {
+func (s *fakeTeamleadRequisiteService) List(ctx context.Context, teamID int64, params requisites.ListParams, page pagination.Params) (pagination.Result[requisites.RequisiteDetails], error) {
 	s.listParams = params
-	return s.listResult, nil
+	return pagination.FromSlice(s.listResult, page), nil
 }
 
 func (s *fakeTeamleadRequisiteService) Get(ctx context.Context, teamID int64, requisiteID int64) (requisites.RequisiteDetails, error) {
@@ -200,16 +201,16 @@ func (s *fakeTeamleadRequisiteService) Unassign(ctx context.Context, actorID int
 	return nil
 }
 
-func (s *fakeTeamleadRequisiteService) AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64) ([]requisites.Assignment, error) {
-	return s.history, nil
+func (s *fakeTeamleadRequisiteService) AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64, page pagination.Params) (pagination.Result[requisites.Assignment], error) {
+	return pagination.FromSlice(s.history, page), nil
 }
 
-func (s *fakeTeamleadRequisiteService) Plans(ctx context.Context, teamID int64) ([]requisites.AssignmentWorkRow, error) {
-	return nil, nil
+func (s *fakeTeamleadRequisiteService) Plans(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[requisites.AssignmentWorkRow], error) {
+	return pagination.FromSlice([]requisites.AssignmentWorkRow{}, page), nil
 }
 
-func (s *fakeTeamleadRequisiteService) Activity(ctx context.Context, teamID int64) ([]requisites.AssignmentWorkRow, error) {
-	return nil, nil
+func (s *fakeTeamleadRequisiteService) Activity(ctx context.Context, teamID int64, params requisites.ListParams, page pagination.Params) (pagination.Result[requisites.AssignmentWorkRow], error) {
+	return pagination.FromSlice([]requisites.AssignmentWorkRow{}, page), nil
 }
 
 func (s *fakeTeamleadRequisiteService) CreatePlan(ctx context.Context, params requisites.PlanParams) (requisites.Assignment, error) {
@@ -224,8 +225,8 @@ func (s *fakeTeamleadRequisiteService) CancelPlan(ctx context.Context, actorID i
 	return requisites.Assignment{}, nil
 }
 
-func (s *fakeTeamleadRequisiteService) AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]requisites.AssignmentEvent, error) {
-	return nil, nil
+func (s *fakeTeamleadRequisiteService) AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64, page pagination.Params) (pagination.Result[requisites.AssignmentEvent], error) {
+	return pagination.FromSlice([]requisites.AssignmentEvent{}, page), nil
 }
 
 func (s *fakeTeamleadRequisiteService) Report(ctx context.Context, teamID int64, requisiteID int64) (requisites.RequisiteReport, error) {

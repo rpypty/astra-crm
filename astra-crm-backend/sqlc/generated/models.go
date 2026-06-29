@@ -56,6 +56,37 @@ type Bank struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type DebugFinAllImportItem struct {
+	ID               int64
+	TeamID           int64
+	SourceHash       string
+	SourceSheet      string
+	SourceRow        int64
+	SourceCircle     int64
+	TraderID         int64
+	RequisiteID      int64
+	AssignmentID     pgtype.Int8
+	ShiftID          pgtype.Int8
+	ShiftRequisiteID pgtype.Int8
+	CreatedBy        int64
+	CreatedAt        pgtype.Timestamptz
+}
+
+type DebugFinAllImportJob struct {
+	ID           int64
+	TeamID       int64
+	ActorID      int64
+	FileName     string
+	SourceHash   string
+	DryRun       bool
+	Status       string
+	ResultJson   []byte
+	ErrorMessage pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	StartedAt    pgtype.Timestamptz
+	FinishedAt   pgtype.Timestamptz
+}
+
 type ExternalOrder struct {
 	ID                  int64
 	TeamID              int64

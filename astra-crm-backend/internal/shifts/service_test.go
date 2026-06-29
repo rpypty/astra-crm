@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 )
 
 func TestServiceTakeRequisiteCreatesShiftWhenMissing(t *testing.T) {
@@ -463,17 +464,10 @@ func TestServiceCloseCurrentBlocksWhenRequisitesAreOpen(t *testing.T) {
 			InboundOk:           true,
 			OutboundImported:    true,
 			OutboundOk:          true,
+			OpenRequisiteCount:  1,
+			AllRequisitesClosed: false,
 			AllPayoutsFullyPaid: true,
-			CanClose:            true,
-		},
-		shiftRequisites: []ShiftRequisite{
-			{
-				ID:       20,
-				ShiftID:  10,
-				Status:   RequisiteStatusActive,
-				TeamID:   2,
-				TraderID: 3,
-			},
+			CanClose:            false,
 		},
 	}, nil)
 
@@ -582,12 +576,12 @@ func (s *fakeStore) CreateShift(ctx context.Context, teamID int64, traderID int6
 	return s.createdShift, nil
 }
 
-func (s *fakeStore) ShiftHistory(ctx context.Context, teamID int64, traderID int64, limit int32) ([]Shift, error) {
-	return nil, nil
+func (s *fakeStore) ShiftHistory(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[Shift], error) {
+	return pagination.FromSlice([]Shift{}, page), nil
 }
 
-func (s *fakeStore) TeamShiftHistory(ctx context.Context, teamID int64, limit int32) ([]Shift, error) {
-	return nil, nil
+func (s *fakeStore) TeamShiftHistory(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[Shift], error) {
+	return pagination.FromSlice([]Shift{}, page), nil
 }
 
 func (s *fakeStore) ShiftReport(ctx context.Context, teamID int64, traderID int64, shiftID int64) (ShiftReportDetails, error) {
@@ -605,24 +599,24 @@ func (s *fakeStore) ActiveAssignment(ctx context.Context, teamID int64, traderID
 	return s.assignmentID, nil
 }
 
-func (s *fakeStore) AssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
-	return nil, nil
+func (s *fakeStore) AssignedRequisites(ctx context.Context, teamID int64, traderID int64, filters AssignedRequisitesFilters, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
+	return pagination.FromSlice([]AssignedRequisite{}, page), nil
 }
 
-func (s *fakeStore) FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
-	return nil, nil
+func (s *fakeStore) FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
+	return pagination.FromSlice([]AssignedRequisite{}, page), nil
 }
 
-func (s *fakeStore) HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
-	return nil, nil
+func (s *fakeStore) HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
+	return pagination.FromSlice([]AssignedRequisite{}, page), nil
 }
 
-func (s *fakeStore) AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]AssignedRequisite, error) {
-	return nil, nil
+func (s *fakeStore) AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
+	return pagination.FromSlice([]AssignedRequisite{}, page), nil
 }
 
-func (s *fakeStore) AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64) ([]AssignedRequisite, error) {
-	return nil, nil
+func (s *fakeStore) AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
+	return pagination.FromSlice([]AssignedRequisite{}, page), nil
 }
 
 func (s *fakeStore) CreateShiftRequisite(ctx context.Context, params CreateShiftRequisiteRecord) (ShiftRequisite, error) {
@@ -643,11 +637,11 @@ func (s *fakeStore) CreateShiftRequisite(ctx context.Context, params CreateShift
 	}, nil
 }
 
-func (s *fakeStore) ShiftRequisites(ctx context.Context, teamID int64, traderID int64) ([]ShiftRequisite, error) {
+func (s *fakeStore) ShiftRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[ShiftRequisite], error) {
 	if s.shiftRequisites != nil {
-		return s.shiftRequisites, nil
+		return pagination.FromSlice(s.shiftRequisites, page), nil
 	}
-	return nil, nil
+	return pagination.FromSlice([]ShiftRequisite{}, page), nil
 }
 
 func (s *fakeStore) UpdateShiftRequisiteDetails(ctx context.Context, params UpdateShiftRequisiteDetailsRecord) (ShiftRequisite, error) {
@@ -760,12 +754,12 @@ func (s *fakeStore) LatestTurnovers(ctx context.Context, teamID int64, traderID 
 	return nil, nil
 }
 
-func (s *fakeStore) TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]TurnoverEntry, error) {
-	return nil, nil
+func (s *fakeStore) TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64, page pagination.Params) (pagination.Result[TurnoverEntry], error) {
+	return pagination.FromSlice([]TurnoverEntry{}, page), nil
 }
 
-func (s *fakeStore) InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]InternalTransfer, error) {
-	return nil, nil
+func (s *fakeStore) InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64, page pagination.Params) (pagination.Result[InternalTransfer], error) {
+	return pagination.FromSlice([]InternalTransfer{}, page), nil
 }
 
 func (s *fakeStore) CreateInternalTransfer(ctx context.Context, params CreateInternalTransferRecord) (InternalTransfer, error) {

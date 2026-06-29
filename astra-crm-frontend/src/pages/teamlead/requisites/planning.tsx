@@ -211,7 +211,7 @@ export function PlanRequisiteDialog({
 export function PlanEventsDialog({ plan, onClose }: { plan: RequisiteAssignmentWorkRow | null; onClose: () => void }) {
   const eventsQuery = useQuery({
     queryKey: queryKeys.teamlead.requisitePlanEvents(plan?.assignmentId),
-    queryFn: () => api.requisites.planEvents(plan?.assignmentId ?? 0),
+    queryFn: () => api.requisites.planEvents(plan?.assignmentId ?? 0, { page: 1, pageSize: 100 }),
     enabled: Boolean(plan),
   });
 
@@ -225,10 +225,10 @@ export function PlanEventsDialog({ plan, onClose }: { plan: RequisiteAssignmentW
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
-          {(eventsQuery.data ?? []).map((event) => (
+          {(eventsQuery.data?.items ?? []).map((event) => (
             <AssignmentEventItem key={event.id} event={event} />
           ))}
-          {!eventsQuery.isLoading && eventsQuery.data?.length === 0 ? <EmptyState title="Истории пока нет" /> : null}
+          {!eventsQuery.isLoading && eventsQuery.data?.items.length === 0 ? <EmptyState title="Истории пока нет" /> : null}
         </div>
       </DialogContent>
     </Dialog>
@@ -238,8 +238,8 @@ export function PlanEventsDialog({ plan, onClose }: { plan: RequisiteAssignmentW
 export async function invalidateRequisiteWorkQueries(queryClient: QueryClient) {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: ["teamlead", "requisites"] }),
-    queryClient.invalidateQueries({ queryKey: queryKeys.teamlead.requisitePlans }),
-    queryClient.invalidateQueries({ queryKey: queryKeys.teamlead.requisiteActivity }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.teamlead.requisitePlans() }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.teamlead.requisiteActivity() }),
     queryClient.invalidateQueries({ queryKey: ["trader", "requisites"] }),
   ]);
 }

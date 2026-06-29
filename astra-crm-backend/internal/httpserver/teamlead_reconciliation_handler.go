@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/reconciliation"
 	"github.com/go-chi/chi/v5"
 )
@@ -14,20 +15,20 @@ type TeamleadReconciliationService interface {
 	LatestTeamleadInbound(ctx context.Context, teamID int64, actorID int64) (reconciliation.Run, error)
 	LatestTeamleadOutbound(ctx context.Context, teamID int64, actorID int64) (reconciliation.Run, error)
 	RecalculateTeamleadCurrent(ctx context.Context, params reconciliation.RecalculateTeamleadCurrentParams) (reconciliation.Run, error)
-	ListTeamleadCurrentRuns(ctx context.Context, params reconciliation.ListTeamleadCurrentRunsParams) ([]reconciliation.Run, error)
+	ListTeamleadCurrentRuns(ctx context.Context, params reconciliation.ListTeamleadCurrentRunsParams) (pagination.Result[reconciliation.Run], error)
 	GetTeamleadCurrentRun(ctx context.Context, params reconciliation.GetTeamleadCurrentRunParams) (reconciliation.Run, error)
-	ListTeamleadCurrentItems(ctx context.Context, params reconciliation.GetTeamleadCurrentRunParams) ([]reconciliation.Item, error)
-	ListTeamleadInboundItems(ctx context.Context, teamID int64, actorID int64) ([]reconciliation.Item, error)
-	ListTeamleadOutboundItems(ctx context.Context, teamID int64, actorID int64) ([]reconciliation.Item, error)
+	ListTeamleadCurrentItems(ctx context.Context, params reconciliation.GetTeamleadCurrentRunParams, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error)
+	ListTeamleadInboundItems(ctx context.Context, teamID int64, actorID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error)
+	ListTeamleadOutboundItems(ctx context.Context, teamID int64, actorID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error)
 	AcceptTeamleadCurrent(ctx context.Context, params reconciliation.AcceptTeamleadCurrentParams) (reconciliation.Run, error)
 	LatestTraderInboundByShift(ctx context.Context, teamID int64, shiftID int64) (reconciliation.Run, error)
 	LatestTraderOutboundByShift(ctx context.Context, teamID int64, shiftID int64) (reconciliation.Run, error)
-	ListTraderInboundItemsByShift(ctx context.Context, teamID int64, shiftID int64) ([]reconciliation.Item, error)
-	ListTraderOutboundItemsByShift(ctx context.Context, teamID int64, shiftID int64) ([]reconciliation.Item, error)
+	ListTraderInboundItemsByShift(ctx context.Context, teamID int64, shiftID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error)
+	ListTraderOutboundItemsByShift(ctx context.Context, teamID int64, shiftID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error)
 	LatestTeamleadPeriodInbound(ctx context.Context, teamID int64, accountingPeriodID int64) (reconciliation.Run, error)
 	LatestTeamleadPeriodOutbound(ctx context.Context, teamID int64, accountingPeriodID int64) (reconciliation.Run, error)
-	ListTeamleadPeriodInboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]reconciliation.Item, error)
-	ListTeamleadPeriodOutboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]reconciliation.Item, error)
+	ListTeamleadPeriodInboundItems(ctx context.Context, teamID int64, accountingPeriodID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error)
+	ListTeamleadPeriodOutboundItems(ctx context.Context, teamID int64, accountingPeriodID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error)
 }
 
 type TeamleadReconciliationHandler struct {
@@ -36,14 +37,6 @@ type TeamleadReconciliationHandler struct {
 
 func NewTeamleadReconciliationHandler(service TeamleadReconciliationService) *TeamleadReconciliationHandler {
 	return &TeamleadReconciliationHandler{service: service}
-}
-
-type reconciliationItemsResponse struct {
-	Items []reconciliation.PublicItem `json:"items"`
-}
-
-type reconciliationRunsResponse struct {
-	Runs []reconciliation.PublicRun `json:"runs"`
 }
 
 func (h *TeamleadReconciliationHandler) LatestInbound(w http.ResponseWriter, r *http.Request) {
@@ -172,16 +165,24 @@ func (h *TeamleadReconciliationHandler) currentItems(w http.ResponseWriter, r *h
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
+	filters, ok := reconciliationItemFiltersFromRequest(w, r)
+	if !ok {
+		return
+	}
 
 	var (
-		items []reconciliation.Item
+		items pagination.Result[reconciliation.Item]
 		err   error
 	)
 	switch direction {
 	case "inbound":
-		items, err = h.service.ListTeamleadInboundItems(r.Context(), actor.TeamID, actor.ID)
+		items, err = h.service.ListTeamleadInboundItems(r.Context(), actor.TeamID, actor.ID, filters, page)
 	case "outbound":
-		items, err = h.service.ListTeamleadOutboundItems(r.Context(), actor.TeamID, actor.ID)
+		items, err = h.service.ListTeamleadOutboundItems(r.Context(), actor.TeamID, actor.ID, filters, page)
 	default:
 		RespondError(w, NotFoundError())
 		return
@@ -191,9 +192,7 @@ func (h *TeamleadReconciliationHandler) currentItems(w http.ResponseWriter, r *h
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, reconciliationItemsResponse{
-		Items: reconciliation.PublicItemsFromDomain(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(reconciliation.PublicItemsFromDomain(items.Items), page, items.Total)))
 }
 
 func (h *TeamleadReconciliationHandler) history(w http.ResponseWriter, r *http.Request, direction string) {
@@ -206,21 +205,23 @@ func (h *TeamleadReconciliationHandler) history(w http.ResponseWriter, r *http.R
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
 	runs, err := h.service.ListTeamleadCurrentRuns(r.Context(), reconciliation.ListTeamleadCurrentRunsParams{
 		TeamID:    actor.TeamID,
 		ActorID:   actor.ID,
 		Direction: direction,
-		Limit:     limitFromQuery(r, 50),
+		Page:      page,
 	})
 	if err != nil {
 		RespondError(w, mapReconciliationError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, reconciliationRunsResponse{
-		Runs: reconciliation.PublicRunsFromDomain(runs),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(reconciliation.PublicRunsFromDomain(runs.Items), page, runs.Total)))
 }
 
 func (h *TeamleadReconciliationHandler) currentRun(w http.ResponseWriter, r *http.Request, direction string) {
@@ -270,21 +271,27 @@ func (h *TeamleadReconciliationHandler) currentRunItems(w http.ResponseWriter, r
 	if !ok {
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
+	filters, ok := reconciliationItemFiltersFromRequest(w, r)
+	if !ok {
+		return
+	}
 
 	items, err := h.service.ListTeamleadCurrentItems(r.Context(), reconciliation.GetTeamleadCurrentRunParams{
 		TeamID:    actor.TeamID,
 		ActorID:   actor.ID,
 		Direction: direction,
 		RunID:     runID,
-	})
+	}, filters, page)
 	if err != nil {
 		RespondError(w, mapReconciliationError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, reconciliationItemsResponse{
-		Items: reconciliation.PublicItemsFromDomain(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(reconciliation.PublicItemsFromDomain(items.Items), page, items.Total)))
 }
 
 func (h *TeamleadReconciliationHandler) accept(w http.ResponseWriter, r *http.Request, direction string) {
@@ -460,16 +467,24 @@ func (h *TeamleadReconciliationHandler) shiftItems(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
+	filters, ok := reconciliationItemFiltersFromRequest(w, r)
+	if !ok {
+		return
+	}
 
 	var (
-		items []reconciliation.Item
+		items pagination.Result[reconciliation.Item]
 		err   error
 	)
 	switch direction {
 	case "inbound":
-		items, err = h.service.ListTraderInboundItemsByShift(r.Context(), actor.TeamID, shiftID)
+		items, err = h.service.ListTraderInboundItemsByShift(r.Context(), actor.TeamID, shiftID, filters, page)
 	case "outbound":
-		items, err = h.service.ListTraderOutboundItemsByShift(r.Context(), actor.TeamID, shiftID)
+		items, err = h.service.ListTraderOutboundItemsByShift(r.Context(), actor.TeamID, shiftID, filters, page)
 	default:
 		RespondError(w, NotFoundError())
 		return
@@ -479,9 +494,7 @@ func (h *TeamleadReconciliationHandler) shiftItems(w http.ResponseWriter, r *htt
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, reconciliationItemsResponse{
-		Items: reconciliation.PublicItemsFromDomain(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(reconciliation.PublicItemsFromDomain(items.Items), page, items.Total)))
 }
 
 func (h *TeamleadReconciliationHandler) periodItems(w http.ResponseWriter, r *http.Request, direction string) {
@@ -499,16 +512,24 @@ func (h *TeamleadReconciliationHandler) periodItems(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
+	filters, ok := reconciliationItemFiltersFromRequest(w, r)
+	if !ok {
+		return
+	}
 
 	var (
-		items []reconciliation.Item
+		items pagination.Result[reconciliation.Item]
 		err   error
 	)
 	switch direction {
 	case "inbound":
-		items, err = h.service.ListTeamleadPeriodInboundItems(r.Context(), actor.TeamID, periodID)
+		items, err = h.service.ListTeamleadPeriodInboundItems(r.Context(), actor.TeamID, periodID, filters, page)
 	case "outbound":
-		items, err = h.service.ListTeamleadPeriodOutboundItems(r.Context(), actor.TeamID, periodID)
+		items, err = h.service.ListTeamleadPeriodOutboundItems(r.Context(), actor.TeamID, periodID, filters, page)
 	default:
 		RespondError(w, NotFoundError())
 		return
@@ -518,9 +539,7 @@ func (h *TeamleadReconciliationHandler) periodItems(w http.ResponseWriter, r *ht
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, reconciliationItemsResponse{
-		Items: reconciliation.PublicItemsFromDomain(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(reconciliation.PublicItemsFromDomain(items.Items), page, items.Total)))
 }
 
 func shiftIDFromRequest(w http.ResponseWriter, r *http.Request) (int64, bool) {
@@ -563,4 +582,18 @@ func limitFromQuery(r *http.Request, fallback int32) int32 {
 	}
 
 	return int32(parsed)
+}
+
+func reconciliationItemFiltersFromRequest(w http.ResponseWriter, r *http.Request) (reconciliation.ItemFilters, bool) {
+	fields := map[string]string{}
+	onlyMismatch, ok := optionalBool(r.URL.Query().Get("onlyMismatch"), "onlyMismatch", fields)
+	if !ok {
+		RespondError(w, ValidationError(fields))
+		return reconciliation.ItemFilters{}, false
+	}
+
+	return reconciliation.ItemFilters{
+		Status:       r.URL.Query().Get("status"),
+		OnlyMismatch: onlyMismatch,
+	}, true
 }

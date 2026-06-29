@@ -8,31 +8,32 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/shifts"
 	"github.com/go-chi/chi/v5"
 )
 
 type TraderShiftService interface {
 	Current(ctx context.Context, teamID int64, traderID int64) (*shifts.Shift, error)
-	ShiftHistory(ctx context.Context, teamID int64, traderID int64, limit int32) ([]shifts.Shift, error)
-	TeamShiftHistory(ctx context.Context, teamID int64, limit int32) ([]shifts.Shift, error)
+	ShiftHistory(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[shifts.Shift], error)
+	TeamShiftHistory(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[shifts.Shift], error)
 	ShiftReport(ctx context.Context, teamID int64, traderID int64, shiftID int64) (shifts.ShiftReportDetails, error)
 	TeamShiftReport(ctx context.Context, teamID int64, shiftID int64) (shifts.ShiftReportDetails, error)
-	AssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]shifts.AssignedRequisite, error)
-	FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]shifts.AssignedRequisite, error)
-	HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]shifts.AssignedRequisite, error)
-	AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]shifts.AssignedRequisite, error)
-	AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64) ([]shifts.AssignedRequisite, error)
-	ShiftRequisites(ctx context.Context, teamID int64, traderID int64) ([]shifts.ShiftRequisite, error)
+	AssignedRequisites(ctx context.Context, teamID int64, traderID int64, filters shifts.AssignedRequisitesFilters, page pagination.Params) (pagination.Result[shifts.AssignedRequisite], error)
+	FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[shifts.AssignedRequisite], error)
+	HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[shifts.AssignedRequisite], error)
+	AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64, page pagination.Params) (pagination.Result[shifts.AssignedRequisite], error)
+	AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64, page pagination.Params) (pagination.Result[shifts.AssignedRequisite], error)
+	ShiftRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[shifts.ShiftRequisite], error)
 	TakeRequisite(ctx context.Context, params shifts.TakeRequisiteParams) (shifts.TakeRequisiteResult, error)
 	UpdateShiftRequisite(ctx context.Context, params shifts.UpdateShiftRequisiteParams) (shifts.ShiftRequisite, error)
 	CloseShiftRequisite(ctx context.Context, params shifts.CloseShiftRequisiteParams) (shifts.ShiftRequisite, error)
 	CorrectShiftRequisite(ctx context.Context, params shifts.CorrectShiftRequisiteParams) (shifts.ShiftRequisite, error)
 	ReturnShiftRequisiteToWork(ctx context.Context, params shifts.ReturnShiftRequisiteParams) (shifts.ShiftRequisite, error)
 	LatestTurnovers(ctx context.Context, teamID int64, traderID int64) ([]shifts.TurnoverEntry, error)
-	TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]shifts.TurnoverEntry, error)
+	TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64, page pagination.Params) (pagination.Result[shifts.TurnoverEntry], error)
 	CreateTurnover(ctx context.Context, params shifts.CreateTurnoverParams) (shifts.TurnoverEntry, error)
-	InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]shifts.InternalTransfer, error)
+	InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64, page pagination.Params) (pagination.Result[shifts.InternalTransfer], error)
 	CreateInternalTransfer(ctx context.Context, params shifts.CreateInternalTransferParams) (shifts.InternalTransfer, error)
 	CancelInternalTransfer(ctx context.Context, params shifts.CancelInternalTransferParams) (shifts.InternalTransfer, error)
 	CloseChecklist(ctx context.Context, teamID int64, traderID int64) (shifts.CloseChecklist, error)
@@ -181,16 +182,18 @@ func (h *TraderShiftHandler) History(w http.ResponseWriter, r *http.Request) {
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.ShiftHistory(r.Context(), actor.TeamID, actor.ID, 30)
+	items, err := h.service.ShiftHistory(r.Context(), actor.TeamID, actor.ID, page)
 	if err != nil {
 		RespondError(w, mapShiftError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, shiftHistoryResponse{
-		Items: shifts.PublicShiftsFromDomain(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(shifts.PublicShiftsFromDomain(items.Items), page, items.Total)))
 }
 
 func (h *TraderShiftHandler) TeamHistory(w http.ResponseWriter, r *http.Request) {
@@ -203,16 +206,18 @@ func (h *TraderShiftHandler) TeamHistory(w http.ResponseWriter, r *http.Request)
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.TeamShiftHistory(r.Context(), actor.TeamID, 100)
+	items, err := h.service.TeamShiftHistory(r.Context(), actor.TeamID, page)
 	if err != nil {
 		RespondError(w, mapShiftError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, shiftHistoryResponse{
-		Items: shifts.PublicShiftsFromDomain(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(shifts.PublicShiftsFromDomain(items.Items), page, items.Total)))
 }
 
 func (h *TraderShiftHandler) AssignedRequisites(w http.ResponseWriter, r *http.Request) {
@@ -225,16 +230,28 @@ func (h *TraderShiftHandler) AssignedRequisites(w http.ResponseWriter, r *http.R
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
+	fields := map[string]string{}
+	excludeID, ok := optionalInt64(r.URL.Query().Get("excludeId"), "excludeId", fields, false)
+	if !ok {
+		RespondError(w, ValidationError(fields))
+		return
+	}
 
-	items, err := h.service.AssignedRequisites(r.Context(), actor.TeamID, actor.ID)
+	items, err := h.service.AssignedRequisites(r.Context(), actor.TeamID, actor.ID, shifts.AssignedRequisitesFilters{
+		Statuses:  stringListQuery(r, "statuses"),
+		Search:    r.URL.Query().Get("search"),
+		ExcludeID: excludeID,
+	}, page)
 	if err != nil {
 		RespondError(w, mapShiftError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, assignedRequisitesResponse{
-		Items: shifts.PublicAssignedRequisites(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(shifts.PublicAssignedRequisites(items.Items), page, items.Total)))
 }
 
 func (h *TraderShiftHandler) FutureAssignedRequisites(w http.ResponseWriter, r *http.Request) {
@@ -247,16 +264,18 @@ func (h *TraderShiftHandler) FutureAssignedRequisites(w http.ResponseWriter, r *
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.FutureAssignedRequisites(r.Context(), actor.TeamID, actor.ID)
+	items, err := h.service.FutureAssignedRequisites(r.Context(), actor.TeamID, actor.ID, page)
 	if err != nil {
 		RespondError(w, mapShiftError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, assignedRequisitesResponse{
-		Items: shifts.PublicAssignedRequisites(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(shifts.PublicAssignedRequisites(items.Items), page, items.Total)))
 }
 
 func (h *TraderShiftHandler) HistoricalAssignedRequisites(w http.ResponseWriter, r *http.Request) {
@@ -269,16 +288,18 @@ func (h *TraderShiftHandler) HistoricalAssignedRequisites(w http.ResponseWriter,
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.HistoricalAssignedRequisites(r.Context(), actor.TeamID, actor.ID)
+	items, err := h.service.HistoricalAssignedRequisites(r.Context(), actor.TeamID, actor.ID, page)
 	if err != nil {
 		RespondError(w, mapShiftError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, assignedRequisitesResponse{
-		Items: shifts.PublicAssignedRequisites(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(shifts.PublicAssignedRequisites(items.Items), page, items.Total)))
 }
 
 func (h *TraderShiftHandler) AssignedRequisitesByShift(w http.ResponseWriter, r *http.Request) {
@@ -296,16 +317,18 @@ func (h *TraderShiftHandler) AssignedRequisitesByShift(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.AssignedRequisitesByShift(r.Context(), actor.TeamID, actor.ID, shiftID)
+	items, err := h.service.AssignedRequisitesByShift(r.Context(), actor.TeamID, actor.ID, shiftID, page)
 	if err != nil {
 		RespondError(w, mapShiftError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, assignedRequisitesResponse{
-		Items: shifts.PublicAssignedRequisites(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(shifts.PublicAssignedRequisites(items.Items), page, items.Total)))
 }
 
 func (h *TraderShiftHandler) ShiftReport(w http.ResponseWriter, r *http.Request) {
@@ -350,16 +373,18 @@ func (h *TraderShiftHandler) AssignedRequisitesByTeamShift(w http.ResponseWriter
 	if !ok {
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.AssignedRequisitesByTeamShift(r.Context(), actor.TeamID, shiftID)
+	items, err := h.service.AssignedRequisitesByTeamShift(r.Context(), actor.TeamID, shiftID, page)
 	if err != nil {
 		RespondError(w, mapShiftError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, assignedRequisitesResponse{
-		Items: shifts.PublicAssignedRequisites(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(shifts.PublicAssignedRequisites(items.Items), page, items.Total)))
 }
 
 func (h *TraderShiftHandler) TeamShiftReport(w http.ResponseWriter, r *http.Request) {
@@ -444,16 +469,18 @@ func (h *TraderShiftHandler) ShiftRequisites(w http.ResponseWriter, r *http.Requ
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.ShiftRequisites(r.Context(), actor.TeamID, actor.ID)
+	items, err := h.service.ShiftRequisites(r.Context(), actor.TeamID, actor.ID, page)
 	if err != nil {
 		RespondError(w, mapShiftError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, shiftRequisitesResponse{
-		Items: shifts.PublicShiftRequisites(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(shifts.PublicShiftRequisites(items.Items), page, items.Total)))
 }
 
 func (h *TraderShiftHandler) UpdateShiftRequisite(w http.ResponseWriter, r *http.Request) {
@@ -699,16 +726,18 @@ func (h *TraderShiftHandler) TurnoversByShiftRequisite(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.TurnoversByShiftRequisite(r.Context(), actor.TeamID, actor.ID, shiftRequisiteID)
+	items, err := h.service.TurnoversByShiftRequisite(r.Context(), actor.TeamID, actor.ID, shiftRequisiteID, page)
 	if err != nil {
 		RespondError(w, mapShiftError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, turnoversResponse{
-		Items: shifts.PublicTurnoverEntries(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(shifts.PublicTurnoverEntries(items.Items), page, items.Total)))
 }
 
 func (h *TraderShiftHandler) InternalTransfersByShiftRequisite(w http.ResponseWriter, r *http.Request) {
@@ -726,16 +755,18 @@ func (h *TraderShiftHandler) InternalTransfersByShiftRequisite(w http.ResponseWr
 	if !ok {
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.InternalTransfersByShiftRequisite(r.Context(), actor.TeamID, actor.ID, shiftRequisiteID)
+	items, err := h.service.InternalTransfersByShiftRequisite(r.Context(), actor.TeamID, actor.ID, shiftRequisiteID, page)
 	if err != nil {
 		RespondError(w, mapShiftError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, internalTransfersResponse{
-		Items: shifts.PublicInternalTransfers(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(shifts.PublicInternalTransfers(items.Items), page, items.Total)))
 }
 
 func (h *TraderShiftHandler) CreateInternalTransfer(w http.ResponseWriter, r *http.Request) {
@@ -876,6 +907,26 @@ func shiftRequisiteRouteID(w http.ResponseWriter, r *http.Request, param string,
 	}
 
 	return id, true
+}
+
+func stringListQuery(r *http.Request, key string) []string {
+	rawValues := r.URL.Query()[key]
+	if len(rawValues) == 0 {
+		return nil
+	}
+
+	values := make([]string, 0, len(rawValues))
+	for _, rawValue := range rawValues {
+		for _, rawPart := range strings.Split(rawValue, ",") {
+			rawPart = strings.TrimSpace(rawPart)
+			if rawPart == "" {
+				continue
+			}
+			values = append(values, rawPart)
+		}
+	}
+
+	return values
 }
 
 func validateTakeRequisiteRequest(request takeRequisiteRequest) map[string]string {

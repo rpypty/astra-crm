@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
 import { CalendarDays, Copy, Eye, FileText, History, Pencil, Plus, UserRound, X } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
@@ -57,10 +57,10 @@ import type {
   Trader,
 } from "@/shared/model/domain";
 import { api } from "@/shared/api/api";
-import { filterOrdersBySearch } from "@/shared/lib/order-filters";
 import type { PeriodFilter } from "@/shared/lib/period-filter";
 import { usePersistentPeriodFilter } from "@/shared/lib/period-filter";
 import { queryKeys } from "@/shared/api/query-keys";
+import { paginationToQuery } from "@/shared/lib/pagination";
 import {
   bpsToPercent,
   formatCardNumber,
@@ -206,13 +206,17 @@ export function OrdersPage({
     () => ({ ...periodFilter, traderIds: selectedTraderIds }),
     [periodFilter, selectedTraderIds],
   );
+  const orderFilters = useMemo(
+    () => ({ search: deferredSearch, status, ...periodFilter, traderIds: selectedTraderIds }),
+    [deferredSearch, periodFilter, selectedTraderIds, status],
+  );
   const orderServerFilters = useMemo(
-    () => ({ status, ...periodFilter, traderIds: selectedTraderIds }),
-    [periodFilter, selectedTraderIds, status],
+    () => ({ ...orderFilters, ...paginationToQuery(pagination) }),
+    [orderFilters, pagination],
   );
   const tradersQuery = useQuery({
     queryKey: queryKeys.teamlead.traders({ status: "active" }),
-    queryFn: () => api.traders.list({ status: "active" }),
+    queryFn: () => api.traders.list({ status: "active", page: 1, pageSize: 200 }),
     enabled: scope === "teamlead",
   });
   const dashboardQuery = useQuery({
@@ -229,6 +233,7 @@ export function OrdersPage({
         ? queryKeys.teamlead.orders(direction, orderServerFilters)
         : queryKeys.trader.orders(direction, orderServerFilters),
     queryFn: () => api.orders.list(scope, direction, orderServerFilters),
+    placeholderData: keepPreviousData,
   });
   const reconciliationQuery = useQuery({
     queryKey: [scope, direction, "reconciliation"],
@@ -237,7 +242,7 @@ export function OrdersPage({
   });
   useEffect(() => {
     setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
-  }, [deferredSearch, direction, orderServerFilters]);
+  }, [direction, orderFilters]);
   const columns = useMemo<ColumnDef<Order>[]>(
     () => [
       { accessorKey: "createdAt", header: "Время", cell: ({ row }) => <DateTimeCell value={row.original.createdAt} /> },
@@ -261,10 +266,7 @@ export function OrdersPage({
     ],
     [],
   );
-  const data = useMemo(
-    () => filterOrdersBySearch(ordersQuery.data ?? [], deferredSearch),
-    [deferredSearch, ordersQuery.data],
-  );
+  const data = ordersQuery.data?.items ?? [];
   const title = direction === "inbound" ? "Инвойсы" : "Выплаты";
 
   return (
@@ -312,9 +314,10 @@ export function OrdersPage({
       <DataTable
         columns={columns}
         data={data}
-        rowCount={data.length}
+        rowCount={ordersQuery.data?.total ?? 0}
         pagination={pagination}
         onPaginationChange={setPagination}
+        serverSidePagination
         search={search}
         onSearchChange={setSearch}
         toolbarFilters={
@@ -329,7 +332,7 @@ export function OrdersPage({
             </Select>
             {scope === "teamlead" ? (
               <TraderFilterDropdown
-                traders={tradersQuery.data ?? []}
+                traders={tradersQuery.data?.items ?? []}
                 selectedTraderIds={selectedTraderIds}
                 isLoading={tradersQuery.isLoading}
                 onChange={setSelectedTraderIds}
@@ -338,6 +341,7 @@ export function OrdersPage({
           </div>
         }
         isLoading={ordersQuery.isLoading}
+        isFetching={ordersQuery.isFetching}
         error={ordersQuery.error instanceof Error ? ordersQuery.error.message : null}
         emptyTitle="Ордеров пока нет"
         emptyDescription="После CSV-импорта активного scope здесь появятся ордера."

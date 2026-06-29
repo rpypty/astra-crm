@@ -8,6 +8,7 @@ import (
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
 	"github.com/ashpak/astra-crm-backend/internal/imports"
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/shifts"
 )
 
@@ -17,10 +18,12 @@ type Store interface {
 	RecalculateTraderInbound(ctx context.Context, record RecalculateTraderInboundRecord) (Run, error)
 	LatestTraderInbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (Run, error)
 	LatestTraderInboundByShift(ctx context.Context, teamID int64, shiftID int64) (Run, error)
+	GetTraderInboundRun(ctx context.Context, teamID int64, traderID int64, runID int64) (Run, error)
 	AcceptTraderInbound(ctx context.Context, record AcceptTraderInboundRecord) (Run, error)
 	RecalculateTraderOutbound(ctx context.Context, record RecalculateTraderOutboundRecord) (Run, error)
 	LatestTraderOutbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (Run, error)
 	LatestTraderOutboundByShift(ctx context.Context, teamID int64, shiftID int64) (Run, error)
+	GetTraderOutboundRun(ctx context.Context, teamID int64, traderID int64, runID int64) (Run, error)
 	AcceptTraderOutbound(ctx context.Context, record AcceptTraderOutboundRecord) (Run, error)
 	RecalculateTeamleadPeriodInbound(ctx context.Context, record RecalculateTeamleadPeriodInboundRecord) (Run, error)
 	RecalculateTeamleadPeriodOutbound(ctx context.Context, record RecalculateTeamleadPeriodOutboundRecord) (Run, error)
@@ -29,10 +32,10 @@ type Store interface {
 	LatestTeamleadPeriodOutbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error)
 	LatestTeamleadInbound(ctx context.Context, teamID int64, actorID int64) (Run, error)
 	LatestTeamleadOutbound(ctx context.Context, teamID int64, actorID int64) (Run, error)
-	ListTeamleadCurrentRuns(ctx context.Context, teamID int64, actorID int64, direction string, limit int32) ([]Run, error)
+	ListTeamleadCurrentRuns(ctx context.Context, teamID int64, actorID int64, direction string, page pagination.Params) (pagination.Result[Run], error)
 	GetTeamleadCurrentRun(ctx context.Context, teamID int64, actorID int64, direction string, runID int64) (Run, error)
 	AcceptTeamleadCurrent(ctx context.Context, record AcceptTeamleadCurrentRecord) (Run, error)
-	ListItems(ctx context.Context, runID int64) ([]Item, error)
+	ListItems(ctx context.Context, runID int64, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error)
 	ListActiveTeamleadInboundPeriodScopes(ctx context.Context, teamID int64) ([]TeamleadInboundPeriodScope, error)
 	ListActiveTeamleadOutboundPeriodScopes(ctx context.Context, teamID int64) ([]TeamleadOutboundPeriodScope, error)
 }
@@ -113,7 +116,7 @@ type ListTeamleadCurrentRunsParams struct {
 	TeamID    int64
 	ActorID   int64
 	Direction string
-	Limit     int32
+	Page      pagination.Params
 }
 
 type GetTeamleadCurrentRunParams struct {
@@ -217,6 +220,22 @@ func (s *Service) LatestTraderOutboundByShift(ctx context.Context, teamID int64,
 	return s.store.LatestTraderOutboundByShift(ctx, teamID, shiftID)
 }
 
+func (s *Service) GetTraderInboundRun(ctx context.Context, teamID int64, traderID int64, runID int64) (Run, error) {
+	if teamID <= 0 || traderID <= 0 || runID <= 0 {
+		return Run{}, ErrInvalidInput
+	}
+
+	return s.store.GetTraderInboundRun(ctx, teamID, traderID, runID)
+}
+
+func (s *Service) GetTraderOutboundRun(ctx context.Context, teamID int64, traderID int64, runID int64) (Run, error) {
+	if teamID <= 0 || traderID <= 0 || runID <= 0 {
+		return Run{}, ErrInvalidInput
+	}
+
+	return s.store.GetTraderOutboundRun(ctx, teamID, traderID, runID)
+}
+
 func (s *Service) LatestTeamleadPeriodInbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error) {
 	if teamID <= 0 || accountingPeriodID <= 0 {
 		return Run{}, ErrInvalidInput
@@ -249,16 +268,12 @@ func (s *Service) LatestTeamleadOutbound(ctx context.Context, teamID int64, acto
 	return s.store.LatestTeamleadOutbound(ctx, teamID, actorID)
 }
 
-func (s *Service) ListTeamleadCurrentRuns(ctx context.Context, params ListTeamleadCurrentRunsParams) ([]Run, error) {
+func (s *Service) ListTeamleadCurrentRuns(ctx context.Context, params ListTeamleadCurrentRunsParams) (pagination.Result[Run], error) {
 	if params.TeamID <= 0 || params.ActorID <= 0 || !isSupportedDirection(params.Direction) {
-		return nil, ErrInvalidInput
-	}
-	limit := params.Limit
-	if limit <= 0 || limit > 100 {
-		limit = 50
+		return pagination.Result[Run]{}, ErrInvalidInput
 	}
 
-	return s.store.ListTeamleadCurrentRuns(ctx, params.TeamID, params.ActorID, params.Direction, limit)
+	return s.store.ListTeamleadCurrentRuns(ctx, params.TeamID, params.ActorID, params.Direction, params.Page)
 }
 
 func (s *Service) GetTeamleadCurrentRun(ctx context.Context, params GetTeamleadCurrentRunParams) (Run, error) {
@@ -269,85 +284,103 @@ func (s *Service) GetTeamleadCurrentRun(ctx context.Context, params GetTeamleadC
 	return s.store.GetTeamleadCurrentRun(ctx, params.TeamID, params.ActorID, params.Direction, params.RunID)
 }
 
-func (s *Service) ListTeamleadCurrentItems(ctx context.Context, params GetTeamleadCurrentRunParams) ([]Item, error) {
+func (s *Service) ListTeamleadCurrentItems(ctx context.Context, params GetTeamleadCurrentRunParams, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error) {
 	run, err := s.GetTeamleadCurrentRun(ctx, params)
 	if err != nil {
-		return nil, err
+		return pagination.Result[Item]{}, err
 	}
 
-	return s.store.ListItems(ctx, run.ID)
+	return s.store.ListItems(ctx, run.ID, normalizeItemFilters(filters), page)
 }
 
-func (s *Service) ListTeamleadInboundItems(ctx context.Context, teamID int64, actorID int64) ([]Item, error) {
+func (s *Service) ListTeamleadInboundItems(ctx context.Context, teamID int64, actorID int64, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error) {
 	run, err := s.LatestTeamleadInbound(ctx, teamID, actorID)
 	if err != nil {
-		return nil, err
+		return pagination.Result[Item]{}, err
 	}
 
-	return s.store.ListItems(ctx, run.ID)
+	return s.store.ListItems(ctx, run.ID, normalizeItemFilters(filters), page)
 }
 
-func (s *Service) ListTeamleadOutboundItems(ctx context.Context, teamID int64, actorID int64) ([]Item, error) {
+func (s *Service) ListTeamleadOutboundItems(ctx context.Context, teamID int64, actorID int64, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error) {
 	run, err := s.LatestTeamleadOutbound(ctx, teamID, actorID)
 	if err != nil {
-		return nil, err
+		return pagination.Result[Item]{}, err
 	}
 
-	return s.store.ListItems(ctx, run.ID)
+	return s.store.ListItems(ctx, run.ID, normalizeItemFilters(filters), page)
 }
 
-func (s *Service) ListTeamleadPeriodInboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]Item, error) {
+func (s *Service) ListTeamleadPeriodInboundItems(ctx context.Context, teamID int64, accountingPeriodID int64, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error) {
 	run, err := s.LatestTeamleadPeriodInbound(ctx, teamID, accountingPeriodID)
 	if err != nil {
-		return nil, err
+		return pagination.Result[Item]{}, err
 	}
 
-	return s.store.ListItems(ctx, run.ID)
+	return s.store.ListItems(ctx, run.ID, normalizeItemFilters(filters), page)
 }
 
-func (s *Service) ListTeamleadPeriodOutboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]Item, error) {
+func (s *Service) ListTeamleadPeriodOutboundItems(ctx context.Context, teamID int64, accountingPeriodID int64, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error) {
 	run, err := s.LatestTeamleadPeriodOutbound(ctx, teamID, accountingPeriodID)
 	if err != nil {
-		return nil, err
+		return pagination.Result[Item]{}, err
 	}
 
-	return s.store.ListItems(ctx, run.ID)
+	return s.store.ListItems(ctx, run.ID, normalizeItemFilters(filters), page)
 }
 
-func (s *Service) ListTraderInboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]Item, error) {
+func (s *Service) ListTraderInboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error) {
 	run, err := s.LatestTraderInbound(ctx, teamID, traderID, shiftID)
 	if err != nil {
-		return nil, err
+		return pagination.Result[Item]{}, err
 	}
 
-	return s.store.ListItems(ctx, run.ID)
+	return s.store.ListItems(ctx, run.ID, normalizeItemFilters(filters), page)
 }
 
-func (s *Service) ListTraderInboundItemsByShift(ctx context.Context, teamID int64, shiftID int64) ([]Item, error) {
+func (s *Service) ListTraderInboundItemsByShift(ctx context.Context, teamID int64, shiftID int64, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error) {
 	run, err := s.LatestTraderInboundByShift(ctx, teamID, shiftID)
 	if err != nil {
-		return nil, err
+		return pagination.Result[Item]{}, err
 	}
 
-	return s.store.ListItems(ctx, run.ID)
+	return s.store.ListItems(ctx, run.ID, normalizeItemFilters(filters), page)
 }
 
-func (s *Service) ListTraderOutboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]Item, error) {
+func (s *Service) ListTraderOutboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error) {
 	run, err := s.LatestTraderOutbound(ctx, teamID, traderID, shiftID)
 	if err != nil {
-		return nil, err
+		return pagination.Result[Item]{}, err
 	}
 
-	return s.store.ListItems(ctx, run.ID)
+	return s.store.ListItems(ctx, run.ID, normalizeItemFilters(filters), page)
 }
 
-func (s *Service) ListTraderOutboundItemsByShift(ctx context.Context, teamID int64, shiftID int64) ([]Item, error) {
+func (s *Service) ListTraderOutboundItemsByShift(ctx context.Context, teamID int64, shiftID int64, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error) {
 	run, err := s.LatestTraderOutboundByShift(ctx, teamID, shiftID)
 	if err != nil {
-		return nil, err
+		return pagination.Result[Item]{}, err
 	}
 
-	return s.store.ListItems(ctx, run.ID)
+	return s.store.ListItems(ctx, run.ID, normalizeItemFilters(filters), page)
+}
+
+func (s *Service) ListTraderInboundRunItems(ctx context.Context, teamID int64, traderID int64, runID int64, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error) {
+	run, err := s.GetTraderInboundRun(ctx, teamID, traderID, runID)
+	if err != nil {
+		return pagination.Result[Item]{}, err
+	}
+
+	return s.store.ListItems(ctx, run.ID, normalizeItemFilters(filters), page)
+}
+
+func (s *Service) ListTraderOutboundRunItems(ctx context.Context, teamID int64, traderID int64, runID int64, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error) {
+	run, err := s.GetTraderOutboundRun(ctx, teamID, traderID, runID)
+	if err != nil {
+		return pagination.Result[Item]{}, err
+	}
+
+	return s.store.ListItems(ctx, run.ID, normalizeItemFilters(filters), page)
 }
 
 func (s *Service) AcceptTraderInbound(ctx context.Context, params AcceptTraderInboundParams) (Run, error) {
@@ -606,4 +639,12 @@ func (s *Service) writeAudit(ctx context.Context, event audit.Event) error {
 	}
 
 	return s.audit.Write(ctx, event)
+}
+
+func normalizeItemFilters(filters ItemFilters) ItemFilters {
+	status := strings.TrimSpace(filters.Status)
+	return ItemFilters{
+		Status:       status,
+		OnlyMismatch: filters.OnlyMismatch || status == StatusMismatch,
+	}
 }

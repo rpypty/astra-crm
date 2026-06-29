@@ -5,9 +5,11 @@ import type { ShiftRequisite } from "@/shared/model/domain";
 type RequisitesTabProps = {
   columns: ColumnDef<ShiftRequisite>[];
   data: ShiftRequisite[];
+  rowCount: number;
   pagination: PaginationState;
   onPaginationChange: (pagination: PaginationState) => void;
   isLoading?: boolean;
+  isFetching?: boolean;
   error?: string | null;
 };
 
@@ -18,9 +20,11 @@ type CurrentRequisitesTabProps = RequisitesTabProps & {
 export function CurrentRequisitesTab({
   columns,
   data,
+  rowCount,
   pagination,
   onPaginationChange,
   isLoading,
+  isFetching,
   error,
   onRowClick,
 }: CurrentRequisitesTabProps) {
@@ -28,10 +32,12 @@ export function CurrentRequisitesTab({
     <DataTable
       columns={columns}
       data={data}
-      rowCount={data.length}
+      rowCount={rowCount}
       pagination={pagination}
       onPaginationChange={onPaginationChange}
+      serverSidePagination
       isLoading={isLoading}
+      isFetching={isFetching}
       error={error}
       emptyTitle="Нет текущих реквизитов"
       onRowClick={onRowClick}
@@ -42,19 +48,23 @@ export function CurrentRequisitesTab({
 export function FutureRequisitesTab({
   columns,
   data,
+  rowCount,
   pagination,
   onPaginationChange,
   isLoading,
+  isFetching,
   error,
 }: RequisitesTabProps) {
   return (
     <DataTable
       columns={columns}
       data={data}
-      rowCount={data.length}
+      rowCount={rowCount}
       pagination={pagination}
       onPaginationChange={onPaginationChange}
+      serverSidePagination
       isLoading={isLoading}
+      isFetching={isFetching}
       error={error}
       emptyTitle="Будущих реквизитов нет"
       emptyDescription="Здесь появятся назначения на будущие даты."
@@ -65,19 +75,23 @@ export function FutureRequisitesTab({
 export function HistoricalRequisitesTab({
   columns,
   data,
+  rowCount,
   pagination,
   onPaginationChange,
   isLoading,
+  isFetching,
   error,
 }: RequisitesTabProps) {
   return (
     <DataTable
       columns={columns}
       data={data}
-      rowCount={data.length}
+      rowCount={rowCount}
       pagination={pagination}
       onPaginationChange={onPaginationChange}
+      serverSidePagination
       isLoading={isLoading}
+      isFetching={isFetching}
       error={error}
       emptyTitle="Истории реквизитов нет"
       emptyDescription="Закрытые и заблокированные реквизиты появятся после отработки."

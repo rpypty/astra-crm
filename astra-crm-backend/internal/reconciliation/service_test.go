@@ -7,6 +7,7 @@ import (
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
 	"github.com/ashpak/astra-crm-backend/internal/imports"
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/shifts"
 )
 
@@ -510,6 +511,16 @@ func (s *fakeStore) LatestTraderInboundByShift(ctx context.Context, teamID int64
 	return s.latestRun, nil
 }
 
+func (s *fakeStore) GetTraderInboundRun(ctx context.Context, teamID int64, traderID int64, runID int64) (Run, error) {
+	s.latestCalled = true
+	if s.latestErr != nil {
+		return Run{}, s.latestErr
+	}
+	run := s.latestRun
+	run.ID = runID
+	return run, nil
+}
+
 func (s *fakeStore) LatestTraderOutbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (Run, error) {
 	s.latestOutboundCalled = true
 	if s.latestOutboundErr != nil {
@@ -524,6 +535,16 @@ func (s *fakeStore) LatestTraderOutboundByShift(ctx context.Context, teamID int6
 		return Run{}, s.latestOutboundErr
 	}
 	return s.latestOutboundRun, nil
+}
+
+func (s *fakeStore) GetTraderOutboundRun(ctx context.Context, teamID int64, traderID int64, runID int64) (Run, error) {
+	s.latestOutboundCalled = true
+	if s.latestOutboundErr != nil {
+		return Run{}, s.latestOutboundErr
+	}
+	run := s.latestOutboundRun
+	run.ID = runID
+	return run, nil
 }
 
 func (s *fakeStore) LatestTeamleadPeriodInbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error) {
@@ -572,16 +593,16 @@ func (s *fakeStore) LatestTeamleadOutbound(ctx context.Context, teamID int64, ac
 	}, nil
 }
 
-func (s *fakeStore) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, actorID int64, direction string, limit int32) ([]Run, error) {
-	return s.teamleadCurrentRuns, nil
+func (s *fakeStore) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, actorID int64, direction string, page pagination.Params) (pagination.Result[Run], error) {
+	return pagination.FromSlice(s.teamleadCurrentRuns, page), nil
 }
 
 func (s *fakeStore) GetTeamleadCurrentRun(ctx context.Context, teamID int64, actorID int64, direction string, runID int64) (Run, error) {
 	return s.teamleadCurrentRun, nil
 }
 
-func (s *fakeStore) ListItems(ctx context.Context, runID int64) ([]Item, error) {
-	return s.items, nil
+func (s *fakeStore) ListItems(ctx context.Context, runID int64, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error) {
+	return pagination.FromSlice(s.items, page), nil
 }
 
 func (s *fakeStore) ListActiveTeamleadInboundPeriodScopes(ctx context.Context, teamID int64) ([]TeamleadInboundPeriodScope, error) {

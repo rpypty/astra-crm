@@ -92,7 +92,119 @@ LEFT JOIN LATERAL (
 ) ra ON true
 WHERE r.team_id = sqlc.arg(team_id)
   AND r.deleted_at IS NULL
-ORDER BY r.created_at DESC, r.id DESC;
+  AND (
+      sqlc.arg(bank_code)::text = ''
+      OR sqlc.arg(bank_code)::text = 'all'
+      OR r.bank_code = sqlc.arg(bank_code)::text
+  )
+  AND (
+      sqlc.arg(status)::text = ''
+      OR sqlc.arg(status)::text = 'all'
+      OR r.status = sqlc.arg(status)::text
+  )
+  AND (
+      NOT sqlc.arg(available_for_planning)::boolean
+      OR (
+          r.status = 'active'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM requisite_assignments blocked_ra
+              WHERE blocked_ra.team_id = r.team_id
+                AND blocked_ra.requisite_id = r.id
+                AND blocked_ra.unassigned_at IS NULL
+                AND blocked_ra.status = 'blocked'
+          )
+      )
+  )
+  AND (
+      sqlc.arg(trader_filter)::text = ''
+      OR sqlc.arg(trader_filter)::text = 'all'
+      OR (sqlc.arg(trader_filter)::text = 'unassigned' AND ra.trader_id IS NULL)
+      OR (sqlc.arg(trader_filter)::text NOT IN ('unassigned', 'all') AND ra.trader_id::text = sqlc.arg(trader_filter)::text)
+  )
+  AND (
+      sqlc.arg(search)::text = ''
+      OR lower(r.phone) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(b.name) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(r.holder_name, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(r.card_number, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR (
+          sqlc.arg(search_digits)::text <> ''
+          AND (
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || sqlc.arg(search_digits)::text || '%'
+              OR regexp_replace(COALESCE(r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || sqlc.arg(search_digits)::text || '%'
+          )
+      )
+  )
+ORDER BY r.created_at DESC, r.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountRequisiteDetailsByTeam :one
+SELECT count(*)::bigint
+FROM requisites r
+JOIN banks b ON b.code = r.bank_code
+LEFT JOIN LATERAL (
+    SELECT ra.id, ra.trader_id, u.login AS trader_login, ra.status, ra.assigned_for_date, ra.target_turnover_minor
+    FROM requisite_assignments ra
+    JOIN users u ON u.id = ra.trader_id
+    WHERE ra.team_id = r.team_id
+      AND ra.requisite_id = r.id
+      AND ra.unassigned_at IS NULL
+      AND ra.status IN ('planned', 'assigned', 'in_work')
+    ORDER BY ra.assigned_for_date DESC, ra.assigned_at DESC, ra.id DESC
+    LIMIT 1
+) ra ON true
+WHERE r.team_id = sqlc.arg(team_id)
+  AND r.deleted_at IS NULL
+  AND (
+      sqlc.arg(bank_code)::text = ''
+      OR sqlc.arg(bank_code)::text = 'all'
+      OR r.bank_code = sqlc.arg(bank_code)::text
+  )
+  AND (
+      sqlc.arg(status)::text = ''
+      OR sqlc.arg(status)::text = 'all'
+      OR r.status = sqlc.arg(status)::text
+  )
+  AND (
+      NOT sqlc.arg(available_for_planning)::boolean
+      OR (
+          r.status = 'active'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM requisite_assignments blocked_ra
+              WHERE blocked_ra.team_id = r.team_id
+                AND blocked_ra.requisite_id = r.id
+                AND blocked_ra.unassigned_at IS NULL
+                AND blocked_ra.status = 'blocked'
+          )
+      )
+  )
+  AND (
+      sqlc.arg(trader_filter)::text = ''
+      OR sqlc.arg(trader_filter)::text = 'all'
+      OR (sqlc.arg(trader_filter)::text = 'unassigned' AND ra.trader_id IS NULL)
+      OR (sqlc.arg(trader_filter)::text NOT IN ('unassigned', 'all') AND ra.trader_id::text = sqlc.arg(trader_filter)::text)
+  )
+  AND (
+      sqlc.arg(search)::text = ''
+      OR lower(r.phone) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(b.name) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(r.holder_name, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(r.card_number, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR (
+          sqlc.arg(search_digits)::text <> ''
+          AND (
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || sqlc.arg(search_digits)::text || '%'
+              OR regexp_replace(COALESCE(r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || sqlc.arg(search_digits)::text || '%'
+          )
+      )
+  );
 
 -- name: UpdateRequisite :one
 UPDATE requisites
@@ -176,7 +288,15 @@ SELECT id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigne
 FROM requisite_assignments
 WHERE team_id = sqlc.arg(team_id)
   AND requisite_id = sqlc.arg(requisite_id)
-ORDER BY assigned_at DESC, id DESC;
+ORDER BY assigned_at DESC, id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountRequisiteAssignmentHistory :one
+SELECT count(*)::bigint
+FROM requisite_assignments
+WHERE team_id = sqlc.arg(team_id)
+  AND requisite_id = sqlc.arg(requisite_id);
 
 -- name: ListActiveRequisiteAssignmentsByTrader :many
 SELECT id, team_id, requisite_id, trader_id, assigned_by, assigned_at, unassigned_at, comment, status, assigned_for_date, target_turnover_minor, started_at, completed_at, cancelled_at, shift_requisite_id, updated_at
@@ -250,7 +370,15 @@ SELECT id, team_id, assignment_id, actor_id, action, before_json, after_json, co
 FROM requisite_assignment_events
 WHERE team_id = sqlc.arg(team_id)
   AND assignment_id = sqlc.arg(assignment_id)
-ORDER BY created_at DESC, id DESC;
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountRequisiteAssignmentEvents :one
+SELECT count(*)::bigint
+FROM requisite_assignment_events
+WHERE team_id = sqlc.arg(team_id)
+  AND assignment_id = sqlc.arg(assignment_id);
 
 -- name: ListTeamleadRequisitePlans :many
 SELECT
@@ -283,7 +411,15 @@ JOIN users u ON u.id = ra.trader_id
 LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = sqlc.arg(team_id)
   AND ra.status IN ('planned', 'assigned')
-ORDER BY ra.assigned_for_date DESC, ra.updated_at DESC, ra.id DESC;
+ORDER BY ra.assigned_for_date DESC, ra.updated_at DESC, ra.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountTeamleadRequisitePlans :one
+SELECT count(*)::bigint
+FROM requisite_assignments ra
+WHERE ra.team_id = sqlc.arg(team_id)
+  AND ra.status IN ('planned', 'assigned');
 
 -- name: ListTeamleadRequisiteActivity :many
 SELECT
@@ -317,7 +453,82 @@ JOIN banks b ON b.code = r.bank_code
 JOIN users u ON u.id = ra.trader_id
 LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
 WHERE ra.team_id = sqlc.arg(team_id)
-ORDER BY COALESCE(ra.completed_at, ra.started_at, ra.assigned_at) DESC, ra.id DESC;
+  AND (
+      sqlc.arg(bank_code)::text = ''
+      OR sqlc.arg(bank_code)::text = 'all'
+      OR r.bank_code = sqlc.arg(bank_code)::text
+  )
+  AND (
+      sqlc.arg(status)::text = ''
+      OR sqlc.arg(status)::text = 'all'
+      OR r.status = sqlc.arg(status)::text
+  )
+  AND (
+      sqlc.arg(trader_filter)::text = ''
+      OR sqlc.arg(trader_filter)::text = 'all'
+      OR (sqlc.arg(trader_filter)::text NOT IN ('unassigned', 'all') AND ra.trader_id::text = sqlc.arg(trader_filter)::text)
+  )
+  AND (
+      sqlc.arg(search)::text = ''
+      OR lower(r.phone) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(b.name) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(sr.holder_name, r.holder_name, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(u.login) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR (
+          sqlc.arg(search_digits)::text <> ''
+          AND (
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || sqlc.arg(search_digits)::text || '%'
+              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || sqlc.arg(search_digits)::text || '%'
+          )
+      )
+  )
+ORDER BY COALESCE(ra.completed_at, ra.started_at, ra.assigned_at) DESC, ra.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountTeamleadRequisiteActivity :one
+SELECT count(*)::bigint
+FROM requisite_assignments ra
+JOIN requisites r ON r.id = ra.requisite_id
+JOIN banks b ON b.code = r.bank_code
+JOIN users u ON u.id = ra.trader_id
+LEFT JOIN shift_requisites sr ON sr.id = ra.shift_requisite_id
+WHERE ra.team_id = sqlc.arg(team_id)
+  AND (
+      sqlc.arg(bank_code)::text = ''
+      OR sqlc.arg(bank_code)::text = 'all'
+      OR r.bank_code = sqlc.arg(bank_code)::text
+  )
+  AND (
+      sqlc.arg(status)::text = ''
+      OR sqlc.arg(status)::text = 'all'
+      OR r.status = sqlc.arg(status)::text
+  )
+  AND (
+      sqlc.arg(trader_filter)::text = ''
+      OR sqlc.arg(trader_filter)::text = 'all'
+      OR (sqlc.arg(trader_filter)::text NOT IN ('unassigned', 'all') AND ra.trader_id::text = sqlc.arg(trader_filter)::text)
+  )
+  AND (
+      sqlc.arg(search)::text = ''
+      OR lower(r.phone) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(b.name) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(r.proxy, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(r.employee_comment, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(sr.holder_name, r.holder_name, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(COALESCE(sr.card_number, r.card_number, '')) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR lower(u.login) LIKE '%' || lower(sqlc.arg(search)::text) || '%'
+      OR (
+          sqlc.arg(search_digits)::text <> ''
+          AND (
+              regexp_replace(r.phone, '[^0-9]', '', 'g') LIKE '%' || sqlc.arg(search_digits)::text || '%'
+              OR regexp_replace(COALESCE(sr.card_number, r.card_number, ''), '[^0-9]', '', 'g') LIKE '%' || sqlc.arg(search_digits)::text || '%'
+          )
+      )
+  );
 
 -- name: GetRequisiteReportSummary :one
 SELECT

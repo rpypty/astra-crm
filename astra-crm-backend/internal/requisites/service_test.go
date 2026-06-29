@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/users"
 )
 
@@ -167,45 +168,45 @@ func TestServiceListFiltersByBackendParams(t *testing.T) {
 	items, err := service.List(context.Background(), 2, ListParams{
 		Search: "1002",
 		Status: StatusActive,
-	})
+	}, pagination.Params{})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if len(items) != 1 || items[0].ID != 1 {
-		t.Fatalf("List() by phone digits returned ids %v, want [1]", requisiteIDs(items))
+	if len(items.Items) != 1 || items.Items[0].ID != 1 {
+		t.Fatalf("List() by phone digits returned ids %v, want [1]", requisiteIDs(items.Items))
 	}
 
 	items, err = service.List(context.Background(), 2, ListParams{
 		Search: "1297",
-	})
+	}, pagination.Params{})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if len(items) != 1 || items[0].ID != 2 {
-		t.Fatalf("List() by formatted phone substring returned ids %v, want [2]", requisiteIDs(items))
+	if len(items.Items) != 1 || items.Items[0].ID != 2 {
+		t.Fatalf("List() by formatted phone substring returned ids %v, want [2]", requisiteIDs(items.Items))
 	}
 
 	items, err = service.List(context.Background(), 2, ListParams{
 		BankCode: "sber",
 		TraderID: "84",
 		Status:   StatusActive,
-	})
+	}, pagination.Params{})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if len(items) != 1 || items[0].ID != 1 {
-		t.Fatalf("List() by bank/trader/status returned ids %v, want [1]", requisiteIDs(items))
+	if len(items.Items) != 1 || items.Items[0].ID != 1 {
+		t.Fatalf("List() by bank/trader/status returned ids %v, want [1]", requisiteIDs(items.Items))
 	}
 
 	items, err = service.List(context.Background(), 2, ListParams{
 		TraderID: "unassigned",
 		Status:   StatusActive,
-	})
+	}, pagination.Params{})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}
-	if len(items) != 1 || items[0].ID != 2 {
-		t.Fatalf("List() by unassigned returned ids %v, want [2]", requisiteIDs(items))
+	if len(items.Items) != 1 || items.Items[0].ID != 2 {
+		t.Fatalf("List() by unassigned returned ids %v, want [2]", requisiteIDs(items.Items))
 	}
 }
 
@@ -256,8 +257,16 @@ func (s *fakeStore) GetDetails(ctx context.Context, teamID int64, requisiteID in
 	}, nil
 }
 
-func (s *fakeStore) ListDetails(ctx context.Context, teamID int64) ([]RequisiteDetails, error) {
-	return s.listItems, nil
+func (s *fakeStore) ListDetails(ctx context.Context, teamID int64, params ListParams, page pagination.Params) (pagination.Result[RequisiteDetails], error) {
+	params = normalizeListParams(params)
+	items := make([]RequisiteDetails, 0, len(s.listItems))
+	for _, item := range s.listItems {
+		if requisiteMatchesListParams(item, params) {
+			items = append(items, item)
+		}
+	}
+
+	return pagination.FromSlice(items, page), nil
 }
 
 func (s *fakeStore) Update(ctx context.Context, params UpdateRecord) (Requisite, error) {
@@ -289,8 +298,8 @@ func (s *fakeStore) Unassign(ctx context.Context, teamID int64, requisiteID int6
 	return Assignment{}, nil
 }
 
-func (s *fakeStore) AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64) ([]Assignment, error) {
-	return nil, nil
+func (s *fakeStore) AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64, page pagination.Params) (pagination.Result[Assignment], error) {
+	return pagination.FromSlice([]Assignment{}, page), nil
 }
 
 func (s *fakeStore) CreatePlan(ctx context.Context, params CreatePlanRecord) (Assignment, error) {
@@ -308,12 +317,12 @@ func (s *fakeStore) CreatePlan(ctx context.Context, params CreatePlanRecord) (As
 	}, nil
 }
 
-func (s *fakeStore) ListPlans(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {
-	return nil, nil
+func (s *fakeStore) ListPlans(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[AssignmentWorkRow], error) {
+	return pagination.FromSlice([]AssignmentWorkRow{}, page), nil
 }
 
-func (s *fakeStore) ListActivity(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {
-	return nil, nil
+func (s *fakeStore) ListActivity(ctx context.Context, teamID int64, params ListParams, page pagination.Params) (pagination.Result[AssignmentWorkRow], error) {
+	return pagination.FromSlice([]AssignmentWorkRow{}, page), nil
 }
 
 func (s *fakeStore) GetAssignment(ctx context.Context, teamID int64, assignmentID int64) (Assignment, error) {
@@ -332,8 +341,8 @@ func (s *fakeStore) CreateAssignmentEvent(ctx context.Context, params Assignment
 	return AssignmentEvent{}, nil
 }
 
-func (s *fakeStore) AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]AssignmentEvent, error) {
-	return nil, nil
+func (s *fakeStore) AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64, page pagination.Params) (pagination.Result[AssignmentEvent], error) {
+	return pagination.FromSlice([]AssignmentEvent{}, page), nil
 }
 
 func (s *fakeStore) Report(ctx context.Context, teamID int64, requisiteID int64) (RequisiteReport, error) {

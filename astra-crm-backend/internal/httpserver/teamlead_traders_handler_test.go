@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/users"
 	"github.com/go-chi/chi/v5"
 )
@@ -144,8 +145,8 @@ func (s *fakeTeamleadTraderService) Create(ctx context.Context, params users.Cre
 	return s.createResult, nil
 }
 
-func (s *fakeTeamleadTraderService) List(ctx context.Context, teamID int64) ([]users.Trader, error) {
-	return nil, nil
+func (s *fakeTeamleadTraderService) List(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[users.Trader], error) {
+	return pagination.FromSlice([]users.Trader{}, page), nil
 }
 
 func (s *fakeTeamleadTraderService) Get(ctx context.Context, teamID int64, traderID int64) (users.Trader, error) {

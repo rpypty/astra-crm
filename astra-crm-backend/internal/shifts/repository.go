@@ -3,8 +3,11 @@ package shifts
 import (
 	"context"
 	"errors"
+	"math"
 	"time"
+	"unicode"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -57,14 +60,16 @@ func (r *Repository) CreateShift(ctx context.Context, teamID int64, traderID int
 	return fromDBShift(row), nil
 }
 
-func (r *Repository) ShiftHistory(ctx context.Context, teamID int64, traderID int64, limit int32) ([]Shift, error) {
+func (r *Repository) ShiftHistory(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[Shift], error) {
+	page = pagination.Normalize(page)
 	rows, err := r.queries.ListTraderShiftHistory(ctx, db.ListTraderShiftHistoryParams{
-		TeamID:     teamID,
-		TraderID:   traderID,
-		LimitCount: limit,
+		TeamID:      teamID,
+		TraderID:    traderID,
+		OffsetCount: paginationOffset32(page),
+		LimitCount:  paginationLimit32(page),
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[Shift]{}, err
 	}
 
 	items := make([]Shift, 0, len(rows))
@@ -72,16 +77,26 @@ func (r *Repository) ShiftHistory(ctx context.Context, teamID int64, traderID in
 		items = append(items, fromDBShift(row))
 	}
 
-	return items, nil
+	total, err := r.queries.CountTraderShiftHistory(ctx, db.CountTraderShiftHistoryParams{
+		TeamID:   teamID,
+		TraderID: traderID,
+	})
+	if err != nil {
+		return pagination.Result[Shift]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
-func (r *Repository) TeamShiftHistory(ctx context.Context, teamID int64, limit int32) ([]Shift, error) {
+func (r *Repository) TeamShiftHistory(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[Shift], error) {
+	page = pagination.Normalize(page)
 	rows, err := r.queries.ListTeamShiftHistory(ctx, db.ListTeamShiftHistoryParams{
-		TeamID:     teamID,
-		LimitCount: limit,
+		TeamID:      teamID,
+		OffsetCount: paginationOffset32(page),
+		LimitCount:  paginationLimit32(page),
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[Shift]{}, err
 	}
 
 	items := make([]Shift, 0, len(rows))
@@ -89,7 +104,12 @@ func (r *Repository) TeamShiftHistory(ctx context.Context, teamID int64, limit i
 		items = append(items, fromDBShift(row))
 	}
 
-	return items, nil
+	total, err := r.queries.CountTeamShiftHistory(ctx, teamID)
+	if err != nil {
+		return pagination.Result[Shift]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
 func (r *Repository) ShiftReport(ctx context.Context, teamID int64, traderID int64, shiftID int64) (ShiftReportDetails, error) {
@@ -200,14 +220,21 @@ func (r *Repository) ActiveAssignment(ctx context.Context, teamID int64, traderI
 	return row.ID, nil
 }
 
-func (r *Repository) AssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
+func (r *Repository) AssignedRequisites(ctx context.Context, teamID int64, traderID int64, filters AssignedRequisitesFilters, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
+	page = pagination.Normalize(page)
 	rows, err := r.queries.ListAssignedRequisitesForTrader(ctx, db.ListAssignedRequisitesForTraderParams{
-		TeamID:   teamID,
-		TraderID: traderID,
-		Today:    currentBusinessDate(),
+		TeamID:       teamID,
+		TraderID:     traderID,
+		Today:        currentBusinessDate(),
+		ExcludeID:    optionalInt8(filters.ExcludeID),
+		Statuses:     filters.Statuses,
+		Search:       filters.Search,
+		SearchDigits: digitsOnly(filters.Search),
+		OffsetCount:  paginationOffset32(page),
+		LimitCount:   paginationLimit32(page),
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[AssignedRequisite]{}, err
 	}
 
 	items := make([]AssignedRequisite, 0, len(rows))
@@ -215,17 +242,33 @@ func (r *Repository) AssignedRequisites(ctx context.Context, teamID int64, trade
 		items = append(items, fromAssignedRow(row))
 	}
 
-	return items, nil
-}
-
-func (r *Repository) FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
-	rows, err := r.queries.ListFutureAssignedRequisitesForTrader(ctx, db.ListFutureAssignedRequisitesForTraderParams{
-		TeamID:   teamID,
-		TraderID: traderID,
-		Today:    currentBusinessDate(),
+	total, err := r.queries.CountAssignedRequisitesForTrader(ctx, db.CountAssignedRequisitesForTraderParams{
+		TeamID:       teamID,
+		TraderID:     traderID,
+		Today:        currentBusinessDate(),
+		ExcludeID:    optionalInt8(filters.ExcludeID),
+		Statuses:     filters.Statuses,
+		Search:       filters.Search,
+		SearchDigits: digitsOnly(filters.Search),
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[AssignedRequisite]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
+}
+
+func (r *Repository) FutureAssignedRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
+	page = pagination.Normalize(page)
+	rows, err := r.queries.ListFutureAssignedRequisitesForTrader(ctx, db.ListFutureAssignedRequisitesForTraderParams{
+		TeamID:      teamID,
+		TraderID:    traderID,
+		Today:       currentBusinessDate(),
+		OffsetCount: paginationOffset32(page),
+		LimitCount:  paginationLimit32(page),
+	})
+	if err != nil {
+		return pagination.Result[AssignedRequisite]{}, err
 	}
 
 	items := make([]AssignedRequisite, 0, len(rows))
@@ -233,17 +276,29 @@ func (r *Repository) FutureAssignedRequisites(ctx context.Context, teamID int64,
 		items = append(items, fromFutureAssignedRow(row))
 	}
 
-	return items, nil
-}
-
-func (r *Repository) HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64) ([]AssignedRequisite, error) {
-	rows, err := r.queries.ListHistoricalAssignedRequisitesForTrader(ctx, db.ListHistoricalAssignedRequisitesForTraderParams{
+	total, err := r.queries.CountFutureAssignedRequisitesForTrader(ctx, db.CountFutureAssignedRequisitesForTraderParams{
 		TeamID:   teamID,
 		TraderID: traderID,
 		Today:    currentBusinessDate(),
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[AssignedRequisite]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
+}
+
+func (r *Repository) HistoricalAssignedRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
+	page = pagination.Normalize(page)
+	rows, err := r.queries.ListHistoricalAssignedRequisitesForTrader(ctx, db.ListHistoricalAssignedRequisitesForTraderParams{
+		TeamID:      teamID,
+		TraderID:    traderID,
+		Today:       currentBusinessDate(),
+		OffsetCount: paginationOffset32(page),
+		LimitCount:  paginationLimit32(page),
+	})
+	if err != nil {
+		return pagination.Result[AssignedRequisite]{}, err
 	}
 
 	items := make([]AssignedRequisite, 0, len(rows))
@@ -251,7 +306,16 @@ func (r *Repository) HistoricalAssignedRequisites(ctx context.Context, teamID in
 		items = append(items, fromHistoricalAssignedRow(row))
 	}
 
-	return items, nil
+	total, err := r.queries.CountHistoricalAssignedRequisitesForTrader(ctx, db.CountHistoricalAssignedRequisitesForTraderParams{
+		TeamID:   teamID,
+		TraderID: traderID,
+		Today:    currentBusinessDate(),
+	})
+	if err != nil {
+		return pagination.Result[AssignedRequisite]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
 func currentBusinessDate() pgtype.Date {
@@ -268,14 +332,17 @@ func businessLocation() *time.Location {
 	return location
 }
 
-func (r *Repository) AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]AssignedRequisite, error) {
+func (r *Repository) AssignedRequisitesByShift(ctx context.Context, teamID int64, traderID int64, shiftID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
+	page = pagination.Normalize(page)
 	rows, err := r.queries.ListAssignedRequisitesForShift(ctx, db.ListAssignedRequisitesForShiftParams{
-		TeamID:   teamID,
-		TraderID: traderID,
-		ShiftID:  shiftID,
+		TeamID:      teamID,
+		TraderID:    traderID,
+		ShiftID:     shiftID,
+		OffsetCount: paginationOffset32(page),
+		LimitCount:  paginationLimit32(page),
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[AssignedRequisite]{}, err
 	}
 
 	items := make([]AssignedRequisite, 0, len(rows))
@@ -283,16 +350,28 @@ func (r *Repository) AssignedRequisitesByShift(ctx context.Context, teamID int64
 		items = append(items, fromAssignedShiftRow(row))
 	}
 
-	return items, nil
-}
-
-func (r *Repository) AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64) ([]AssignedRequisite, error) {
-	rows, err := r.queries.ListAssignedRequisitesForTeamShift(ctx, db.ListAssignedRequisitesForTeamShiftParams{
-		TeamID:  teamID,
-		ShiftID: shiftID,
+	total, err := r.queries.CountAssignedRequisitesForShift(ctx, db.CountAssignedRequisitesForShiftParams{
+		TeamID:   teamID,
+		TraderID: traderID,
+		ShiftID:  shiftID,
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[AssignedRequisite]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
+}
+
+func (r *Repository) AssignedRequisitesByTeamShift(ctx context.Context, teamID int64, shiftID int64, page pagination.Params) (pagination.Result[AssignedRequisite], error) {
+	page = pagination.Normalize(page)
+	rows, err := r.queries.ListAssignedRequisitesForTeamShift(ctx, db.ListAssignedRequisitesForTeamShiftParams{
+		TeamID:      teamID,
+		ShiftID:     shiftID,
+		OffsetCount: paginationOffset32(page),
+		LimitCount:  paginationLimit32(page),
+	})
+	if err != nil {
+		return pagination.Result[AssignedRequisite]{}, err
 	}
 
 	items := make([]AssignedRequisite, 0, len(rows))
@@ -300,7 +379,15 @@ func (r *Repository) AssignedRequisitesByTeamShift(ctx context.Context, teamID i
 		items = append(items, fromAssignedTeamShiftRow(row))
 	}
 
-	return items, nil
+	total, err := r.queries.CountAssignedRequisitesForTeamShift(ctx, db.CountAssignedRequisitesForTeamShiftParams{
+		TeamID:  teamID,
+		ShiftID: shiftID,
+	})
+	if err != nil {
+		return pagination.Result[AssignedRequisite]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
 func (r *Repository) CreateShiftRequisite(ctx context.Context, params CreateShiftRequisiteRecord) (ShiftRequisite, error) {
@@ -336,13 +423,16 @@ func (r *Repository) CreateShiftRequisite(ctx context.Context, params CreateShif
 	return fromCreateShiftRequisiteRow(row), nil
 }
 
-func (r *Repository) ShiftRequisites(ctx context.Context, teamID int64, traderID int64) ([]ShiftRequisite, error) {
+func (r *Repository) ShiftRequisites(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[ShiftRequisite], error) {
+	page = pagination.Normalize(page)
 	rows, err := r.queries.ListShiftRequisitesByTrader(ctx, db.ListShiftRequisitesByTraderParams{
-		TeamID:   teamID,
-		TraderID: traderID,
+		TeamID:      teamID,
+		TraderID:    traderID,
+		OffsetCount: paginationOffset32(page),
+		LimitCount:  paginationLimit32(page),
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[ShiftRequisite]{}, err
 	}
 
 	items := make([]ShiftRequisite, 0, len(rows))
@@ -350,7 +440,15 @@ func (r *Repository) ShiftRequisites(ctx context.Context, teamID int64, traderID
 		items = append(items, fromListShiftRequisiteRow(row))
 	}
 
-	return items, nil
+	total, err := r.queries.CountShiftRequisitesByTrader(ctx, db.CountShiftRequisitesByTraderParams{
+		TeamID:   teamID,
+		TraderID: traderID,
+	})
+	if err != nil {
+		return pagination.Result[ShiftRequisite]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
 func (r *Repository) UpdateShiftRequisiteDetails(ctx context.Context, params UpdateShiftRequisiteDetailsRecord) (ShiftRequisite, error) {
@@ -490,14 +588,17 @@ func (r *Repository) LatestTurnovers(ctx context.Context, teamID int64, traderID
 	return items, nil
 }
 
-func (r *Repository) TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]TurnoverEntry, error) {
+func (r *Repository) TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64, page pagination.Params) (pagination.Result[TurnoverEntry], error) {
+	page = pagination.Normalize(page)
 	rows, err := r.queries.ListTurnoversByShiftRequisite(ctx, db.ListTurnoversByShiftRequisiteParams{
 		TeamID:           teamID,
 		TraderID:         traderID,
 		ShiftRequisiteID: shiftRequisiteID,
+		OffsetCount:      paginationOffset32(page),
+		LimitCount:       paginationLimit32(page),
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[TurnoverEntry]{}, err
 	}
 
 	items := make([]TurnoverEntry, 0, len(rows))
@@ -505,17 +606,29 @@ func (r *Repository) TurnoversByShiftRequisite(ctx context.Context, teamID int64
 		items = append(items, fromDBTurnover(row))
 	}
 
-	return items, nil
-}
-
-func (r *Repository) InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]InternalTransfer, error) {
-	rows, err := r.queries.ListInternalTransfersForShiftRequisite(ctx, db.ListInternalTransfersForShiftRequisiteParams{
+	total, err := r.queries.CountTurnoversByShiftRequisite(ctx, db.CountTurnoversByShiftRequisiteParams{
 		TeamID:           teamID,
 		TraderID:         traderID,
 		ShiftRequisiteID: shiftRequisiteID,
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[TurnoverEntry]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
+}
+
+func (r *Repository) InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64, page pagination.Params) (pagination.Result[InternalTransfer], error) {
+	page = pagination.Normalize(page)
+	rows, err := r.queries.ListInternalTransfersForShiftRequisite(ctx, db.ListInternalTransfersForShiftRequisiteParams{
+		TeamID:           teamID,
+		TraderID:         traderID,
+		ShiftRequisiteID: shiftRequisiteID,
+		OffsetCount:      paginationOffset32(page),
+		LimitCount:       paginationLimit32(page),
+	})
+	if err != nil {
+		return pagination.Result[InternalTransfer]{}, err
 	}
 
 	items := make([]InternalTransfer, 0, len(rows))
@@ -523,7 +636,16 @@ func (r *Repository) InternalTransfersByShiftRequisite(ctx context.Context, team
 		items = append(items, fromListInternalTransferRow(row))
 	}
 
-	return items, nil
+	total, err := r.queries.CountInternalTransfersForShiftRequisite(ctx, db.CountInternalTransfersForShiftRequisiteParams{
+		TeamID:           teamID,
+		TraderID:         traderID,
+		ShiftRequisiteID: shiftRequisiteID,
+	})
+	if err != nil {
+		return pagination.Result[InternalTransfer]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
 func (r *Repository) CreateInternalTransfer(ctx context.Context, params CreateInternalTransferRecord) (InternalTransfer, error) {
@@ -1022,7 +1144,8 @@ func fromChecklistRow(row db.GetCurrentShiftChecklistRow) CloseChecklist {
 		InboundOk:           row.InboundOk,
 		OutboundImported:    row.OutboundImported,
 		OutboundOk:          row.OutboundOk,
-		AllRequisitesClosed: true,
+		OpenRequisiteCount:  row.OpenRequisiteCount,
+		AllRequisitesClosed: row.OpenRequisiteCount == 0,
 		AllPayoutsFullyPaid: row.AllPayoutsFullyPaid,
 		UnpaidPayoutCount:   row.UnpaidPayoutCount,
 	}
@@ -1119,4 +1242,37 @@ func timePtrValue(value *time.Time) pgtype.Timestamptz {
 	}
 
 	return pgtype.Timestamptz{Time: *value, Valid: true}
+}
+
+func optionalInt8(value *int64) pgtype.Int8 {
+	if value == nil {
+		return pgtype.Int8{}
+	}
+
+	return pgtype.Int8{Int64: *value, Valid: true}
+}
+
+func digitsOnly(value string) string {
+	var digits []rune
+	for _, char := range value {
+		if unicode.IsDigit(char) {
+			digits = append(digits, char)
+		}
+	}
+
+	return string(digits)
+}
+
+func paginationOffset32(params pagination.Params) int32 {
+	offset := pagination.Offset(params)
+	if offset > math.MaxInt32 {
+		return math.MaxInt32
+	}
+
+	return int32(offset)
+}
+
+func paginationLimit32(params pagination.Params) int32 {
+	params = pagination.Normalize(params)
+	return int32(params.PageSize)
 }

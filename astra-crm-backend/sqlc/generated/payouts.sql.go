@@ -177,6 +177,73 @@ func (q *Queries) CancelPayoutOrder(ctx context.Context, arg CancelPayoutOrderPa
 	return i, err
 }
 
+const countPayoutOrderHistoryForTrader = `-- name: CountPayoutOrderHistoryForTrader :one
+WITH current_shift AS (
+    SELECT trader_shifts.id
+    FROM trader_shifts
+    WHERE trader_shifts.team_id = $1
+      AND trader_shifts.trader_id = $2
+      AND trader_shifts.status IN ('open', 'closing')
+    ORDER BY trader_shifts.started_at DESC, trader_shifts.id DESC
+    LIMIT 1
+)
+SELECT count(*)::bigint
+FROM manual_payout_orders mpo
+LEFT JOIN current_shift cs ON cs.id = mpo.shift_id
+WHERE mpo.team_id = $1
+  AND mpo.trader_id = $2
+  AND (cs.id IS NULL OR mpo.deleted_at IS NOT NULL OR mpo.status = 'cancelled')
+`
+
+type CountPayoutOrderHistoryForTraderParams struct {
+	TeamID   int64
+	TraderID int64
+}
+
+func (q *Queries) CountPayoutOrderHistoryForTrader(ctx context.Context, arg CountPayoutOrderHistoryForTraderParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countPayoutOrderHistoryForTrader, arg.TeamID, arg.TraderID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countPayoutOrdersForCurrentShift = `-- name: CountPayoutOrdersForCurrentShift :one
+WITH current_shift AS (
+    SELECT trader_shifts.id
+    FROM trader_shifts
+    WHERE trader_shifts.team_id = $1
+      AND trader_shifts.trader_id = $2
+      AND trader_shifts.status IN ('open', 'closing')
+    ORDER BY trader_shifts.started_at DESC, trader_shifts.id DESC
+    LIMIT 1
+)
+SELECT count(*)::bigint
+FROM manual_payout_orders mpo
+JOIN current_shift cs ON cs.id = mpo.shift_id
+WHERE mpo.team_id = $1
+  AND mpo.trader_id = $2
+  AND mpo.deleted_at IS NULL
+  AND (
+      $3::text = ''
+      OR $3::text = 'all'
+      OR ($3::text = 'open' AND mpo.status IN ('draft', 'in_progress'))
+      OR mpo.status = $3::text
+  )
+`
+
+type CountPayoutOrdersForCurrentShiftParams struct {
+	TeamID   int64
+	TraderID int64
+	Status   string
+}
+
+func (q *Queries) CountPayoutOrdersForCurrentShift(ctx context.Context, arg CountPayoutOrdersForCurrentShiftParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countPayoutOrdersForCurrentShift, arg.TeamID, arg.TraderID, arg.Status)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createPayoutOrder = `-- name: CreatePayoutOrder :one
 WITH current_shift AS (
     SELECT trader_shifts.id
@@ -421,11 +488,15 @@ WHERE mpo.team_id = $1
   AND (cs.id IS NULL OR mpo.deleted_at IS NOT NULL OR mpo.status = 'cancelled')
 GROUP BY mpo.id
 ORDER BY COALESCE(mpo.deleted_at, mpo.updated_at, mpo.created_at) DESC, mpo.id DESC
+LIMIT $4
+OFFSET $3
 `
 
 type ListPayoutOrderHistoryForTraderParams struct {
-	TeamID   int64
-	TraderID int64
+	TeamID      int64
+	TraderID    int64
+	OffsetCount int32
+	LimitCount  int32
 }
 
 type ListPayoutOrderHistoryForTraderRow struct {
@@ -445,7 +516,12 @@ type ListPayoutOrderHistoryForTraderRow struct {
 }
 
 func (q *Queries) ListPayoutOrderHistoryForTrader(ctx context.Context, arg ListPayoutOrderHistoryForTraderParams) ([]ListPayoutOrderHistoryForTraderRow, error) {
-	rows, err := q.db.Query(ctx, listPayoutOrderHistoryForTrader, arg.TeamID, arg.TraderID)
+	rows, err := q.db.Query(ctx, listPayoutOrderHistoryForTrader,
+		arg.TeamID,
+		arg.TraderID,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -508,13 +584,24 @@ LEFT JOIN manual_payout_transfers mpt ON mpt.manual_payout_order_id = mpo.id
 WHERE mpo.team_id = $1
   AND mpo.trader_id = $2
   AND mpo.deleted_at IS NULL
+  AND (
+      $3::text = ''
+      OR $3::text = 'all'
+      OR ($3::text = 'open' AND mpo.status IN ('draft', 'in_progress'))
+      OR mpo.status = $3::text
+  )
 GROUP BY mpo.id
 ORDER BY mpo.created_at DESC, mpo.id DESC
+LIMIT $5
+OFFSET $4
 `
 
 type ListPayoutOrdersForCurrentShiftParams struct {
-	TeamID   int64
-	TraderID int64
+	TeamID      int64
+	TraderID    int64
+	Status      string
+	OffsetCount int32
+	LimitCount  int32
 }
 
 type ListPayoutOrdersForCurrentShiftRow struct {
@@ -534,7 +621,13 @@ type ListPayoutOrdersForCurrentShiftRow struct {
 }
 
 func (q *Queries) ListPayoutOrdersForCurrentShift(ctx context.Context, arg ListPayoutOrdersForCurrentShiftParams) ([]ListPayoutOrdersForCurrentShiftRow, error) {
-	rows, err := q.db.Query(ctx, listPayoutOrdersForCurrentShift, arg.TeamID, arg.TraderID)
+	rows, err := q.db.Query(ctx, listPayoutOrdersForCurrentShift,
+		arg.TeamID,
+		arg.TraderID,
+		arg.Status,
+		arg.OffsetCount,
+		arg.LimitCount,
+	)
 	if err != nil {
 		return nil, err
 	}

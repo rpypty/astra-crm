@@ -7,13 +7,14 @@ import (
 	"strings"
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 )
 
 var ErrInvalidInput = errors.New("invalid payout input")
 
 type Store interface {
-	ListOrders(ctx context.Context, teamID int64, traderID int64) ([]Order, error)
-	ListOrderHistory(ctx context.Context, teamID int64, traderID int64) ([]Order, error)
+	ListOrders(ctx context.Context, teamID int64, traderID int64, filters OrderFilters, page pagination.Params) (pagination.Result[Order], error)
+	ListOrderHistory(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[Order], error)
 	GetOrder(ctx context.Context, teamID int64, traderID int64, payoutID int64) (Order, error)
 	CreateOrder(ctx context.Context, params CreateOrderRecord) (Order, error)
 	UpdateOrder(ctx context.Context, params UpdateOrderRecord) (Order, error)
@@ -90,12 +91,17 @@ type PatchTransferParams struct {
 	Comment                *string
 }
 
-func (s *Service) ListOrders(ctx context.Context, teamID int64, traderID int64) ([]Order, error) {
-	return s.store.ListOrders(ctx, teamID, traderID)
+type OrderFilters struct {
+	Status string
 }
 
-func (s *Service) ListOrderHistory(ctx context.Context, teamID int64, traderID int64) ([]Order, error) {
-	return s.store.ListOrderHistory(ctx, teamID, traderID)
+func (s *Service) ListOrders(ctx context.Context, teamID int64, traderID int64, filters OrderFilters, page pagination.Params) (pagination.Result[Order], error) {
+	filters.Status = strings.TrimSpace(filters.Status)
+	return s.store.ListOrders(ctx, teamID, traderID, filters, page)
+}
+
+func (s *Service) ListOrderHistory(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[Order], error) {
+	return s.store.ListOrderHistory(ctx, teamID, traderID, page)
 }
 
 func (s *Service) GetOrder(ctx context.Context, teamID int64, traderID int64, payoutID int64) (Order, []Transfer, error) {

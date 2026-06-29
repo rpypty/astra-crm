@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/requisites"
 	"github.com/ashpak/astra-crm-backend/internal/users"
 	"github.com/go-chi/chi/v5"
@@ -15,19 +16,19 @@ import (
 
 type TeamleadRequisiteService interface {
 	Create(ctx context.Context, params requisites.CreateParams) (requisites.RequisiteDetails, error)
-	List(ctx context.Context, teamID int64, params requisites.ListParams) ([]requisites.RequisiteDetails, error)
+	List(ctx context.Context, teamID int64, params requisites.ListParams, page pagination.Params) (pagination.Result[requisites.RequisiteDetails], error)
 	Get(ctx context.Context, teamID int64, requisiteID int64) (requisites.RequisiteDetails, error)
 	Patch(ctx context.Context, params requisites.PatchParams) (requisites.RequisiteDetails, error)
 	Delete(ctx context.Context, actorID int64, teamID int64, requisiteID int64) error
 	Assign(ctx context.Context, params requisites.AssignParams) (requisites.Assignment, error)
 	Unassign(ctx context.Context, actorID int64, teamID int64, requisiteID int64) error
-	AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64) ([]requisites.Assignment, error)
-	Plans(ctx context.Context, teamID int64) ([]requisites.AssignmentWorkRow, error)
-	Activity(ctx context.Context, teamID int64) ([]requisites.AssignmentWorkRow, error)
+	AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64, page pagination.Params) (pagination.Result[requisites.Assignment], error)
+	Plans(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[requisites.AssignmentWorkRow], error)
+	Activity(ctx context.Context, teamID int64, params requisites.ListParams, page pagination.Params) (pagination.Result[requisites.AssignmentWorkRow], error)
 	CreatePlan(ctx context.Context, params requisites.PlanParams) (requisites.Assignment, error)
 	UpdatePlan(ctx context.Context, params requisites.PlanParams) (requisites.Assignment, error)
 	CancelPlan(ctx context.Context, actorID int64, teamID int64, assignmentID int64) (requisites.Assignment, error)
-	AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]requisites.AssignmentEvent, error)
+	AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64, page pagination.Params) (pagination.Result[requisites.AssignmentEvent], error)
 	Report(ctx context.Context, teamID int64, requisiteID int64) (requisites.RequisiteReport, error)
 }
 
@@ -39,28 +40,12 @@ func NewTeamleadRequisitesHandler(service TeamleadRequisiteService) *TeamleadReq
 	return &TeamleadRequisitesHandler{service: service}
 }
 
-type requisitesListResponse struct {
-	Items []requisites.PublicRequisite `json:"items"`
-}
-
 type requisiteResponse struct {
 	Requisite requisites.PublicRequisite `json:"requisite"`
 }
 
 type assignmentResponse struct {
 	Assignment requisites.PublicRequisiteAssignment `json:"assignment"`
-}
-
-type assignmentHistoryResponse struct {
-	Items []requisites.PublicRequisiteAssignment `json:"items"`
-}
-
-type assignmentRowsResponse struct {
-	Items []requisites.PublicAssignmentWorkRow `json:"items"`
-}
-
-type assignmentEventsResponse struct {
-	Items []requisites.PublicAssignmentEvent `json:"items"`
 }
 
 type requisiteReportResponse struct {
@@ -108,21 +93,30 @@ func (h *TeamleadRequisitesHandler) List(w http.ResponseWriter, r *http.Request)
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
+	fields := map[string]string{}
+	availableForPlanning, ok := optionalBool(r.URL.Query().Get("availableForPlanning"), "availableForPlanning", fields)
+	if !ok {
+		RespondError(w, ValidationError(fields))
+		return
+	}
 
 	items, err := h.service.List(r.Context(), actor.TeamID, requisites.ListParams{
-		Search:   r.URL.Query().Get("search"),
-		BankCode: r.URL.Query().Get("bankCode"),
-		Status:   r.URL.Query().Get("status"),
-		TraderID: r.URL.Query().Get("traderId"),
-	})
+		Search:               r.URL.Query().Get("search"),
+		BankCode:             r.URL.Query().Get("bankCode"),
+		Status:               r.URL.Query().Get("status"),
+		TraderID:             r.URL.Query().Get("traderId"),
+		AvailableForPlanning: availableForPlanning,
+	}, page)
 	if err != nil {
 		RespondError(w, mapRequisiteError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, requisitesListResponse{
-		Items: requisites.PublicRequisites(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(requisites.PublicRequisites(items.Items), page, items.Total)))
 }
 
 func (h *TeamleadRequisitesHandler) Activity(w http.ResponseWriter, r *http.Request) {
@@ -135,16 +129,23 @@ func (h *TeamleadRequisitesHandler) Activity(w http.ResponseWriter, r *http.Requ
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.Activity(r.Context(), actor.TeamID)
+	items, err := h.service.Activity(r.Context(), actor.TeamID, requisites.ListParams{
+		Search:   r.URL.Query().Get("search"),
+		BankCode: r.URL.Query().Get("bankCode"),
+		Status:   r.URL.Query().Get("status"),
+		TraderID: r.URL.Query().Get("traderId"),
+	}, page)
 	if err != nil {
 		RespondError(w, mapRequisiteError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, assignmentRowsResponse{
-		Items: requisites.PublicAssignmentWorkRows(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(requisites.PublicAssignmentWorkRows(items.Items), page, items.Total)))
 }
 
 func (h *TeamleadRequisitesHandler) Plans(w http.ResponseWriter, r *http.Request) {
@@ -157,16 +158,18 @@ func (h *TeamleadRequisitesHandler) Plans(w http.ResponseWriter, r *http.Request
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.Plans(r.Context(), actor.TeamID)
+	items, err := h.service.Plans(r.Context(), actor.TeamID, page)
 	if err != nil {
 		RespondError(w, mapRequisiteError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, assignmentRowsResponse{
-		Items: requisites.PublicAssignmentWorkRows(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(requisites.PublicAssignmentWorkRows(items.Items), page, items.Total)))
 }
 
 func (h *TeamleadRequisitesHandler) Report(w http.ResponseWriter, r *http.Request) {
@@ -324,16 +327,18 @@ func (h *TeamleadRequisitesHandler) PlanEvents(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.AssignmentEvents(r.Context(), actor.TeamID, assignmentID)
+	items, err := h.service.AssignmentEvents(r.Context(), actor.TeamID, assignmentID, page)
 	if err != nil {
 		RespondError(w, mapRequisiteError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, assignmentEventsResponse{
-		Items: requisites.PublicAssignmentEvents(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(requisites.PublicAssignmentEvents(items.Items), page, items.Total)))
 }
 
 func (h *TeamleadRequisitesHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -554,16 +559,18 @@ func (h *TeamleadRequisitesHandler) AssignmentHistory(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.AssignmentHistory(r.Context(), actor.TeamID, requisiteID)
+	items, err := h.service.AssignmentHistory(r.Context(), actor.TeamID, requisiteID, page)
 	if err != nil {
 		RespondError(w, mapRequisiteError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, assignmentHistoryResponse{
-		Items: requisites.PublicAssignments(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(requisites.PublicAssignments(items.Items), page, items.Total)))
 }
 
 func requisiteIDFromRequest(w http.ResponseWriter, r *http.Request) (int64, bool) {

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/reconciliation"
 	"github.com/ashpak/astra-crm-backend/internal/users"
 	"github.com/go-chi/chi/v5"
@@ -272,28 +273,28 @@ func (s *fakeTeamleadReconciliationService) RecalculateTeamleadCurrent(ctx conte
 	return s.startRun, nil
 }
 
-func (s *fakeTeamleadReconciliationService) ListTeamleadInboundItems(ctx context.Context, teamID int64, actorID int64) ([]reconciliation.Item, error) {
+func (s *fakeTeamleadReconciliationService) ListTeamleadInboundItems(ctx context.Context, teamID int64, actorID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error) {
 	s.itemsTeamID = teamID
 	if s.itemsErr != nil {
-		return nil, s.itemsErr
+		return pagination.Result[reconciliation.Item]{}, s.itemsErr
 	}
-	return s.items, nil
+	return pagination.FromSlice(s.items, page), nil
 }
 
-func (s *fakeTeamleadReconciliationService) ListTeamleadOutboundItems(ctx context.Context, teamID int64, actorID int64) ([]reconciliation.Item, error) {
+func (s *fakeTeamleadReconciliationService) ListTeamleadOutboundItems(ctx context.Context, teamID int64, actorID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error) {
 	s.outboundItemsTeamID = teamID
 	if s.itemsErr != nil {
-		return nil, s.itemsErr
+		return pagination.Result[reconciliation.Item]{}, s.itemsErr
 	}
-	return s.items, nil
+	return pagination.FromSlice(s.items, page), nil
 }
 
-func (s *fakeTeamleadReconciliationService) ListTeamleadCurrentRuns(ctx context.Context, params reconciliation.ListTeamleadCurrentRunsParams) ([]reconciliation.Run, error) {
+func (s *fakeTeamleadReconciliationService) ListTeamleadCurrentRuns(ctx context.Context, params reconciliation.ListTeamleadCurrentRunsParams) (pagination.Result[reconciliation.Run], error) {
 	s.historyRecord = params
 	if s.historyErr != nil {
-		return nil, s.historyErr
+		return pagination.Result[reconciliation.Run]{}, s.historyErr
 	}
-	return s.historyRuns, nil
+	return pagination.FromSlice(s.historyRuns, params.Page), nil
 }
 
 func (s *fakeTeamleadReconciliationService) GetTeamleadCurrentRun(ctx context.Context, params reconciliation.GetTeamleadCurrentRunParams) (reconciliation.Run, error) {
@@ -304,12 +305,12 @@ func (s *fakeTeamleadReconciliationService) GetTeamleadCurrentRun(ctx context.Co
 	return s.currentRun, nil
 }
 
-func (s *fakeTeamleadReconciliationService) ListTeamleadCurrentItems(ctx context.Context, params reconciliation.GetTeamleadCurrentRunParams) ([]reconciliation.Item, error) {
+func (s *fakeTeamleadReconciliationService) ListTeamleadCurrentItems(ctx context.Context, params reconciliation.GetTeamleadCurrentRunParams, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error) {
 	s.currentRunItemsRecord = params
 	if s.itemsErr != nil {
-		return nil, s.itemsErr
+		return pagination.Result[reconciliation.Item]{}, s.itemsErr
 	}
-	return s.items, nil
+	return pagination.FromSlice(s.items, page), nil
 }
 
 func (s *fakeTeamleadReconciliationService) AcceptTeamleadCurrent(ctx context.Context, params reconciliation.AcceptTeamleadCurrentParams) (reconciliation.Run, error) {
@@ -356,40 +357,40 @@ func (s *fakeTeamleadReconciliationService) LatestTraderOutboundByShift(ctx cont
 	return s.shiftOutboundRun, nil
 }
 
-func (s *fakeTeamleadReconciliationService) ListTeamleadPeriodInboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]reconciliation.Item, error) {
+func (s *fakeTeamleadReconciliationService) ListTeamleadPeriodInboundItems(ctx context.Context, teamID int64, accountingPeriodID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error) {
 	s.itemsTeamID = teamID
 	s.itemsPeriodID = accountingPeriodID
 	if s.itemsErr != nil {
-		return nil, s.itemsErr
+		return pagination.Result[reconciliation.Item]{}, s.itemsErr
 	}
-	return s.items, nil
+	return pagination.FromSlice(s.items, page), nil
 }
 
-func (s *fakeTeamleadReconciliationService) ListTeamleadPeriodOutboundItems(ctx context.Context, teamID int64, accountingPeriodID int64) ([]reconciliation.Item, error) {
+func (s *fakeTeamleadReconciliationService) ListTeamleadPeriodOutboundItems(ctx context.Context, teamID int64, accountingPeriodID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error) {
 	s.outboundItemsTeamID = teamID
 	s.outboundItemsPeriodID = accountingPeriodID
 	if s.itemsErr != nil {
-		return nil, s.itemsErr
+		return pagination.Result[reconciliation.Item]{}, s.itemsErr
 	}
-	return s.items, nil
+	return pagination.FromSlice(s.items, page), nil
 }
 
-func (s *fakeTeamleadReconciliationService) ListTraderInboundItemsByShift(ctx context.Context, teamID int64, shiftID int64) ([]reconciliation.Item, error) {
+func (s *fakeTeamleadReconciliationService) ListTraderInboundItemsByShift(ctx context.Context, teamID int64, shiftID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error) {
 	s.shiftItemsTeamID = teamID
 	s.shiftItemsShiftID = shiftID
 	if s.shiftItemsErr != nil {
-		return nil, s.shiftItemsErr
+		return pagination.Result[reconciliation.Item]{}, s.shiftItemsErr
 	}
-	return s.shiftItems, nil
+	return pagination.FromSlice(s.shiftItems, page), nil
 }
 
-func (s *fakeTeamleadReconciliationService) ListTraderOutboundItemsByShift(ctx context.Context, teamID int64, shiftID int64) ([]reconciliation.Item, error) {
+func (s *fakeTeamleadReconciliationService) ListTraderOutboundItemsByShift(ctx context.Context, teamID int64, shiftID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error) {
 	s.shiftOutboundItemsTeamID = teamID
 	s.shiftOutboundItemsID = shiftID
 	if s.shiftItemsErr != nil {
-		return nil, s.shiftItemsErr
+		return pagination.Result[reconciliation.Item]{}, s.shiftItemsErr
 	}
-	return s.shiftItems, nil
+	return pagination.FromSlice(s.shiftItems, page), nil
 }
 
 func withTeamleadReconciliationRouteParam(ctx context.Context, key string, value string) context.Context {

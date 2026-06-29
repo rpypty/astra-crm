@@ -6,12 +6,14 @@ import type { Requisite, RequisiteAssignmentWorkRow } from "@/shared/model/domai
 type AllRequisitesTabProps = {
   columns: ColumnDef<Requisite>[];
   data: Requisite[];
+  rowCount: number;
   pagination: PaginationState;
   onPaginationChange: (pagination: PaginationState) => void;
   search: string;
   onSearchChange: (search: string) => void;
   toolbarFilters: ReactNode;
   isLoading?: boolean;
+  isFetching?: boolean;
   error?: string | null;
   onRowClick: (row: Requisite) => void;
   actions: DataTableAction<Requisite>[];
@@ -20,12 +22,14 @@ type AllRequisitesTabProps = {
 export function AllRequisitesTab({
   columns,
   data,
+  rowCount,
   pagination,
   onPaginationChange,
   search,
   onSearchChange,
   toolbarFilters,
   isLoading,
+  isFetching,
   error,
   onRowClick,
   actions,
@@ -34,13 +38,15 @@ export function AllRequisitesTab({
     <DataTable
       columns={columns}
       data={data}
-      rowCount={data.length}
+      rowCount={rowCount}
       pagination={pagination}
       onPaginationChange={onPaginationChange}
+      serverSidePagination
       search={search}
       onSearchChange={onSearchChange}
       toolbarFilters={toolbarFilters}
       isLoading={isLoading}
+      isFetching={isFetching}
       error={error}
       emptyTitle="Реквизитов пока нет"
       emptyDescription="Добавьте первый реквизит, чтобы назначить его трейдеру."
@@ -53,28 +59,43 @@ export function AllRequisitesTab({
 type WorkRowsTabProps = {
   columns: ColumnDef<RequisiteAssignmentWorkRow>[];
   data: RequisiteAssignmentWorkRow[];
+  rowCount: number;
   pagination: PaginationState;
   onPaginationChange: (pagination: PaginationState) => void;
+  search?: string;
+  onSearchChange?: (search: string) => void;
+  toolbarFilters?: ReactNode;
   isLoading?: boolean;
+  isFetching?: boolean;
   error?: string | null;
 };
 
 export function RequisiteActivityTab({
   columns,
   data,
+  rowCount,
   pagination,
   onPaginationChange,
+  search,
+  onSearchChange,
+  toolbarFilters,
   isLoading,
+  isFetching,
   error,
 }: WorkRowsTabProps) {
   return (
     <DataTable
       columns={columns}
       data={data}
-      rowCount={data.length}
+      rowCount={rowCount}
       pagination={pagination}
       onPaginationChange={onPaginationChange}
+      serverSidePagination
+      search={search}
+      onSearchChange={onSearchChange}
+      toolbarFilters={toolbarFilters}
       isLoading={isLoading}
+      isFetching={isFetching}
       error={error}
       emptyTitle="Активности пока нет"
       emptyDescription="Здесь появятся фактические взятия в работу, закрытия, блоки и зафиксированные обороты."
@@ -89,9 +110,11 @@ type PlanningTabProps = WorkRowsTabProps & {
 export function RequisitePlanningTab({
   columns,
   data,
+  rowCount,
   pagination,
   onPaginationChange,
   isLoading,
+  isFetching,
   error,
   onRowClick,
 }: PlanningTabProps) {
@@ -99,10 +122,12 @@ export function RequisitePlanningTab({
     <DataTable
       columns={columns}
       data={data}
-      rowCount={data.length}
+      rowCount={rowCount}
       pagination={pagination}
       onPaginationChange={onPaginationChange}
+      serverSidePagination
       isLoading={isLoading}
+      isFetching={isFetching}
       error={error}
       emptyTitle="Планов пока нет"
       emptyDescription="Запланируйте дату, трейдера, реквизит и лимит."

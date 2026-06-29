@@ -8,13 +8,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/users"
 	"github.com/go-chi/chi/v5"
 )
 
 type TeamleadTraderService interface {
 	Create(ctx context.Context, params users.CreateTraderParams) (users.Trader, error)
-	List(ctx context.Context, teamID int64) ([]users.Trader, error)
+	List(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[users.Trader], error)
 	Get(ctx context.Context, teamID int64, traderID int64) (users.Trader, error)
 	Patch(ctx context.Context, params users.PatchTraderParams) (users.Trader, error)
 	Delete(ctx context.Context, actorID int64, teamID int64, traderID int64) error
@@ -27,10 +28,6 @@ type TeamleadTradersHandler struct {
 
 func NewTeamleadTradersHandler(service TeamleadTraderService) *TeamleadTradersHandler {
 	return &TeamleadTradersHandler{service: service}
-}
-
-type tradersListResponse struct {
-	Items []users.PublicTrader `json:"items"`
 }
 
 type traderResponse struct {
@@ -65,16 +62,18 @@ func (h *TeamleadTradersHandler) List(w http.ResponseWriter, r *http.Request) {
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	traders, err := h.service.List(r.Context(), actor.TeamID)
+	traders, err := h.service.List(r.Context(), actor.TeamID, page)
 	if err != nil {
 		RespondError(w, mapTraderError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, tradersListResponse{
-		Items: users.ToPublicTraders(traders),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(users.ToPublicTraders(traders.Items), page, traders.Total)))
 }
 
 func (h *TeamleadTradersHandler) Create(w http.ResponseWriter, r *http.Request) {

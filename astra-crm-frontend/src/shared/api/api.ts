@@ -57,8 +57,8 @@ type TakeRequisiteResponse = ApiSchema<"TakeRequisiteResponse">;
 type ShiftRequisiteResponse = ApiSchema<"ShiftRequisiteResponse">;
 type TurnoversResponse = ApiSchema<"TurnoversResponse">;
 type TurnoverResponse = ApiSchema<"TurnoverResponse">;
-type InternalTransfersResponse = { items: BackendInternalTransfer[] };
-type InternalTransferResponse = { transfer: BackendInternalTransfer };
+type InternalTransfersResponse = ApiSchema<"InternalTransfersResponse">;
+type InternalTransferResponse = ApiSchema<"InternalTransferResponse">;
 type PayoutsResponse = ApiSchema<"PayoutsResponse">;
 type PayoutDetailsResponse = ApiSchema<"PayoutDetailsResponse">;
 type PayoutResponse = ApiSchema<"PayoutResponse">;
@@ -66,13 +66,37 @@ type TransferResponse = ApiSchema<"TransferResponse">;
 type ImportResponse = ApiSchema<"ImportResponse">;
 type ReconciliationResponse = ApiSchema<"ReconciliationResponse">;
 type ReconciliationItemsResponse = ApiSchema<"ReconciliationItemsResponse">;
-type ReconciliationRunsResponse = { runs: BackendReconciliationRun[] };
+type ReconciliationRunsResponse = ApiSchema<"ReconciliationRunsResponse">;
 type DashboardResponse = ApiSchema<"DashboardResponse">;
 type OrdersListResponse = ApiSchema<"OrdersListResponse">;
 type AccountingPeriodsResponse = ApiSchema<"AccountingPeriodsResponse">;
 type AuditLogResponse = ApiSchema<"AuditLogResponse">;
 type TraderProfileResponse = ApiSchema<"TraderProfileResponse">;
 type DebugFinAllImportJobResponse = { job: DebugFinAllImportJob };
+
+export type Page<T> = {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+};
+
+export type PaginationParams = {
+  page?: number;
+  pageSize?: number;
+};
+
+type ReconciliationItemFilters = PaginationParams & {
+  status?: "mismatch" | "all";
+  onlyMismatch?: boolean;
+};
+
+type BackendPage<T> = {
+  items: T[];
+  page: number;
+  pageSize: number;
+  total: number;
+};
 
 type BackendTrader = ApiSchema<"Trader">;
 type BackendRequisite = ApiSchema<"Requisite">;
@@ -172,9 +196,9 @@ export const api = {
   },
 
   traders: {
-    async list(filters?: { search?: string; status?: string }) {
-      const response = await apiClient.get<TradersListResponse>("/teamlead/traders");
-      return response.items.map(toTrader).filter((trader) => filterTrader(trader, filters));
+    async list(filters?: { search?: string; status?: string } & PaginationParams): Promise<Page<Trader>> {
+      const response = await apiClient.get<TradersListResponse>(`/teamlead/traders${queryString(filters ?? {})}`);
+      return toPage(response, toTrader);
     },
     async save(input: {
       id?: number;
@@ -209,9 +233,9 @@ export const api = {
   },
 
   requisites: {
-    async list(filters?: { search?: string; bankCode?: string; status?: string; traderId?: string }) {
+    async list(filters?: { search?: string; bankCode?: string; status?: string; traderId?: string; availableForPlanning?: boolean } & PaginationParams): Promise<Page<Requisite>> {
       const response = await apiClient.get<RequisitesListResponse>(`/teamlead/requisites${queryString(filters ?? {})}`);
-      return response.items.map(toRequisite);
+      return toPage(response, toRequisite);
     },
     async save(input: {
       id?: number;
@@ -239,19 +263,19 @@ export const api = {
         employeeComment: input.employeeComment,
       });
     },
-    async history(requisiteId: number) {
+    async history(requisiteId: number, pagination?: PaginationParams): Promise<Page<AssignmentHistoryItem>> {
       const response = await apiClient.get<AssignmentHistoryResponse>(
-        `/teamlead/requisites/${requisiteId}/assignment-history`,
+        `/teamlead/requisites/${requisiteId}/assignment-history${queryString(pagination ?? {})}`,
       );
-      return response.items.map(toAssignmentHistory);
+      return toPage(response, toAssignmentHistory);
     },
-    async activity(): Promise<RequisiteAssignmentWorkRow[]> {
-      const response = await apiClient.get<AssignmentRowsResponse>("/teamlead/requisites/activity");
-      return response.items.map(toAssignmentWorkRow);
+    async activity(filters?: { search?: string; bankCode?: string; status?: string; traderId?: string } & PaginationParams): Promise<Page<RequisiteAssignmentWorkRow>> {
+      const response = await apiClient.get<AssignmentRowsResponse>(`/teamlead/requisites/activity${queryString(filters ?? {})}`);
+      return toPage(response, toAssignmentWorkRow);
     },
-    async plans(): Promise<RequisiteAssignmentWorkRow[]> {
-      const response = await apiClient.get<AssignmentRowsResponse>("/teamlead/requisites/plans");
-      return response.items.map(toAssignmentWorkRow);
+    async plans(pagination?: PaginationParams): Promise<Page<RequisiteAssignmentWorkRow>> {
+      const response = await apiClient.get<AssignmentRowsResponse>(`/teamlead/requisites/plans${queryString(pagination ?? {})}`);
+      return toPage(response, toAssignmentWorkRow);
     },
     async createPlan(input: {
       requisiteId: number;
@@ -281,11 +305,11 @@ export const api = {
     async cancelPlan(assignmentId: number) {
       await apiClient.delete<AssignmentResponse>(`/teamlead/requisites/plans/${assignmentId}`);
     },
-    async planEvents(assignmentId: number): Promise<RequisiteAssignmentEvent[]> {
+    async planEvents(assignmentId: number, pagination?: PaginationParams): Promise<Page<RequisiteAssignmentEvent>> {
       const response = await apiClient.get<AssignmentEventsResponse>(
-        `/teamlead/requisites/plans/${assignmentId}/events`,
+        `/teamlead/requisites/plans/${assignmentId}/events${queryString(pagination ?? {})}`,
       );
-      return response.items.map(toAssignmentEvent);
+      return toPage(response, toAssignmentEvent);
     },
     async report(requisiteId: number): Promise<RequisiteReport> {
       const response = await apiClient.get<RequisiteReportResponse>(`/teamlead/requisites/${requisiteId}/report`);
@@ -306,33 +330,33 @@ export const api = {
         checklist: checklistResponse?.checklist,
       };
     },
-    async history(): Promise<ShiftReport[]> {
-      const response = await apiClient.get<ShiftHistoryResponse>("/trader/shift/history");
-      return response.items.map(toShiftReport);
+    async history(pagination?: PaginationParams): Promise<Page<ShiftReport>> {
+      const response = await apiClient.get<ShiftHistoryResponse>(`/trader/shift/history${queryString(pagination ?? {})}`);
+      return toPage(response, toShiftReport);
     },
     async report(shiftId: number): Promise<ShiftReportDetails> {
       const response = await apiClient.get<ShiftReportDetailsResponse>(`/trader/shifts/${shiftId}/report`);
       return toShiftReportDetails(response.report);
     },
-    async requisites() {
+    async requisites(filters?: PaginationParams & { statuses?: string | string[]; search?: string; excludeId?: number }): Promise<Page<ShiftRequisite>> {
       const [assignedResponse, turnoversResponse] = await Promise.all([
-        apiClient.get<ApiSchema<"AssignedRequisitesResponse">>("/trader/requisites"),
+        apiClient.get<ApiSchema<"AssignedRequisitesResponse">>(`/trader/requisites${queryString(filters ?? {})}`),
         apiClient.get<TurnoversResponse>("/trader/shift/current/turnovers").catch(() => ({ items: [] })),
       ]);
       const latestTurnovers = latestTurnoverByShiftRequisite(turnoversResponse.items);
-      return assignedResponse.items.map((item) => toShiftRequisite(item, latestTurnovers));
+      return toPage(assignedResponse, (item) => toShiftRequisite(item, latestTurnovers));
     },
-    async futureRequisites() {
-      const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>("/trader/requisites/future");
-      return response.items.map((item) => toShiftRequisite(item, new Map()));
+    async futureRequisites(pagination?: PaginationParams): Promise<Page<ShiftRequisite>> {
+      const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>(`/trader/requisites/future${queryString(pagination ?? {})}`);
+      return toPage(response, (item) => toShiftRequisite(item, new Map()));
     },
-    async historicalRequisites() {
-      const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>("/trader/requisites/history");
-      return response.items.map((item) => toShiftRequisite(item, new Map()));
+    async historicalRequisites(pagination?: PaginationParams): Promise<Page<ShiftRequisite>> {
+      const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>(`/trader/requisites/history${queryString(pagination ?? {})}`);
+      return toPage(response, (item) => toShiftRequisite(item, new Map()));
     },
-    async reportRequisites(shiftId: number) {
-      const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>(`/trader/shifts/${shiftId}/requisites`);
-      return response.items.map((item) => toShiftRequisite(item, new Map()));
+    async reportRequisites(shiftId: number, pagination?: PaginationParams): Promise<Page<ShiftRequisite>> {
+      const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>(`/trader/shifts/${shiftId}/requisites${queryString(pagination ?? {})}`);
+      return toPage(response, (item) => toShiftRequisite(item, new Map()));
     },
     async reportReconciliation(shiftId: number, direction: OrderDirection): Promise<ReconciliationSummary | null> {
       try {
@@ -343,12 +367,12 @@ export const api = {
         throw error;
       }
     },
-    async reportReconciliationItems(shiftId: number, direction: OrderDirection): Promise<ReconciliationItem[]> {
+    async reportReconciliationItems(shiftId: number, direction: OrderDirection, filters?: ReconciliationItemFilters): Promise<Page<ReconciliationItem>> {
       try {
-        const response = await apiClient.get<ReconciliationItemsResponse>(`/trader/shifts/${shiftId}/reconciliation/${direction}/items`);
-        return response.items.map(toReconciliationItem);
+        const response = await apiClient.get<ReconciliationItemsResponse>(`/trader/shifts/${shiftId}/reconciliation/${direction}/items${queryString(filters ?? {})}`);
+        return toPage(response, toReconciliationItem);
       } catch (error) {
-        if (error instanceof ApiError && error.status === 404) return [];
+        if (error instanceof ApiError && error.status === 404) return emptyPage();
         throw error;
       }
     },
@@ -406,17 +430,17 @@ export const api = {
     async addTurnover(input: { shiftRequisiteId: number; amountMinor: number; comment?: string }) {
       await apiClient.post<TurnoverResponse>("/trader/shift/current/turnovers", input);
     },
-    async turnovers(shiftRequisiteId: number) {
-      const response = await apiClient.get<TurnoversResponse>(
-        `/trader/shift-requisites/${shiftRequisiteId}/turnovers`,
+    async turnovers(shiftRequisiteId: number, pagination?: PaginationParams): Promise<Page<TurnoverEntry>> {
+      const response = await apiClient.get<ApiSchema<"TurnoversListResponse">>(
+        `/trader/shift-requisites/${shiftRequisiteId}/turnovers${queryString(pagination ?? {})}`,
       );
-      return response.items.map(toTurnover);
+      return toPage(response, toTurnover);
     },
-    async internalTransfers(shiftRequisiteId: number) {
+    async internalTransfers(shiftRequisiteId: number, pagination?: PaginationParams): Promise<Page<InternalTransfer>> {
       const response = await apiClient.get<InternalTransfersResponse>(
-        `/trader/shift-requisites/${shiftRequisiteId}/internal-transfers`,
+        `/trader/shift-requisites/${shiftRequisiteId}/internal-transfers${queryString(pagination ?? {})}`,
       );
-      return response.items.map(toInternalTransfer);
+      return toPage(response, toInternalTransfer);
     },
     async createInternalTransfer(input: {
       sourceShiftRequisiteId: number;
@@ -445,17 +469,17 @@ export const api = {
   },
 
   teamleadReports: {
-    async history(): Promise<ShiftReport[]> {
-      const response = await apiClient.get<ShiftHistoryResponse>("/teamlead/shift/history");
-      return response.items.map(toShiftReport);
+    async history(pagination?: PaginationParams): Promise<Page<ShiftReport>> {
+      const response = await apiClient.get<ShiftHistoryResponse>(`/teamlead/shift/history${queryString(pagination ?? {})}`);
+      return toPage(response, toShiftReport);
     },
     async report(shiftId: number): Promise<ShiftReportDetails> {
       const response = await apiClient.get<ShiftReportDetailsResponse>(`/teamlead/shifts/${shiftId}/report`);
       return toShiftReportDetails(response.report);
     },
-    async reportRequisites(shiftId: number) {
-      const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>(`/teamlead/shifts/${shiftId}/requisites`);
-      return response.items.map((item) => toShiftRequisite(item, new Map()));
+    async reportRequisites(shiftId: number, pagination?: PaginationParams): Promise<Page<ShiftRequisite>> {
+      const response = await apiClient.get<ApiSchema<"AssignedRequisitesResponse">>(`/teamlead/shifts/${shiftId}/requisites${queryString(pagination ?? {})}`);
+      return toPage(response, (item) => toShiftRequisite(item, new Map()));
     },
     async reportReconciliation(shiftId: number, direction: OrderDirection): Promise<ReconciliationSummary | null> {
       try {
@@ -466,12 +490,12 @@ export const api = {
         throw error;
       }
     },
-    async reportReconciliationItems(shiftId: number, direction: OrderDirection): Promise<ReconciliationItem[]> {
+    async reportReconciliationItems(shiftId: number, direction: OrderDirection, filters?: ReconciliationItemFilters): Promise<Page<ReconciliationItem>> {
       try {
-        const response = await apiClient.get<ReconciliationItemsResponse>(`/teamlead/shifts/${shiftId}/reconciliation/${direction}/items`);
-        return response.items.map(toReconciliationItem);
+        const response = await apiClient.get<ReconciliationItemsResponse>(`/teamlead/shifts/${shiftId}/reconciliation/${direction}/items${queryString(filters ?? {})}`);
+        return toPage(response, toReconciliationItem);
       } catch (error) {
-        if (error instanceof ApiError && error.status === 404) return [];
+        if (error instanceof ApiError && error.status === 404) return emptyPage();
         throw error;
       }
     },
@@ -484,12 +508,12 @@ export const api = {
         throw error;
       }
     },
-    async periodReconciliationItems(periodId: number, direction: OrderDirection): Promise<ReconciliationItem[]> {
+    async periodReconciliationItems(periodId: number, direction: OrderDirection, filters?: ReconciliationItemFilters): Promise<Page<ReconciliationItem>> {
       try {
-        const response = await apiClient.get<ReconciliationItemsResponse>(`/teamlead/periods/${periodId}/reconciliation/${direction}/items`);
-        return response.items.map(toReconciliationItem);
+        const response = await apiClient.get<ReconciliationItemsResponse>(`/teamlead/periods/${periodId}/reconciliation/${direction}/items${queryString(filters ?? {})}`);
+        return toPage(response, toReconciliationItem);
       } catch (error) {
-        if (error instanceof ApiError && error.status === 404) return [];
+        if (error instanceof ApiError && error.status === 404) return emptyPage();
         throw error;
       }
     },
@@ -500,13 +524,13 @@ export const api = {
   },
 
   payouts: {
-    async list() {
-      const response = await apiClient.get<PayoutsResponse>("/trader/payouts");
-      return response.items.map(toPayout);
+    async list(filters?: PaginationParams & { status?: "open" | "paid" | "cancelled" | "all" }): Promise<Page<Payout>> {
+      const response = await apiClient.get<PayoutsResponse>(`/trader/payouts${queryString(filters ?? {})}`);
+      return toPage(response, toPayout);
     },
-    async history() {
-      const response = await apiClient.get<PayoutsResponse>("/trader/payouts/history");
-      return response.items.map(toPayout);
+    async history(pagination?: PaginationParams): Promise<Page<Payout>> {
+      const response = await apiClient.get<PayoutsResponse>(`/trader/payouts/history${queryString(pagination ?? {})}`);
+      return toPage(response, toPayout);
     },
     async transfers(payoutId: number) {
       const response = await apiClient.get<PayoutDetailsResponse>(`/trader/payouts/${payoutId}`);
@@ -615,7 +639,7 @@ export const api = {
       );
       return response.dashboard;
     },
-    async list(scope: "teamlead" | "trader", direction: OrderDirection, filters?: OrderFilters) {
+    async list(scope: "teamlead" | "trader", direction: OrderDirection, filters?: OrderFilters & PaginationParams & { search?: string }): Promise<Page<Order>> {
       const response = await apiClient.get<OrdersListResponse>(
         `/${scope}/${direction}/orders${queryString({
           dateFrom: filters?.dateFrom,
@@ -623,9 +647,12 @@ export const api = {
           status: filters?.status,
           traderIds: filters?.traderIds,
           confirmedOnly: filters?.confirmedOnly,
+          search: filters?.search,
+          page: filters?.page,
+          pageSize: filters?.pageSize,
         })}`,
       );
-      return response.items.map(toOrder).filter((order) => filterOrder(order, filters));
+      return toPage(response, toOrder);
     },
     async reconciliation(scope: "teamlead" | "trader", direction: OrderDirection) {
       try {
@@ -638,43 +665,58 @@ export const api = {
         throw error;
       }
     },
-    async reconciliationItems(scope: "teamlead" | "trader", direction: OrderDirection): Promise<ReconciliationItem[]> {
+    async reconciliationItems(scope: "teamlead" | "trader", direction: OrderDirection, filters?: ReconciliationItemFilters): Promise<Page<ReconciliationItem>> {
       try {
-        const response = await apiClient.get<ReconciliationItemsResponse>(`/${scope}/${direction}/reconciliation/items`);
-        return response.items.map(toReconciliationItem);
+        const response = await apiClient.get<ReconciliationItemsResponse>(`/${scope}/${direction}/reconciliation/items${queryString(filters ?? {})}`);
+        return toPage(response, toReconciliationItem);
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) {
-          return [];
+          return emptyPage();
         }
         throw error;
       }
     },
-    async reconciliationHistory(scope: "teamlead" | "trader", direction: OrderDirection): Promise<ReconciliationSummary[]> {
-      const response = await apiClient.get<ReconciliationRunsResponse>(`/${scope}/${direction}/reconciliation/history`);
-      return response.runs.map(toReconciliation);
+    async reconciliationHistory(scope: "teamlead" | "trader", direction: OrderDirection, pagination?: PaginationParams): Promise<Page<ReconciliationSummary>> {
+      const response = await apiClient.get<ReconciliationRunsResponse>(`/${scope}/${direction}/reconciliation/history${queryString(pagination ?? {})}`);
+      return toPage(response, toReconciliation);
     },
     async reconciliationRun(scope: "teamlead" | "trader", direction: OrderDirection, runId: number): Promise<ReconciliationSummary> {
       const response = await apiClient.get<ReconciliationResponse>(`/${scope}/${direction}/reconciliation/${runId}`);
       return toReconciliation(response.run);
     },
-    async reconciliationRunItems(scope: "teamlead" | "trader", direction: OrderDirection, runId: number): Promise<ReconciliationItem[]> {
-      const response = await apiClient.get<ReconciliationItemsResponse>(`/${scope}/${direction}/reconciliation/${runId}/items`);
-      return response.items.map(toReconciliationItem);
+    async reconciliationRunItems(scope: "teamlead" | "trader", direction: OrderDirection, runId: number, filters?: ReconciliationItemFilters): Promise<Page<ReconciliationItem>> {
+      const response = await apiClient.get<ReconciliationItemsResponse>(`/${scope}/${direction}/reconciliation/${runId}/items${queryString(filters ?? {})}`);
+      return toPage(response, toReconciliationItem);
     },
   },
 
   periods: {
-    async list(): Promise<AccountingPeriod[]> {
-      return apiClient.get<AccountingPeriodsResponse>("/teamlead/periods").then((response) => response.items);
+    async list(pagination?: PaginationParams): Promise<Page<AccountingPeriod>> {
+      const response = await apiClient.get<AccountingPeriodsResponse>(`/teamlead/periods${queryString(pagination ?? {})}`);
+      return toPage(response, (item) => item);
     },
   },
 
   audit: {
-    async list(): Promise<AuditLogEntry[]> {
-      return apiClient.get<AuditLogResponse>("/teamlead/audit").then((response) => response.items);
+    async list(filters?: { search?: string } & PaginationParams): Promise<Page<AuditLogEntry>> {
+      const response = await apiClient.get<AuditLogResponse>(`/teamlead/audit${queryString(filters ?? {})}`);
+      return toPage(response, (item) => item);
     },
   },
 };
+
+function toPage<TBackend, TDomain>(response: BackendPage<TBackend>, mapper: (item: TBackend) => TDomain): Page<TDomain> {
+  return {
+    items: response.items.map(mapper),
+    page: response.page,
+    pageSize: response.pageSize,
+    total: response.total,
+  };
+}
+
+function emptyPage<T>(): Page<T> {
+  return { items: [], page: 1, pageSize: 0, total: 0 };
+}
 
 function toCurrentUser(user: ApiSchema<"User">): CurrentUser {
   return {
@@ -1072,23 +1114,4 @@ function latestTurnoverByShiftRequisite(items: BackendTurnover[]) {
     }
   }
   return result;
-}
-
-function filterTrader(trader: Trader, filters?: { search?: string; status?: string }) {
-  const search = filters?.search?.trim().toLowerCase();
-  const matchesSearch =
-    !search || trader.login.toLowerCase().includes(search) || trader.externalWorkerName.toLowerCase().includes(search);
-  const matchesStatus = !filters?.status || filters.status === "all" || trader.status === filters.status;
-  return matchesSearch && matchesStatus;
-}
-
-function filterOrder(order: Order, filters?: { search?: string; status?: string }) {
-  const search = filters?.search?.trim().toLowerCase();
-  const matchesSearch =
-    !search ||
-    [order.id, order.trader, order.workerName, order.requisite, order.innerId].some((value) =>
-      value.toLowerCase().includes(search),
-    );
-  const matchesStatus = !filters?.status || filters.status === "all" || order.normalizedStatus === filters.status;
-  return matchesSearch && matchesStatus;
 }

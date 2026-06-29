@@ -18,6 +18,7 @@ type SearchableSelectProps = {
   emptyText?: string;
   className?: string;
   disabled?: boolean;
+  onSearchChange?: (value: string) => void;
 };
 
 export function SearchableSelect({
@@ -29,6 +30,7 @@ export function SearchableSelect({
   emptyText = "Ничего не найдено",
   className,
   disabled,
+  onSearchChange,
 }: SearchableSelectProps) {
   const id = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -69,6 +71,12 @@ export function SearchableSelect({
     onValueChange(nextValue);
     setOpen(false);
     setSearch("");
+    onSearchChange?.("");
+  };
+
+  const updateSearch = (value: string) => {
+    setSearch(value);
+    onSearchChange?.(value);
   };
 
   return (
@@ -99,7 +107,7 @@ export function SearchableSelect({
             <input
               ref={searchRef}
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => updateSearch(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   setOpen(false);

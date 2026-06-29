@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
 import { AlertTriangle, ArrowDownLeft, ArrowUpRight, CalendarDays, CheckCircle2, Eye, FileText, History, Plus, RefreshCw, Upload } from "lucide-react";
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -46,6 +46,7 @@ import { filterOrdersBySearch } from "@/shared/lib/order-filters";
 import type { PeriodFilter } from "@/shared/lib/period-filter";
 import { usePersistentPeriodFilter } from "@/shared/lib/period-filter";
 import { queryKeys } from "@/shared/api/query-keys";
+import { paginationToQuery } from "@/shared/lib/pagination";
 import {
 
   cn,
@@ -92,7 +93,6 @@ type TraderShiftSummary = TraderShiftChecklist["shift"];
 
 export function TraderReportsPage() {
   const shiftQuery = useQuery({ queryKey: queryKeys.trader.currentShift, queryFn: api.traderShift.current });
-  const historyQuery = useQuery({ queryKey: queryKeys.trader.shiftHistory, queryFn: api.traderShift.history });
   const inboundReconciliationQuery = useQuery({
     queryKey: queryKeys.trader.reconciliation("inbound"),
     queryFn: () => api.orders.reconciliation("trader", "inbound"),
@@ -103,7 +103,6 @@ export function TraderReportsPage() {
   });
 
   const checklist = shiftQuery.data?.checklist;
-  const draftReport = checklist?.shift ? toDraftShiftReport(checklist.shift) : undefined;
 
   return (
     <div className="space-y-6">
@@ -120,7 +119,7 @@ export function TraderReportsPage() {
         outboundReconciliation={outboundReconciliationQuery.data}
       />
 
-      <ShiftReportHistoryCard draftReport={draftReport} reports={historyQuery.data ?? []} isLoading={historyQuery.isLoading} />
+      <ShiftReportHistoryCard />
     </div>
   );
 }
@@ -147,8 +146,16 @@ function SubmitShiftReportDialog() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [closeComment, setCloseComment] = useState("");
   const shiftQuery = useQuery({ queryKey: queryKeys.trader.currentShift, queryFn: api.traderShift.current, enabled: open });
-  const requisitesQuery = useQuery({ queryKey: queryKeys.trader.requisites(), queryFn: api.traderShift.requisites, enabled: open });
-  const payoutsQuery = useQuery({ queryKey: queryKeys.trader.payouts(), queryFn: api.payouts.list, enabled: open });
+  const requisitesQuery = useQuery({
+    queryKey: queryKeys.trader.requisites({ reportDialog: true, statuses: ["in_work", "correction"], page: 1, pageSize: 200 }),
+    queryFn: () => api.traderShift.requisites({ statuses: ["in_work", "correction"], page: 1, pageSize: 200 }),
+    enabled: open,
+  });
+  const payoutsQuery = useQuery({
+    queryKey: queryKeys.trader.payouts({ reportDialog: true, status: "open", page: 1, pageSize: 200 }),
+    queryFn: () => api.payouts.list({ status: "open", page: 1, pageSize: 200 }),
+    enabled: open,
+  });
   const inboundReconciliationQuery = useQuery({
     queryKey: queryKeys.trader.reconciliation("inbound"),
     queryFn: () => api.orders.reconciliation("trader", "inbound"),
@@ -215,8 +222,8 @@ function SubmitShiftReportDialog() {
     },
   });
 
-  const openRequisites = (requisitesQuery.data ?? []).filter((item) => item.status === "in_work" || item.status === "correction");
-  const unpaidPayouts = (payoutsQuery.data ?? []).filter((payout) => payout.status === "open");
+  const openRequisites = requisitesQuery.data?.items ?? [];
+  const unpaidPayouts = payoutsQuery.data?.items ?? [];
   const hasFilesToUpload = Boolean(inboundFile || outboundFile);
   const hasRequiredReports = Boolean(inboundFile || latestInboundImport) && Boolean(outboundFile || latestOutboundImport);
   const canUpload = hasFilesToUpload && hasRequiredReports && !uploadMutation.isPending;
@@ -548,21 +555,15 @@ function ReconciliationReportCard({
   );
 }
 
-function ShiftReportHistoryCard({
-  draftReport,
-  reports,
-  isLoading,
-}: {
-  draftReport?: ShiftReport;
-  reports: ShiftReport[];
-  isLoading?: boolean;
-}) {
+function ShiftReportHistoryCard() {
   const [selectedReport, setSelectedReport] = useState<ShiftReport | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
-  const tableReports = useMemo(() => {
-    if (!draftReport) return reports;
-    return [draftReport, ...reports.filter((report) => report.id !== draftReport.id)];
-  }, [draftReport, reports]);
+  const historyQuery = useQuery({
+    queryKey: queryKeys.trader.shiftHistory(paginationToQuery(pagination)),
+    queryFn: () => api.traderShift.history(paginationToQuery(pagination)),
+    placeholderData: keepPreviousData,
+  });
+  const reports = historyQuery.data?.items ?? [];
 
   const openReport = (report: ShiftReport) => setSelectedReport(report);
   const columns = useMemo<ColumnDef<ShiftReport>[]>(
@@ -623,11 +624,13 @@ function ShiftReportHistoryCard({
       <CardContent>
         <DataTable
           columns={columns}
-          data={tableReports}
-          rowCount={tableReports.length}
+          data={reports}
+          rowCount={historyQuery.data?.total ?? 0}
           pagination={pagination}
           onPaginationChange={setPagination}
-          isLoading={isLoading}
+          serverSidePagination
+          isLoading={historyQuery.isLoading}
+          isFetching={historyQuery.isFetching}
           emptyTitle="Отчетов пока нет"
           emptyDescription="Закрытые смены будут появляться здесь после сдачи отчета."
           onRowClick={openReport}

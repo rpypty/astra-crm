@@ -7,13 +7,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/payouts"
 	"github.com/go-chi/chi/v5"
 )
 
 type TraderPayoutService interface {
-	ListOrders(ctx context.Context, teamID int64, traderID int64) ([]payouts.Order, error)
-	ListOrderHistory(ctx context.Context, teamID int64, traderID int64) ([]payouts.Order, error)
+	ListOrders(ctx context.Context, teamID int64, traderID int64, filters payouts.OrderFilters, page pagination.Params) (pagination.Result[payouts.Order], error)
+	ListOrderHistory(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[payouts.Order], error)
 	GetOrder(ctx context.Context, teamID int64, traderID int64, payoutID int64) (payouts.Order, []payouts.Transfer, error)
 	CreateOrder(ctx context.Context, params payouts.CreateOrderParams) (payouts.Order, error)
 	PatchOrder(ctx context.Context, params payouts.PatchOrderParams) (payouts.Order, error)
@@ -29,10 +30,6 @@ type TraderPayoutHandler struct {
 
 func NewTraderPayoutHandler(service TraderPayoutService) *TraderPayoutHandler {
 	return &TraderPayoutHandler{service: service}
-}
-
-type payoutOrdersResponse struct {
-	Items []payouts.PublicOrder `json:"items"`
 }
 
 type payoutOrderResponse struct {
@@ -82,16 +79,20 @@ func (h *TraderPayoutHandler) List(w http.ResponseWriter, r *http.Request) {
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.ListOrders(r.Context(), actor.TeamID, actor.ID)
+	items, err := h.service.ListOrders(r.Context(), actor.TeamID, actor.ID, payouts.OrderFilters{
+		Status: r.URL.Query().Get("status"),
+	}, page)
 	if err != nil {
 		RespondError(w, mapPayoutError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, payoutOrdersResponse{
-		Items: payouts.PublicOrders(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(payouts.PublicOrders(items.Items), page, items.Total)))
 }
 
 func (h *TraderPayoutHandler) History(w http.ResponseWriter, r *http.Request) {
@@ -104,16 +105,18 @@ func (h *TraderPayoutHandler) History(w http.ResponseWriter, r *http.Request) {
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.ListOrderHistory(r.Context(), actor.TeamID, actor.ID)
+	items, err := h.service.ListOrderHistory(r.Context(), actor.TeamID, actor.ID, page)
 	if err != nil {
 		RespondError(w, mapPayoutError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, payoutOrdersResponse{
-		Items: payouts.PublicOrders(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(payouts.PublicOrders(items.Items), page, items.Total)))
 }
 
 func (h *TraderPayoutHandler) Get(w http.ResponseWriter, r *http.Request) {

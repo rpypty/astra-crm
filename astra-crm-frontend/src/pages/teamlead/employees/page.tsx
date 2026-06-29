@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
 import { CalendarDays, Copy, Eye, FileText, History, Pencil, Plus, RefreshCw, UserRound, X } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
@@ -61,6 +61,7 @@ import { filterOrdersBySearch } from "@/shared/lib/order-filters";
 import type { PeriodFilter } from "@/shared/lib/period-filter";
 import { usePersistentPeriodFilter } from "@/shared/lib/period-filter";
 import { queryKeys } from "@/shared/api/query-keys";
+import { paginationToQuery } from "@/shared/lib/pagination";
 import {
   bpsToPercent,
   formatCardNumber,
@@ -133,9 +134,14 @@ export function TeamleadTradersPage() {
   const [generatedPassword, setGeneratedPassword] = useState<string | null>(null);
 
   const tradersQuery = useQuery({
-    queryKey: queryKeys.teamlead.traders({ search: deferredSearch, status }),
-    queryFn: () => api.traders.list({ search: deferredSearch, status }),
+    queryKey: queryKeys.teamlead.traders({ search: deferredSearch, status, ...paginationToQuery(pagination) }),
+    queryFn: () => api.traders.list({ search: deferredSearch, status, ...paginationToQuery(pagination) }),
+    placeholderData: keepPreviousData,
   });
+
+  useEffect(() => {
+    setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
+  }, [deferredSearch, status]);
 
   const saveMutation = useMutation({
     mutationFn: api.traders.save,
@@ -187,7 +193,7 @@ export function TeamleadTradersPage() {
     [],
   );
 
-  const data = tradersQuery.data ?? [];
+  const data = tradersQuery.data?.items ?? [];
   const openTraderForm = useCallback(
     (trader: Trader | null) => {
       saveMutation.reset();
@@ -217,9 +223,10 @@ export function TeamleadTradersPage() {
       <DataTable
         columns={columns}
         data={data}
-        rowCount={data.length}
+        rowCount={tradersQuery.data?.total ?? 0}
         pagination={pagination}
         onPaginationChange={setPagination}
+        serverSidePagination
         search={search}
         onSearchChange={setSearch}
         toolbarFilters={
@@ -230,6 +237,7 @@ export function TeamleadTradersPage() {
           </Select>
         }
         isLoading={tradersQuery.isLoading}
+        isFetching={tradersQuery.isFetching}
         error={tradersQuery.error instanceof Error ? tradersQuery.error.message : null}
         emptyTitle="Сотрудников пока нет"
         emptyDescription="Добавьте первого трейдера для работы со сменами."

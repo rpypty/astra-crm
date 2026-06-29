@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 )
 
 func TestTraderServiceCreateHashesPasswordAndAuditsPublicPayload(t *testing.T) {
@@ -138,8 +139,8 @@ func (s *fakeTraderStore) GetTraderByID(ctx context.Context, teamID int64, trade
 	return s.byID, nil
 }
 
-func (s *fakeTraderStore) ListTraderDetailsByTeam(ctx context.Context, teamID int64) ([]Trader, error) {
-	return s.list, nil
+func (s *fakeTraderStore) ListTraderDetailsByTeam(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[Trader], error) {
+	return pagination.FromSlice(s.list, page), nil
 }
 
 func (s *fakeTraderStore) UpdateTrader(ctx context.Context, params UpdateTraderRecord) (Trader, error) {

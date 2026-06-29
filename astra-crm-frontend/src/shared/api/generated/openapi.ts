@@ -31,6 +31,9 @@ export type components = {
 };
     TradersListResponse: {
   items: components["schemas"]["Trader"][];
+  page: number;
+  pageSize: number;
+  total: number;
 };
     TraderResponse: {
   trader: components["schemas"]["Trader"];
@@ -197,6 +200,9 @@ export type components = {
 };
     RequisitesListResponse: {
   items: components["schemas"]["Requisite"][];
+  page: number;
+  pageSize: number;
+  total: number;
 };
     RequisiteResponse: {
   requisite: components["schemas"]["Requisite"];
@@ -206,15 +212,24 @@ export type components = {
 };
     AssignmentHistoryResponse: {
   items: components["schemas"]["RequisiteAssignment"][];
+  page: number;
+  pageSize: number;
+  total: number;
 };
     AssignmentRowsResponse: {
   items: components["schemas"]["RequisiteAssignmentWorkRow"][];
+  page: number;
+  pageSize: number;
+  total: number;
 };
     RequisiteReportResponse: {
   report: components["schemas"]["RequisiteReport"];
 };
     AssignmentEventsResponse: {
   items: components["schemas"]["RequisiteAssignmentEvent"][];
+  page: number;
+  pageSize: number;
+  total: number;
 };
     Shift: {
   id: number;
@@ -235,6 +250,9 @@ export type components = {
 };
     ShiftHistoryResponse: {
   items: components["schemas"]["Shift"][];
+  page: number;
+  pageSize: number;
+  total: number;
 };
     CloseShiftResponse: {
   shift: components["schemas"]["Shift"];
@@ -266,6 +284,9 @@ export type components = {
 };
     AssignedRequisitesResponse: {
   items: components["schemas"]["AssignedRequisite"][];
+  page: number;
+  pageSize: number;
+  total: number;
 };
     ShiftRequisite: {
   id: number;
@@ -287,6 +308,9 @@ export type components = {
 };
     ShiftRequisitesResponse: {
   items: components["schemas"]["ShiftRequisite"][];
+  page: number;
+  pageSize: number;
+  total: number;
 };
     TakeRequisiteResponse: {
   shift: components["schemas"]["Shift"];
@@ -311,6 +335,12 @@ export type components = {
     TurnoversResponse: {
   items: components["schemas"]["TurnoverEntry"][];
 };
+    TurnoversListResponse: {
+  items: components["schemas"]["TurnoverEntry"][];
+  page: number;
+  pageSize: number;
+  total: number;
+};
     TurnoverResponse: {
   turnover: components["schemas"]["TurnoverEntry"];
 };
@@ -327,6 +357,12 @@ export type components = {
   outboundTurnoverMinor: number;
   closingBalanceMinor: number;
   comment: string;
+};
+    CreateInternalTransferRequest: {
+  sourceShiftRequisiteId: number;
+  destinationShiftRequisiteId: number;
+  amountMinor: number;
+  comment?: string;
 };
     CloseChecklist: {
   shift: components["schemas"]["Shift"];
@@ -373,8 +409,43 @@ export type components = {
   createdAt: string;
   comment?: string;
 };
+    InternalTransfer: {
+  id: number;
+  teamId: number;
+  shiftId: number;
+  traderId: number;
+  sourceShiftRequisiteId: number;
+  sourceRequisiteId: number;
+  sourcePhone: string;
+  sourceBankCode: string;
+  sourceBankName: string;
+  destinationShiftRequisiteId: number;
+  destinationRequisiteId: number;
+  destinationPhone: string;
+  destinationBankCode: string;
+  destinationBankName: string;
+  amountMinor: number;
+  status: "active" | "cancelled";
+  createdBy: number;
+  createdAt: string;
+  cancelledBy?: number;
+  cancelledAt?: string;
+  comment?: string;
+};
+    InternalTransfersResponse: {
+  items: components["schemas"]["InternalTransfer"][];
+  page: number;
+  pageSize: number;
+  total: number;
+};
+    InternalTransferResponse: {
+  transfer: components["schemas"]["InternalTransfer"];
+};
     PayoutsResponse: {
   items: components["schemas"]["Payout"][];
+  page: number;
+  pageSize: number;
+  total: number;
 };
     PayoutResponse: {
   payout: components["schemas"]["Payout"];
@@ -482,7 +553,10 @@ export type components = {
   run: components["schemas"]["ReconciliationRun"];
 };
     ReconciliationRunsResponse: {
-  runs: components["schemas"]["ReconciliationRun"][];
+  items: components["schemas"]["ReconciliationRun"][];
+  page: number;
+  pageSize: number;
+  total: number;
 };
     ReconciliationItem: {
   id: number;
@@ -501,6 +575,9 @@ export type components = {
 };
     ReconciliationItemsResponse: {
   items: components["schemas"]["ReconciliationItem"][];
+  page: number;
+  pageSize: number;
+  total: number;
 };
     ImportResult: {
   importBatchId: number;
@@ -534,6 +611,9 @@ export type components = {
 };
     AccountingPeriodsResponse: {
   items: components["schemas"]["AccountingPeriod"][];
+  page: number;
+  pageSize: number;
+  total: number;
 };
     AuditLogEntry: {
   id: number;
@@ -549,6 +629,9 @@ export type components = {
 };
     AuditLogResponse: {
   items: components["schemas"]["AuditLogEntry"][];
+  page: number;
+  pageSize: number;
+  total: number;
 };
     HealthResponse: {
   status: "ok" | "not_ready";

@@ -3,8 +3,10 @@ package requisites
 import (
 	"context"
 	"errors"
+	"math"
 	"time"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -253,10 +255,23 @@ func (r *Repository) GetDetails(ctx context.Context, teamID int64, requisiteID i
 	return fromDetailsRow(row), nil
 }
 
-func (r *Repository) ListDetails(ctx context.Context, teamID int64) ([]RequisiteDetails, error) {
-	rows, err := r.queries.ListRequisiteDetailsByTeam(ctx, teamID)
+func (r *Repository) ListDetails(ctx context.Context, teamID int64, params ListParams, page pagination.Params) (pagination.Result[RequisiteDetails], error) {
+	page = pagination.Normalize(page)
+	params = normalizeListParams(params)
+	queryParams := db.ListRequisiteDetailsByTeamParams{
+		TeamID:               teamID,
+		BankCode:             params.BankCode,
+		Status:               params.Status,
+		AvailableForPlanning: params.AvailableForPlanning,
+		TraderFilter:         params.TraderID,
+		Search:               params.Search,
+		SearchDigits:         digitsOnly(params.Search),
+		OffsetCount:          paginationOffset32(page),
+		LimitCount:           paginationLimit32(page),
+	}
+	rows, err := r.queries.ListRequisiteDetailsByTeam(ctx, queryParams)
 	if err != nil {
-		return nil, err
+		return pagination.Result[RequisiteDetails]{}, err
 	}
 
 	items := make([]RequisiteDetails, 0, len(rows))
@@ -264,7 +279,20 @@ func (r *Repository) ListDetails(ctx context.Context, teamID int64) ([]Requisite
 		items = append(items, fromListDetailsRow(row))
 	}
 
-	return items, nil
+	total, err := r.queries.CountRequisiteDetailsByTeam(ctx, db.CountRequisiteDetailsByTeamParams{
+		TeamID:               queryParams.TeamID,
+		BankCode:             queryParams.BankCode,
+		Status:               queryParams.Status,
+		AvailableForPlanning: queryParams.AvailableForPlanning,
+		TraderFilter:         queryParams.TraderFilter,
+		Search:               queryParams.Search,
+		SearchDigits:         queryParams.SearchDigits,
+	})
+	if err != nil {
+		return pagination.Result[RequisiteDetails]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
 func (r *Repository) Update(ctx context.Context, params UpdateRecord) (Requisite, error) {
@@ -381,13 +409,16 @@ func (r *Repository) Unassign(ctx context.Context, teamID int64, requisiteID int
 	return fromDBAssignment(row), nil
 }
 
-func (r *Repository) AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64) ([]Assignment, error) {
+func (r *Repository) AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64, page pagination.Params) (pagination.Result[Assignment], error) {
+	page = pagination.Normalize(page)
 	rows, err := r.queries.ListRequisiteAssignmentHistory(ctx, db.ListRequisiteAssignmentHistoryParams{
 		TeamID:      teamID,
 		RequisiteID: requisiteID,
+		OffsetCount: paginationOffset32(page),
+		LimitCount:  paginationLimit32(page),
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[Assignment]{}, err
 	}
 
 	items := make([]Assignment, 0, len(rows))
@@ -395,7 +426,15 @@ func (r *Repository) AssignmentHistory(ctx context.Context, teamID int64, requis
 		items = append(items, fromDBAssignment(row))
 	}
 
-	return items, nil
+	total, err := r.queries.CountRequisiteAssignmentHistory(ctx, db.CountRequisiteAssignmentHistoryParams{
+		TeamID:      teamID,
+		RequisiteID: requisiteID,
+	})
+	if err != nil {
+		return pagination.Result[Assignment]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
 func (r *Repository) ListActiveAssignmentsByTrader(ctx context.Context, teamID int64, traderID int64) ([]Assignment, error) {
@@ -415,10 +454,15 @@ func (r *Repository) ListActiveAssignmentsByTrader(ctx context.Context, teamID i
 	return items, nil
 }
 
-func (r *Repository) ListPlans(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {
-	rows, err := r.queries.ListTeamleadRequisitePlans(ctx, teamID)
+func (r *Repository) ListPlans(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[AssignmentWorkRow], error) {
+	page = pagination.Normalize(page)
+	rows, err := r.queries.ListTeamleadRequisitePlans(ctx, db.ListTeamleadRequisitePlansParams{
+		TeamID:      teamID,
+		OffsetCount: paginationOffset32(page),
+		LimitCount:  paginationLimit32(page),
+	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[AssignmentWorkRow]{}, err
 	}
 
 	items := make([]AssignmentWorkRow, 0, len(rows))
@@ -426,13 +470,29 @@ func (r *Repository) ListPlans(ctx context.Context, teamID int64) ([]AssignmentW
 		items = append(items, fromPlanRow(row))
 	}
 
-	return items, nil
+	total, err := r.queries.CountTeamleadRequisitePlans(ctx, teamID)
+	if err != nil {
+		return pagination.Result[AssignmentWorkRow]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
-func (r *Repository) ListActivity(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {
-	rows, err := r.queries.ListTeamleadRequisiteActivity(ctx, teamID)
+func (r *Repository) ListActivity(ctx context.Context, teamID int64, params ListParams, page pagination.Params) (pagination.Result[AssignmentWorkRow], error) {
+	page = pagination.Normalize(page)
+	params = normalizeListParams(params)
+	rows, err := r.queries.ListTeamleadRequisiteActivity(ctx, db.ListTeamleadRequisiteActivityParams{
+		TeamID:       teamID,
+		BankCode:     params.BankCode,
+		Status:       params.Status,
+		TraderFilter: params.TraderID,
+		Search:       params.Search,
+		SearchDigits: digitsOnly(params.Search),
+		OffsetCount:  paginationOffset32(page),
+		LimitCount:   paginationLimit32(page),
+	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[AssignmentWorkRow]{}, err
 	}
 
 	items := make([]AssignmentWorkRow, 0, len(rows))
@@ -440,7 +500,19 @@ func (r *Repository) ListActivity(ctx context.Context, teamID int64) ([]Assignme
 		items = append(items, fromActivityRow(row))
 	}
 
-	return items, nil
+	total, err := r.queries.CountTeamleadRequisiteActivity(ctx, db.CountTeamleadRequisiteActivityParams{
+		TeamID:       teamID,
+		BankCode:     params.BankCode,
+		Status:       params.Status,
+		TraderFilter: params.TraderID,
+		Search:       params.Search,
+		SearchDigits: digitsOnly(params.Search),
+	})
+	if err != nil {
+		return pagination.Result[AssignmentWorkRow]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
 func (r *Repository) Report(ctx context.Context, teamID int64, requisiteID int64) (RequisiteReport, error) {
@@ -541,13 +613,16 @@ func (r *Repository) CreateAssignmentEvent(ctx context.Context, params Assignmen
 	return fromDBAssignmentEvent(row), nil
 }
 
-func (r *Repository) AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]AssignmentEvent, error) {
+func (r *Repository) AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64, page pagination.Params) (pagination.Result[AssignmentEvent], error) {
+	page = pagination.Normalize(page)
 	rows, err := r.queries.ListRequisiteAssignmentEvents(ctx, db.ListRequisiteAssignmentEventsParams{
 		TeamID:       teamID,
 		AssignmentID: assignmentID,
+		OffsetCount:  paginationOffset32(page),
+		LimitCount:   paginationLimit32(page),
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[AssignmentEvent]{}, err
 	}
 
 	items := make([]AssignmentEvent, 0, len(rows))
@@ -555,7 +630,15 @@ func (r *Repository) AssignmentEvents(ctx context.Context, teamID int64, assignm
 		items = append(items, fromDBAssignmentEvent(row))
 	}
 
-	return items, nil
+	total, err := r.queries.CountRequisiteAssignmentEvents(ctx, db.CountRequisiteAssignmentEventsParams{
+		TeamID:       teamID,
+		AssignmentID: assignmentID,
+	})
+	if err != nil {
+		return pagination.Result[AssignmentEvent]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
 type CreateRecord struct {
@@ -879,6 +962,20 @@ func textValue(value *string) pgtype.Text {
 	}
 
 	return pgtype.Text{String: *value, Valid: true}
+}
+
+func paginationOffset32(params pagination.Params) int32 {
+	offset := pagination.Offset(params)
+	if offset > math.MaxInt32 {
+		return math.MaxInt32
+	}
+
+	return int32(offset)
+}
+
+func paginationLimit32(params pagination.Params) int32 {
+	params = pagination.Normalize(params)
+	return int32(params.PageSize)
 }
 
 func textPtr(value pgtype.Text) *string {

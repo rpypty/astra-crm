@@ -249,6 +249,14 @@ WHERE team_id = sqlc.arg(team_id)
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
 
+-- name: GetTraderInboundReconciliationRun :one
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE id = sqlc.arg(run_id)
+  AND team_id = sqlc.arg(team_id)
+  AND trader_id = sqlc.arg(trader_id)
+  AND type = 'trader_shift_inbound';
+
 -- name: UpdateTraderShiftInboundReconciliationStatus :exec
 UPDATE trader_shifts
 SET inbound_reconciliation_status = sqlc.arg(status),
@@ -504,6 +512,14 @@ WHERE team_id = sqlc.arg(team_id)
   AND type = 'trader_shift_outbound'
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
+
+-- name: GetTraderOutboundReconciliationRun :one
+SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
+FROM reconciliation_runs
+WHERE id = sqlc.arg(run_id)
+  AND team_id = sqlc.arg(team_id)
+  AND trader_id = sqlc.arg(trader_id)
+  AND type = 'trader_shift_outbound';
 
 -- name: UpdateTraderShiftOutboundReconciliationStatus :exec
 UPDATE trader_shifts
@@ -1084,7 +1100,24 @@ WHERE reconciliation_runs.team_id = sqlc.arg(team_id)
         AND ib.uploaded_by = sqlc.arg(uploaded_by)
   )
 ORDER BY reconciliation_runs.created_at DESC, reconciliation_runs.id DESC
-LIMIT sqlc.arg(limit_count);
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountTeamleadCurrentReconciliationRuns :one
+SELECT count(*)::bigint
+FROM reconciliation_runs
+WHERE reconciliation_runs.team_id = sqlc.arg(team_id)
+  AND reconciliation_runs.type = CASE
+      WHEN sqlc.arg(direction)::text = 'inbound' THEN 'teamlead_period_inbound'
+      ELSE 'teamlead_period_outbound'
+  END
+  AND reconciliation_runs.accounting_period_id IS NULL
+  AND EXISTS (
+      SELECT 1
+      FROM import_batches ib
+      WHERE ib.id = reconciliation_runs.import_batch_id
+        AND ib.uploaded_by = sqlc.arg(uploaded_by)
+  );
 
 -- name: GetTeamleadCurrentReconciliationRun :one
 SELECT id, team_id, type, scope_type, shift_id, accounting_period_id, trader_id, import_batch_id, expected_amount_minor, actual_amount_minor, diff_amount_minor, success_amount_minor, success_count, failed_amount_minor, failed_count, total_amount_minor, total_count, status, comment, confirmed_by, confirmed_at, created_at
@@ -1386,7 +1419,22 @@ RETURNING id, team_id, type, scope_type, shift_id, accounting_period_id, trader_
 SELECT id, reconciliation_run_id, issue_type, external_order_id, external_inner_id, teamlead_value_json, trader_value_json, message, created_at
 FROM reconciliation_items
 WHERE reconciliation_run_id = sqlc.arg(run_id)
-ORDER BY id;
+  AND (
+      (NOT sqlc.arg(only_mismatch)::boolean AND sqlc.arg(status)::text IN ('', 'all'))
+      OR issue_type IS NOT NULL
+  )
+ORDER BY id
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountReconciliationItemsForRun :one
+SELECT count(*)::bigint
+FROM reconciliation_items
+WHERE reconciliation_run_id = sqlc.arg(run_id)
+  AND (
+      (NOT sqlc.arg(only_mismatch)::boolean AND sqlc.arg(status)::text IN ('', 'all'))
+      OR issue_type IS NOT NULL
+  );
 
 -- name: ListActiveTeamleadInboundPeriodScopes :many
 SELECT DISTINCT ON (ib.accounting_period_id)

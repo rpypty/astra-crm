@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
 import { AlertTriangle, CalendarDays, CheckCircle2, Eye, FileText, History, Plus, RefreshCw, Upload } from "lucide-react";
 import { useDeferredValue, useEffect, useMemo, useState } from "react";
@@ -32,12 +32,12 @@ import { Input } from "@/shared/ui/input";
 import { SearchableSelect, type SearchableSelectOption } from "@/shared/ui/searchable-select";
 import { Select } from "@/shared/ui/select";
 import { Textarea } from "@/shared/ui/textarea";
-import type { OrderDirection, Payout, PayoutTransfer, ReconciliationItem, ReconciliationSummary, ShiftReport, ShiftRequisite } from "@/shared/model/domain";
+import type { Order, OrderDirection, Payout, PayoutTransfer, ReconciliationItem, ReconciliationSummary, ShiftReport, ShiftRequisite } from "@/shared/model/domain";
 import { api } from "@/shared/api/api";
-import { filterOrdersBySearch } from "@/shared/lib/order-filters";
 import type { PeriodFilter } from "@/shared/lib/period-filter";
 import { usePersistentPeriodFilter } from "@/shared/lib/period-filter";
 import { queryKeys } from "@/shared/api/query-keys";
+import { paginationToQuery } from "@/shared/lib/pagination";
 import {
 
   formatCardNumber,
@@ -158,23 +158,28 @@ function TraderOrdersDirectionContent({ direction, periodFilter }: { direction: 
 }
 
 function TraderOrdersTable({ direction, periodFilter }: { direction: "inbound" | "outbound"; periodFilter: PeriodFilter }) {
-  const confirmedPeriodFilter = useMemo(() => ({ ...periodFilter, confirmedOnly: true }), [periodFilter]);
   const [search, setSearch] = useState("");
   const deferredSearch = useDeferredValue(search);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
-  const [detailsOrder, setDetailsOrder] = useState<Awaited<ReturnType<typeof api.orders.list>>[number] | null>(null);
-  const ordersQuery = useQuery({
-    queryKey: queryKeys.trader.orders(direction, confirmedPeriodFilter),
-    queryFn: () => api.orders.list("trader", direction, confirmedPeriodFilter),
-  });
-  const data = useMemo(
-    () => filterOrdersBySearch(ordersQuery.data ?? [], deferredSearch),
-    [deferredSearch, ordersQuery.data],
+  const [detailsOrder, setDetailsOrder] = useState<Order | null>(null);
+  const confirmedPeriodFilter = useMemo(
+    () => ({ ...periodFilter, confirmedOnly: true, search: deferredSearch }),
+    [deferredSearch, periodFilter],
   );
+  const orderServerFilters = useMemo(
+    () => ({ ...confirmedPeriodFilter, ...paginationToQuery(pagination) }),
+    [confirmedPeriodFilter, pagination],
+  );
+  const ordersQuery = useQuery({
+    queryKey: queryKeys.trader.orders(direction, orderServerFilters),
+    queryFn: () => api.orders.list("trader", direction, orderServerFilters),
+    placeholderData: keepPreviousData,
+  });
+  const data = ordersQuery.data?.items ?? [];
   useEffect(() => {
     setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
   }, [deferredSearch, direction, confirmedPeriodFilter]);
-  const columns = useMemo<ColumnDef<Awaited<ReturnType<typeof api.orders.list>>[number]>[]>(
+  const columns = useMemo<ColumnDef<Order>[]>(
     () => [
       { accessorKey: "createdAt", header: "Время", cell: ({ row }) => <DateTimeCell value={row.original.createdAt} /> },
       { accessorKey: "requisite", header: "Реквизит", cell: ({ row }) => <RequisiteCell phone={row.original.requisite} method={row.original.method} /> },
@@ -201,12 +206,14 @@ function TraderOrdersTable({ direction, periodFilter }: { direction: "inbound" |
       <DataTable
         columns={columns}
         data={data}
-        rowCount={data.length}
+        rowCount={ordersQuery.data?.total ?? 0}
         pagination={pagination}
         onPaginationChange={setPagination}
+        serverSidePagination
         search={search}
         onSearchChange={setSearch}
         isLoading={ordersQuery.isLoading}
+        isFetching={ordersQuery.isFetching}
         onRowClick={setDetailsOrder}
         actions={[{ label: "Детали", onSelect: (row) => setDetailsOrder(row) }]}
       />
@@ -215,7 +222,7 @@ function TraderOrdersTable({ direction, periodFilter }: { direction: "inbound" |
   );
 }
 
-function TraderOrderDetailsDialog({ order, onClose }: { order: Awaited<ReturnType<typeof api.orders.list>>[number] | null; onClose: () => void }) {
+function TraderOrderDetailsDialog({ order, onClose }: { order: Order | null; onClose: () => void }) {
   return (
     <Dialog open={Boolean(order)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent>

@@ -3,8 +3,10 @@ package payouts
 import (
 	"context"
 	"errors"
+	"math"
 	"time"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -27,13 +29,17 @@ func NewRepository(queries *db.Queries) *Repository {
 	return &Repository{queries: queries}
 }
 
-func (r *Repository) ListOrders(ctx context.Context, teamID int64, traderID int64) ([]Order, error) {
+func (r *Repository) ListOrders(ctx context.Context, teamID int64, traderID int64, filters OrderFilters, page pagination.Params) (pagination.Result[Order], error) {
+	page = pagination.Normalize(page)
 	rows, err := r.queries.ListPayoutOrdersForCurrentShift(ctx, db.ListPayoutOrdersForCurrentShiftParams{
-		TeamID:   teamID,
-		TraderID: traderID,
+		TeamID:      teamID,
+		TraderID:    traderID,
+		Status:      filters.Status,
+		OffsetCount: paginationOffset32(page),
+		LimitCount:  paginationLimit32(page),
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[Order]{}, err
 	}
 
 	items := make([]Order, 0, len(rows))
@@ -41,16 +47,28 @@ func (r *Repository) ListOrders(ctx context.Context, teamID int64, traderID int6
 		items = append(items, fromListOrderRow(row))
 	}
 
-	return items, nil
-}
-
-func (r *Repository) ListOrderHistory(ctx context.Context, teamID int64, traderID int64) ([]Order, error) {
-	rows, err := r.queries.ListPayoutOrderHistoryForTrader(ctx, db.ListPayoutOrderHistoryForTraderParams{
+	total, err := r.queries.CountPayoutOrdersForCurrentShift(ctx, db.CountPayoutOrdersForCurrentShiftParams{
 		TeamID:   teamID,
 		TraderID: traderID,
+		Status:   filters.Status,
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[Order]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
+}
+
+func (r *Repository) ListOrderHistory(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[Order], error) {
+	page = pagination.Normalize(page)
+	rows, err := r.queries.ListPayoutOrderHistoryForTrader(ctx, db.ListPayoutOrderHistoryForTraderParams{
+		TeamID:      teamID,
+		TraderID:    traderID,
+		OffsetCount: paginationOffset32(page),
+		LimitCount:  paginationLimit32(page),
+	})
+	if err != nil {
+		return pagination.Result[Order]{}, err
 	}
 
 	items := make([]Order, 0, len(rows))
@@ -58,7 +76,15 @@ func (r *Repository) ListOrderHistory(ctx context.Context, teamID int64, traderI
 		items = append(items, fromHistoryOrderRow(row))
 	}
 
-	return items, nil
+	total, err := r.queries.CountPayoutOrderHistoryForTrader(ctx, db.CountPayoutOrderHistoryForTraderParams{
+		TeamID:   teamID,
+		TraderID: traderID,
+	})
+	if err != nil {
+		return pagination.Result[Order]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
 func (r *Repository) GetOrder(ctx context.Context, teamID int64, traderID int64, payoutID int64) (Order, error) {
@@ -442,4 +468,18 @@ func timePtr(value pgtype.Timestamptz) *time.Time {
 	}
 
 	return &value.Time
+}
+
+func paginationOffset32(params pagination.Params) int32 {
+	offset := pagination.Offset(params)
+	if offset > math.MaxInt32 {
+		return math.MaxInt32
+	}
+
+	return int32(offset)
+}
+
+func paginationLimit32(params pagination.Params) int32 {
+	params = pagination.Normalize(params)
+	return int32(params.PageSize)
 }

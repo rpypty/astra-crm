@@ -28,8 +28,39 @@ LEFT JOIN manual_payout_transfers mpt ON mpt.manual_payout_order_id = mpo.id
 WHERE mpo.team_id = sqlc.arg(team_id)
   AND mpo.trader_id = sqlc.arg(trader_id)
   AND mpo.deleted_at IS NULL
+  AND (
+      sqlc.arg(status)::text = ''
+      OR sqlc.arg(status)::text = 'all'
+      OR (sqlc.arg(status)::text = 'open' AND mpo.status IN ('draft', 'in_progress'))
+      OR mpo.status = sqlc.arg(status)::text
+  )
 GROUP BY mpo.id
-ORDER BY mpo.created_at DESC, mpo.id DESC;
+ORDER BY mpo.created_at DESC, mpo.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountPayoutOrdersForCurrentShift :one
+WITH current_shift AS (
+    SELECT trader_shifts.id
+    FROM trader_shifts
+    WHERE trader_shifts.team_id = sqlc.arg(team_id)
+      AND trader_shifts.trader_id = sqlc.arg(trader_id)
+      AND trader_shifts.status IN ('open', 'closing')
+    ORDER BY trader_shifts.started_at DESC, trader_shifts.id DESC
+    LIMIT 1
+)
+SELECT count(*)::bigint
+FROM manual_payout_orders mpo
+JOIN current_shift cs ON cs.id = mpo.shift_id
+WHERE mpo.team_id = sqlc.arg(team_id)
+  AND mpo.trader_id = sqlc.arg(trader_id)
+  AND mpo.deleted_at IS NULL
+  AND (
+      sqlc.arg(status)::text = ''
+      OR sqlc.arg(status)::text = 'all'
+      OR (sqlc.arg(status)::text = 'open' AND mpo.status IN ('draft', 'in_progress'))
+      OR mpo.status = sqlc.arg(status)::text
+  );
 
 -- name: ListPayoutOrderHistoryForTrader :many
 WITH current_shift AS (
@@ -62,7 +93,26 @@ WHERE mpo.team_id = sqlc.arg(team_id)
   AND mpo.trader_id = sqlc.arg(trader_id)
   AND (cs.id IS NULL OR mpo.deleted_at IS NOT NULL OR mpo.status = 'cancelled')
 GROUP BY mpo.id
-ORDER BY COALESCE(mpo.deleted_at, mpo.updated_at, mpo.created_at) DESC, mpo.id DESC;
+ORDER BY COALESCE(mpo.deleted_at, mpo.updated_at, mpo.created_at) DESC, mpo.id DESC
+LIMIT sqlc.arg(limit_count)
+OFFSET sqlc.arg(offset_count);
+
+-- name: CountPayoutOrderHistoryForTrader :one
+WITH current_shift AS (
+    SELECT trader_shifts.id
+    FROM trader_shifts
+    WHERE trader_shifts.team_id = sqlc.arg(team_id)
+      AND trader_shifts.trader_id = sqlc.arg(trader_id)
+      AND trader_shifts.status IN ('open', 'closing')
+    ORDER BY trader_shifts.started_at DESC, trader_shifts.id DESC
+    LIMIT 1
+)
+SELECT count(*)::bigint
+FROM manual_payout_orders mpo
+LEFT JOIN current_shift cs ON cs.id = mpo.shift_id
+WHERE mpo.team_id = sqlc.arg(team_id)
+  AND mpo.trader_id = sqlc.arg(trader_id)
+  AND (cs.id IS NULL OR mpo.deleted_at IS NOT NULL OR mpo.status = 'cancelled');
 
 -- name: GetPayoutOrderForTrader :one
 SELECT

@@ -61,11 +61,14 @@ components:
         user: { $ref: "#/components/schemas/User" }
     TradersListResponse:
       type: object
-      required: [items]
+      required: [items, page, pageSize, total]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/Trader" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     TraderResponse:
       type: object
       required: [trader]
@@ -313,11 +316,14 @@ components:
         comment: { type: string }
     RequisitesListResponse:
       type: object
-      required: [items]
+      required: [items, page, pageSize, total]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/Requisite" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     RequisiteResponse:
       type: object
       required: [requisite]
@@ -330,18 +336,24 @@ components:
         assignment: { $ref: "#/components/schemas/RequisiteAssignment" }
     AssignmentHistoryResponse:
       type: object
-      required: [items]
+      required: [items, page, pageSize, total]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/RequisiteAssignment" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     AssignmentRowsResponse:
       type: object
-      required: [items]
+      required: [items, page, pageSize, total]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/RequisiteAssignmentWorkRow" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     RequisiteReportResponse:
       type: object
       required: [report]
@@ -349,11 +361,14 @@ components:
         report: { $ref: "#/components/schemas/RequisiteReport" }
     AssignmentEventsResponse:
       type: object
-      required: [items]
+      required: [items, page, pageSize, total]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/RequisiteAssignmentEvent" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     Shift:
       type: object
       required: [id, teamId, traderId, startedAt, status, inboundReconciliationStatus, outboundReconciliationStatus, createdAt, updatedAt]
@@ -376,11 +391,14 @@ components:
         shift: { $ref: "#/components/schemas/Shift" }
     ShiftHistoryResponse:
       type: object
-      required: [items]
+      required: [items, page, pageSize, total]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/Shift" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     CloseShiftResponse:
       type: object
       required: [shift]
@@ -432,11 +450,14 @@ components:
         inWork: { type: boolean }
     AssignedRequisitesResponse:
       type: object
-      required: [items]
+      required: [items, page, pageSize, total]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/AssignedRequisite" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     ShiftRequisite:
       type: object
       required: [id, teamId, shiftId, traderId, requisiteId, cardNumber, holderName, takenAt, status, inboundTurnoverMinor, outboundTurnoverMinor, closingBalanceMinor, createdAt, updatedAt]
@@ -459,11 +480,14 @@ components:
         updatedAt: { type: string, format: date-time }
     ShiftRequisitesResponse:
       type: object
-      required: [items]
+      required: [items, page, pageSize, total]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/ShiftRequisite" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     TakeRequisiteResponse:
       type: object
       required: [shift, shiftRequisite, shiftCreated]
@@ -497,6 +521,16 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/TurnoverEntry" }
+    TurnoversListResponse:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/TurnoverEntry" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     TurnoverResponse:
       type: object
       required: [turnover]
@@ -520,6 +554,14 @@ components:
         outboundTurnoverMinor: { type: integer, format: int64, minimum: 0 }
         closingBalanceMinor: { type: integer, format: int64, minimum: 0 }
         comment: { type: string, minLength: 1 }
+    CreateInternalTransferRequest:
+      type: object
+      required: [sourceShiftRequisiteId, destinationShiftRequisiteId, amountMinor]
+      properties:
+        sourceShiftRequisiteId: { type: integer, format: int64 }
+        destinationShiftRequisiteId: { type: integer, format: int64 }
+        amountMinor: { type: integer, format: int64, minimum: 1 }
+        comment: { type: string }
     CloseChecklist:
       type: object
       required: [shift, inboundImported, inboundOk, outboundImported, outboundOk, allRequisitesClosed, openRequisiteCount, allPayoutsFullyPaid, unpaidPayoutCount, canClose]
@@ -573,13 +615,56 @@ components:
         createdBy: { type: integer, format: int64 }
         createdAt: { type: string, format: date-time }
         comment: { type: string }
+    InternalTransfer:
+      type: object
+      required: [id, teamId, shiftId, traderId, sourceShiftRequisiteId, sourceRequisiteId, sourcePhone, sourceBankCode, sourceBankName, destinationShiftRequisiteId, destinationRequisiteId, destinationPhone, destinationBankCode, destinationBankName, amountMinor, status, createdBy, createdAt]
+      properties:
+        id: { type: integer, format: int64 }
+        teamId: { type: integer, format: int64 }
+        shiftId: { type: integer, format: int64 }
+        traderId: { type: integer, format: int64 }
+        sourceShiftRequisiteId: { type: integer, format: int64 }
+        sourceRequisiteId: { type: integer, format: int64 }
+        sourcePhone: { type: string }
+        sourceBankCode: { type: string }
+        sourceBankName: { type: string }
+        destinationShiftRequisiteId: { type: integer, format: int64 }
+        destinationRequisiteId: { type: integer, format: int64 }
+        destinationPhone: { type: string }
+        destinationBankCode: { type: string }
+        destinationBankName: { type: string }
+        amountMinor: { type: integer, format: int64 }
+        status: { type: string, enum: [active, cancelled] }
+        createdBy: { type: integer, format: int64 }
+        createdAt: { type: string, format: date-time }
+        cancelledBy: { type: integer, format: int64 }
+        cancelledAt: { type: string, format: date-time }
+        comment: { type: string }
+    InternalTransfersResponse:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InternalTransfer" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
+    InternalTransferResponse:
+      type: object
+      required: [transfer]
+      properties:
+        transfer: { $ref: "#/components/schemas/InternalTransfer" }
     PayoutsResponse:
       type: object
-      required: [items]
+      required: [items, page, pageSize, total]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/Payout" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     PayoutResponse:
       type: object
       required: [payout]
@@ -721,11 +806,14 @@ components:
         run: { $ref: "#/components/schemas/ReconciliationRun" }
     ReconciliationRunsResponse:
       type: object
-      required: [runs]
+      required: [items, page, pageSize, total]
       properties:
-        runs:
+        items:
           type: array
           items: { $ref: "#/components/schemas/ReconciliationRun" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     ReconciliationItem:
       type: object
       required: [id, reconciliationRunId, issueType, createdAt]
@@ -745,11 +833,14 @@ components:
         createdAt: { type: string, format: date-time }
     ReconciliationItemsResponse:
       type: object
-      required: [items]
+      required: [items, page, pageSize, total]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/ReconciliationItem" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     ImportResult:
       type: object
       required: [importBatchId, status, rowsCount, createdOrders, updatedOrders, deactivatedScopeItems, activeScopeItems, supersededBatches]
@@ -790,11 +881,14 @@ components:
         status: { type: string, enum: [open, closed, closed_with_discrepancy] }
     AccountingPeriodsResponse:
       type: object
-      required: [items]
+      required: [items, page, pageSize, total]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/AccountingPeriod" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     AuditLogEntry:
       type: object
       required: [id, createdAt, actorLogin, action, entityType, entityId, maskedPayload]
@@ -811,11 +905,14 @@ components:
           additionalProperties: true
     AuditLogResponse:
       type: object
-      required: [items]
+      required: [items, page, pageSize, total]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/AuditLogEntry" }
+        page: { type: integer, format: int64 }
+        pageSize: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
     HealthResponse:
       type: object
       required: [status]
@@ -851,6 +948,78 @@ components:
         type: string
         pattern: "^\\d+(,\\d+)*$"
       description: Comma-separated trader ids, for example `1,2,3`.
+    RequisiteAvailableForPlanning:
+      name: availableForPlanning
+      in: query
+      required: false
+      schema: { type: boolean, default: false }
+      description: Return only active requisites available as planning candidates.
+    RequisiteSearch:
+      name: search
+      in: query
+      required: false
+      schema: { type: string }
+      description: Search by phone, bank, proxy, holder, card, comment, or trader login where available.
+    RequisiteBankCode:
+      name: bankCode
+      in: query
+      required: false
+      schema: { type: string }
+    RequisiteStatus:
+      name: status
+      in: query
+      required: false
+      schema: { type: string, enum: [active, archived, all] }
+      description: Requisite status filter.
+    RequisiteTraderId:
+      name: traderId
+      in: query
+      required: false
+      schema: { type: string }
+      description: Trader id, `all`, or `unassigned` where applicable.
+    TraderRequisiteStatuses:
+      name: statuses
+      in: query
+      required: false
+      schema: { type: string }
+      description: Comma-separated frontend requisite statuses, for example `in_work,correction`.
+    TraderRequisiteSearch:
+      name: search
+      in: query
+      required: false
+      schema: { type: string }
+      description: Search by phone, bank name, or card number.
+    TraderRequisiteExcludeId:
+      name: excludeId
+      in: query
+      required: false
+      schema: { type: integer, format: int64 }
+      description: Shift requisite id to exclude from lookup results.
+    PayoutStatus:
+      name: status
+      in: query
+      required: false
+      schema: { type: string, enum: [open, draft, in_progress, paid, cancelled, all] }
+    ReconciliationItemStatus:
+      name: status
+      in: query
+      required: false
+      schema: { type: string, enum: [mismatch, all] }
+    ReconciliationOnlyMismatch:
+      name: onlyMismatch
+      in: query
+      required: false
+      schema: { type: boolean, default: false }
+    Page:
+      name: page
+      in: query
+      required: false
+      schema: { type: integer, format: int64, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema: { type: integer, format: int64, minimum: 1, maximum: 200, default: 50 }
   responses:
     Error:
       description: API error
@@ -908,6 +1077,9 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /teamlead/traders:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Traders
@@ -981,6 +1153,14 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /teamlead/requisites:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/RequisiteSearch"
+        - $ref: "#/components/parameters/RequisiteBankCode"
+        - $ref: "#/components/parameters/RequisiteStatus"
+        - $ref: "#/components/parameters/RequisiteTraderId"
+        - $ref: "#/components/parameters/RequisiteAvailableForPlanning"
       responses:
         "200":
           description: Requisites
@@ -998,6 +1178,13 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /teamlead/requisites/activity:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/RequisiteSearch"
+        - $ref: "#/components/parameters/RequisiteBankCode"
+        - $ref: "#/components/parameters/RequisiteStatus"
+        - $ref: "#/components/parameters/RequisiteTraderId"
       responses:
         "200":
           description: Requisite assignment activity
@@ -1007,6 +1194,9 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /teamlead/requisites/plans:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Planned and active requisite assignments
@@ -1061,6 +1251,8 @@ paths:
           in: path
           required: true
           schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Assignment plan change history
@@ -1133,6 +1325,8 @@ paths:
           in: path
           required: true
           schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Assignment history
@@ -1156,6 +1350,9 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /teamlead/shift/history:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Closed trader shifts for teamlead team
@@ -1170,6 +1367,8 @@ paths:
           in: path
           required: true
           schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Requisites used in selected trader shift
@@ -1200,6 +1399,10 @@ paths:
           required: true
           schema: { type: integer, format: int64 }
         - $ref: "#/components/parameters/Direction"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/ReconciliationItemStatus"
+        - $ref: "#/components/parameters/ReconciliationOnlyMismatch"
       responses:
         "200":
           description: Trader shift reconciliation items for selected report
@@ -1236,6 +1439,9 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /trader/shift/history:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Closed shift report history
@@ -1254,6 +1460,12 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /trader/requisites:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/TraderRequisiteStatuses"
+        - $ref: "#/components/parameters/TraderRequisiteSearch"
+        - $ref: "#/components/parameters/TraderRequisiteExcludeId"
       responses:
         "200":
           description: Assigned requisites with in-work state
@@ -1263,6 +1475,9 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /trader/requisites/future:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Future planned requisites for trader
@@ -1272,6 +1487,9 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /trader/requisites/history:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Historical closed or blocked requisites for trader
@@ -1286,6 +1504,8 @@ paths:
           in: path
           required: true
           schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Requisites used in selected trader shift
@@ -1316,6 +1536,10 @@ paths:
           required: true
           schema: { type: integer, format: int64 }
         - $ref: "#/components/parameters/Direction"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/ReconciliationItemStatus"
+        - $ref: "#/components/parameters/ReconciliationOnlyMismatch"
       responses:
         "200":
           description: Reconciliation items for selected trader report
@@ -1339,6 +1563,9 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /trader/shift-requisites:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Shift requisites in current shift
@@ -1384,12 +1611,58 @@ paths:
           in: path
           required: true
           schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Turnovers for shift requisite
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/TurnoversResponse" }
+              schema: { $ref: "#/components/schemas/TurnoversListResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/shift-requisites/{shiftRequisiteId}/internal-transfers:
+    get:
+      parameters:
+        - name: shiftRequisiteId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Internal transfers for shift requisite
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InternalTransfersResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/shift/internal-transfers:
+    post:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateInternalTransferRequest" }
+      responses:
+        "201":
+          description: Internal transfer created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InternalTransferResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/shift/internal-transfers/{transferId}:
+    delete:
+      parameters:
+        - name: transferId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Internal transfer cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InternalTransferResponse" }
         default: { $ref: "#/components/responses/Error" }
   /trader/shift-requisites/{shiftRequisiteId}/close:
     post:
@@ -1454,6 +1727,10 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /trader/payouts:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/PayoutStatus"
       responses:
         "200":
           description: Manual payout orders
@@ -1471,6 +1748,9 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /trader/payouts/history:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Historical manual payout orders
@@ -1590,6 +1870,8 @@ paths:
         - $ref: "#/components/parameters/OrderDateFrom"
         - $ref: "#/components/parameters/OrderDateTo"
         - $ref: "#/components/parameters/OrderStatus"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Active trader order scope
@@ -1635,6 +1917,10 @@ paths:
           in: path
           required: true
           schema: { type: string, enum: [inbound, outbound] }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/ReconciliationItemStatus"
+        - $ref: "#/components/parameters/ReconciliationOnlyMismatch"
       responses:
         "200":
           description: Latest trader reconciliation items
@@ -1659,6 +1945,28 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReconciliationResponse" }
+        default: { $ref: "#/components/responses/Error" }
+  /trader/{direction}/reconciliation/{runId}/items:
+    get:
+      parameters:
+        - name: direction
+          in: path
+          required: true
+          schema: { type: string, enum: [inbound, outbound] }
+        - name: runId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/ReconciliationItemStatus"
+        - $ref: "#/components/parameters/ReconciliationOnlyMismatch"
+      responses:
+        "200":
+          description: Historical trader reconciliation items
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReconciliationItemsResponse" }
         default: { $ref: "#/components/responses/Error" }
   /teamlead/{direction}/import:
     post:
@@ -1690,6 +1998,8 @@ paths:
         - $ref: "#/components/parameters/OrderStatus"
         - $ref: "#/components/parameters/OrderTraderId"
         - $ref: "#/components/parameters/OrderTraderIds"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Active trader-shift transactions for traders in the teamlead team
@@ -1754,6 +2064,11 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /teamlead/inbound/reconciliation/items:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/ReconciliationItemStatus"
+        - $ref: "#/components/parameters/ReconciliationOnlyMismatch"
       responses:
         "200":
           description: Latest teamlead inbound reconciliation items
@@ -1763,6 +2078,11 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /teamlead/outbound/reconciliation/items:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/ReconciliationItemStatus"
+        - $ref: "#/components/parameters/ReconciliationOnlyMismatch"
       responses:
         "200":
           description: Latest teamlead outbound reconciliation items
@@ -1773,9 +2093,8 @@ paths:
   /teamlead/inbound/reconciliation/history:
     get:
       parameters:
-        - name: limit
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Teamlead inbound reconciliation run history
@@ -1786,9 +2105,8 @@ paths:
   /teamlead/outbound/reconciliation/history:
     get:
       parameters:
-        - name: limit
-          in: query
-          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Teamlead outbound reconciliation run history
@@ -1831,6 +2149,10 @@ paths:
           in: path
           required: true
           schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/ReconciliationItemStatus"
+        - $ref: "#/components/parameters/ReconciliationOnlyMismatch"
       responses:
         "200":
           description: Historical teamlead inbound reconciliation items
@@ -1845,6 +2167,10 @@ paths:
           in: path
           required: true
           schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/ReconciliationItemStatus"
+        - $ref: "#/components/parameters/ReconciliationOnlyMismatch"
       responses:
         "200":
           description: Historical teamlead outbound reconciliation items
@@ -1900,6 +2226,9 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /teamlead/periods:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Accounting periods read model
@@ -1909,6 +2238,9 @@ paths:
         default: { $ref: "#/components/responses/Error" }
   /teamlead/audit:
     get:
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Latest team audit events
@@ -1951,6 +2283,10 @@ paths:
           in: path
           required: true
           schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/ReconciliationItemStatus"
+        - $ref: "#/components/parameters/ReconciliationOnlyMismatch"
       responses:
         "200":
           description: Period inbound reconciliation items
@@ -1965,6 +2301,10 @@ paths:
           in: path
           required: true
           schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/ReconciliationItemStatus"
+        - $ref: "#/components/parameters/ReconciliationOnlyMismatch"
       responses:
         "200":
           description: Period outbound reconciliation items
@@ -1979,6 +2319,10 @@ paths:
           in: path
           required: true
           schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/ReconciliationItemStatus"
+        - $ref: "#/components/parameters/ReconciliationOnlyMismatch"
       responses:
         "200":
           description: Period reconciliation items

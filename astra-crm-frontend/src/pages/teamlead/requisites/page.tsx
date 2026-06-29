@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
 import { CalendarDays, Copy, Eye, FileText, History, Pencil, Plus, UserRound, X } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
@@ -59,6 +59,7 @@ import { filterOrdersBySearch } from "@/shared/lib/order-filters";
 import type { PeriodFilter } from "@/shared/lib/period-filter";
 import { usePersistentPeriodFilter } from "@/shared/lib/period-filter";
 import { queryKeys } from "@/shared/api/query-keys";
+import { paginationToQuery } from "@/shared/lib/pagination";
 import {
   bpsToPercent,
   formatCardNumber,
@@ -157,23 +158,26 @@ export function TeamleadRequisitesPage() {
   const [copiedMessage, setCopiedMessage] = useState<string | null>(null);
 
   const requisitesQuery = useQuery({
-    queryKey: queryKeys.teamlead.requisites({ search: deferredSearch, bankCode, status, traderId }),
-    queryFn: () => api.requisites.list({ search: deferredSearch, bankCode, status, traderId }),
+    queryKey: queryKeys.teamlead.requisites({ search: deferredSearch, bankCode, status, traderId, ...paginationToQuery(pagination) }),
+    queryFn: () => api.requisites.list({ search: deferredSearch, bankCode, status, traderId, ...paginationToQuery(pagination) }),
+    placeholderData: keepPreviousData,
   });
   const planningRequisitesQuery = useQuery({
-    queryKey: queryKeys.teamlead.requisites({ status: "active", scope: "planning-suggest" }),
-    queryFn: () => api.requisites.list({ status: "active" }),
+    queryKey: queryKeys.teamlead.requisites({ availableForPlanning: true, page: 1, pageSize: 200, scope: "planning-suggest" }),
+    queryFn: () => api.requisites.list({ availableForPlanning: true, page: 1, pageSize: 200 }),
     enabled: planOpen,
   });
   const activityQuery = useQuery({
-    queryKey: queryKeys.teamlead.requisiteActivity,
-    queryFn: api.requisites.activity,
+    queryKey: queryKeys.teamlead.requisiteActivity({ search: deferredSearch, bankCode, status, traderId, ...paginationToQuery(activityPagination) }),
+    queryFn: () => api.requisites.activity({ search: deferredSearch, bankCode, status, traderId, ...paginationToQuery(activityPagination) }),
     enabled: activeTab === "activity",
+    placeholderData: keepPreviousData,
   });
   const plansQuery = useQuery({
-    queryKey: queryKeys.teamlead.requisitePlans,
-    queryFn: api.requisites.plans,
+    queryKey: queryKeys.teamlead.requisitePlans(paginationToQuery(planningPagination)),
+    queryFn: () => api.requisites.plans(paginationToQuery(planningPagination)),
     enabled: activeTab === "planning" || activeTab === "all",
+    placeholderData: keepPreviousData,
   });
   const banksQuery = useQuery({
     queryKey: queryKeys.banks,
@@ -181,8 +185,13 @@ export function TeamleadRequisitesPage() {
   });
   const tradersQuery = useQuery({
     queryKey: queryKeys.teamlead.traders({ status: "active" }),
-    queryFn: () => api.traders.list({ status: "active" }),
+    queryFn: () => api.traders.list({ status: "active", page: 1, pageSize: 200 }),
   });
+
+  useEffect(() => {
+    setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
+    setActivityPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
+  }, [deferredSearch, bankCode, status, traderId]);
 
   const saveMutation = useMutation({
     mutationFn: api.requisites.save,
@@ -241,13 +250,13 @@ export function TeamleadRequisitesPage() {
 
   const editablePlansByRequisiteId = useMemo(() => {
     const plans = new Map<number, RequisiteAssignmentWorkRow>();
-    for (const plan of plansQuery.data ?? []) {
+    for (const plan of plansQuery.data?.items ?? []) {
       if (isPlanCancellable(plan)) {
         plans.set(plan.requisiteId, plan);
       }
     }
     return plans;
-  }, [plansQuery.data]);
+  }, [plansQuery.data?.items]);
 
   const columns = useMemo<ColumnDef<Requisite>[]>(
     () => [
@@ -498,7 +507,7 @@ export function TeamleadRequisitesPage() {
     ],
     [copyToClipboard],
   );
-  const data = requisitesQuery.data ?? [];
+  const data = requisitesQuery.data?.items ?? [];
   const bankFilterOptions = useMemo<SearchableSelectOption[]>(
     () => [
       { value: "all", label: "Все банки" },
@@ -510,13 +519,13 @@ export function TeamleadRequisitesPage() {
     () => [
       { value: "all", label: "Все трейдеры" },
       { value: "unassigned", label: "Не назначены" },
-      ...(tradersQuery.data ?? []).map((trader) => ({
+      ...(tradersQuery.data?.items ?? []).map((trader) => ({
         value: String(trader.id),
         label: trader.login,
         searchText: trader.externalWorkerName,
       })),
     ],
-    [tradersQuery.data],
+    [tradersQuery.data?.items],
   );
   const pageAction =
     activeTab === "planning" ? (
@@ -543,6 +552,31 @@ export function TeamleadRequisitesPage() {
         Добавить реквизит
       </Button>
     ) : null;
+  const requisitesToolbarFilters = (
+    <div className="flex gap-2">
+      <SearchableSelect
+        className="w-44"
+        value={bankCode}
+        options={bankFilterOptions}
+        onValueChange={setBankCode}
+        placeholder="Все банки"
+        searchPlaceholder="Найти банк"
+      />
+      <Select className="w-36" value={status} onChange={(event) => setStatus(event.target.value)}>
+        <option value="all">Статус</option>
+        <option value="active">Активные</option>
+        <option value="archived">Архив</option>
+      </Select>
+      <SearchableSelect
+        className="w-44"
+        value={traderId}
+        options={traderFilterOptions}
+        onValueChange={setTraderId}
+        placeholder="Все трейдеры"
+        searchPlaceholder="Найти трейдера"
+      />
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -554,36 +588,14 @@ export function TeamleadRequisitesPage() {
         <AllRequisitesTab
           columns={columns}
           data={data}
+          rowCount={requisitesQuery.data?.total ?? 0}
           pagination={pagination}
           onPaginationChange={setPagination}
           search={search}
           onSearchChange={setSearch}
-          toolbarFilters={
-            <div className="flex gap-2">
-              <SearchableSelect
-                className="w-44"
-                value={bankCode}
-                options={bankFilterOptions}
-                onValueChange={setBankCode}
-                placeholder="Все банки"
-                searchPlaceholder="Найти банк"
-              />
-              <Select className="w-36" value={status} onChange={(event) => setStatus(event.target.value)}>
-                <option value="all">Статус</option>
-                <option value="active">Активные</option>
-                <option value="archived">Архив</option>
-              </Select>
-              <SearchableSelect
-                className="w-44"
-                value={traderId}
-                options={traderFilterOptions}
-                onValueChange={setTraderId}
-                placeholder="Все трейдеры"
-                searchPlaceholder="Найти трейдера"
-              />
-            </div>
-          }
+          toolbarFilters={requisitesToolbarFilters}
           isLoading={requisitesQuery.isLoading}
+          isFetching={requisitesQuery.isFetching}
           error={requisitesQuery.error instanceof Error ? requisitesQuery.error.message : null}
           onRowClick={(row) => {
             setEditingRequisite(row);
@@ -606,20 +618,27 @@ export function TeamleadRequisitesPage() {
       {activeTab === "activity" ? (
         <RequisiteActivityTab
           columns={activityColumns}
-          data={activityQuery.data ?? []}
+          data={activityQuery.data?.items ?? []}
+          rowCount={activityQuery.data?.total ?? 0}
           pagination={activityPagination}
           onPaginationChange={setActivityPagination}
+          search={search}
+          onSearchChange={setSearch}
+          toolbarFilters={requisitesToolbarFilters}
           isLoading={activityQuery.isLoading}
+          isFetching={activityQuery.isFetching}
           error={activityQuery.error instanceof Error ? activityQuery.error.message : null}
         />
       ) : null}
       {activeTab === "planning" ? (
         <RequisitePlanningTab
           columns={planningColumns}
-          data={plansQuery.data ?? []}
+          data={plansQuery.data?.items ?? []}
+          rowCount={plansQuery.data?.total ?? 0}
           pagination={planningPagination}
           onPaginationChange={setPlanningPagination}
           isLoading={plansQuery.isLoading}
+          isFetching={plansQuery.isFetching}
           error={plansQuery.error instanceof Error ? plansQuery.error.message : null}
           onRowClick={(row) => {
             setEditingPlan(row);
@@ -720,8 +739,8 @@ export function TeamleadRequisitesPage() {
         }}
         plan={editingPlan}
         initialRequisiteId={initialPlanRequisiteId}
-        requisites={(planningRequisitesQuery.data ?? []).filter(isRequisiteAvailableForPlanning)}
-        traders={tradersQuery.data ?? []}
+        requisites={planningRequisitesQuery.data?.items ?? []}
+        traders={tradersQuery.data?.items ?? []}
         isSaving={savePlanMutation.isPending}
         error={savePlanMutation.error instanceof Error ? savePlanMutation.error.message : null}
         onSubmit={(values) => savePlanMutation.mutate(values)}
@@ -768,8 +787,4 @@ function ActivityTurnoverRow({ label, value }: { label: string; value: number })
       <span className="whitespace-nowrap font-medium tabular-nums">{formatMoneyMinor(value)}</span>
     </div>
   );
-}
-
-function isRequisiteAvailableForPlanning(requisite: Requisite) {
-  return requisite.status === "active" && requisite.assignmentStatus !== "blocked";
 }

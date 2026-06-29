@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 )
 
 func TestServiceCreateOrderAuditsMutation(t *testing.T) {
@@ -209,12 +210,12 @@ type fakeStore struct {
 	updateTransferRecord UpdateTransferRecord
 }
 
-func (s *fakeStore) ListOrders(ctx context.Context, teamID int64, traderID int64) ([]Order, error) {
-	return nil, nil
+func (s *fakeStore) ListOrders(ctx context.Context, teamID int64, traderID int64, filters OrderFilters, page pagination.Params) (pagination.Result[Order], error) {
+	return pagination.FromSlice([]Order{}, page), nil
 }
 
-func (s *fakeStore) ListOrderHistory(ctx context.Context, teamID int64, traderID int64) ([]Order, error) {
-	return nil, nil
+func (s *fakeStore) ListOrderHistory(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[Order], error) {
+	return pagination.FromSlice([]Order{}, page), nil
 }
 
 func (s *fakeStore) GetOrder(ctx context.Context, teamID int64, traderID int64, payoutID int64) (Order, error) {

@@ -1,8 +1,8 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
 import { AlertCircle, FileText, History, MoreHorizontal, Plus, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { DateTimeCell } from "@/shared/ui/date-time-cell";
@@ -35,6 +35,7 @@ import { Textarea } from "@/shared/ui/textarea";
 import type { Bank, Payout, PayoutTransfer, ShiftRequisite } from "@/shared/model/domain";
 import { api } from "@/shared/api/api";
 import { queryKeys } from "@/shared/api/query-keys";
+import { paginationToQuery } from "@/shared/lib/pagination";
 import {
   formatMoneyMinor,
   formatRussianPhone,
@@ -117,17 +118,22 @@ export function TraderPayoutsPage() {
   const [editingPayout, setEditingPayout] = useState<Payout | null>(null);
   const [deletingPayout, setDeletingPayout] = useState<Payout | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const payoutsQuery = useQuery({ queryKey: queryKeys.trader.payouts(), queryFn: api.payouts.list });
+  const payoutsQuery = useQuery({
+    queryKey: queryKeys.trader.payouts(paginationToQuery(pagination)),
+    queryFn: () => api.payouts.list(paginationToQuery(pagination)),
+    placeholderData: keepPreviousData,
+  });
   const payoutHistoryQuery = useQuery({
-    queryKey: queryKeys.trader.payoutHistory,
-    queryFn: api.payouts.history,
+    queryKey: queryKeys.trader.payoutHistory(paginationToQuery(historyPagination)),
+    queryFn: () => api.payouts.history(paginationToQuery(historyPagination)),
     enabled: activeTab === "history",
+    placeholderData: keepPreviousData,
   });
   const banksQuery = useQuery({ queryKey: queryKeys.banks, queryFn: api.banks.list });
   const invalidatePayouts = () =>
     Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.trader.payouts() }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.trader.payoutHistory }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.trader.payoutHistory() }),
     ]);
   const createMutation = useMutation({
     mutationFn: api.payouts.create,
@@ -157,7 +163,7 @@ export function TraderPayoutsPage() {
     },
     onError: (error) => setToastMessage(errorMessage(error)),
   });
-  const data = payoutsQuery.data ?? [];
+  const data = payoutsQuery.data?.items ?? [];
   const total = data.reduce((sum, payout) => sum + payout.amountMinor, 0);
   const paid = data.reduce((sum, payout) => sum + payout.paidMinor, 0);
   const unpaidCount = data.filter((payout) => payout.amountMinor > payout.paidMinor).length;
@@ -247,10 +253,12 @@ export function TraderPayoutsPage() {
         <DataTable
           columns={currentColumns}
           data={data}
-          rowCount={data.length}
+          rowCount={payoutsQuery.data?.total ?? 0}
           pagination={pagination}
           onPaginationChange={setPagination}
+          serverSidePagination
           isLoading={payoutsQuery.isLoading}
+          isFetching={payoutsQuery.isFetching}
           error={payoutsQuery.error instanceof Error ? payoutsQuery.error.message : null}
           emptyTitle="Нет текущих выплат"
           emptyDescription="Созданные и не отмененные выплаты текущей смены появятся здесь."
@@ -265,11 +273,13 @@ export function TraderPayoutsPage() {
       {activeTab === "history" ? (
         <DataTable
           columns={historyColumns}
-          data={payoutHistoryQuery.data ?? []}
-          rowCount={payoutHistoryQuery.data?.length ?? 0}
+          data={payoutHistoryQuery.data?.items ?? []}
+          rowCount={payoutHistoryQuery.data?.total ?? 0}
           pagination={historyPagination}
           onPaginationChange={setHistoryPagination}
+          serverSidePagination
           isLoading={payoutHistoryQuery.isLoading}
+          isFetching={payoutHistoryQuery.isFetching}
           error={payoutHistoryQuery.error instanceof Error ? payoutHistoryQuery.error.message : null}
           emptyTitle="История пуста"
           emptyDescription="Отмененные выплаты и выплаты прошлых смен появятся здесь."
@@ -648,14 +658,22 @@ function PayoutDetailsDialog({
   const queryClient = useQueryClient();
   const [editingTransfer, setEditingTransfer] = useState<PayoutTransfer | null>(null);
   const [deletingTransfer, setDeletingTransfer] = useState<PayoutTransfer | null>(null);
+  const [sourceSearch, setSourceSearch] = useState("");
+  const deferredSourceSearch = useDeferredValue(sourceSearch);
   const transfersQuery = useQuery({
     queryKey: ["trader", "payouts", payout?.id, "transfers"],
     queryFn: () => api.payouts.transfers(payout?.id ?? 0),
     enabled: Boolean(payout),
   });
   const requisitesQuery = useQuery({
-    queryKey: queryKeys.trader.requisites(),
-    queryFn: api.traderShift.requisites,
+    queryKey: queryKeys.trader.requisites({ statuses: ["in_work", "correction"], search: deferredSourceSearch, page: 1, pageSize: 50 }),
+    queryFn: () =>
+      api.traderShift.requisites({
+        statuses: ["in_work", "correction"],
+        search: deferredSourceSearch,
+        page: 1,
+        pageSize: 50,
+      }),
     enabled: Boolean(payout) && !readOnly,
   });
   const addTransferMutation = useMutation({
@@ -678,7 +696,7 @@ function PayoutDetailsDialog({
   });
   const remaining = payout ? payout.amountMinor - payout.paidMinor : 0;
   const sourceByShiftRequisiteId = new Map(
-    (!readOnly ? requisitesQuery.data ?? [] : []).map((item) => [item.id, `${formatRussianPhone(item.phone)} · ${item.bankName}`]),
+    (!readOnly ? requisitesQuery.data?.items ?? [] : []).map((item) => [item.id, `${formatRussianPhone(item.phone)} · ${item.bankName}`]),
   );
 
   return (
@@ -696,7 +714,8 @@ function PayoutDetailsDialog({
             {!readOnly ? (
               <AddTransferForm
                 payout={payout}
-                shiftRequisites={requisitesQuery.data ?? []}
+                shiftRequisites={requisitesQuery.data?.items ?? []}
+                onSourceSearchChange={setSourceSearch}
                 onSubmit={(values) => addTransferMutation.mutate(values)}
               />
             ) : null}
@@ -718,8 +737,9 @@ function PayoutDetailsDialog({
                 <EditTransferDialog
                   payout={payout}
                   transfer={editingTransfer}
-                  shiftRequisites={requisitesQuery.data ?? []}
+                  shiftRequisites={requisitesQuery.data?.items ?? []}
                   isSaving={updateTransferMutation.isPending}
+                  onSourceSearchChange={setSourceSearch}
                   onClose={() => setEditingTransfer(null)}
                   onSubmit={(values) => updateTransferMutation.mutate(values)}
                 />
@@ -751,10 +771,12 @@ function transferSourceLabel(transfer: PayoutTransfer, fallbackByShiftRequisiteI
 function AddTransferForm({
   payout,
   shiftRequisites,
+  onSourceSearchChange,
   onSubmit,
 }: {
   payout: Payout;
   shiftRequisites: ShiftRequisite[];
+  onSourceSearchChange: (value: string) => void;
   onSubmit: (values: { payoutId: number; sourceShiftRequisiteId: number; amountMinor: number; comment?: string }) => void;
 }) {
   const remaining = payout.amountMinor - payout.paidMinor;
@@ -798,6 +820,7 @@ function AddTransferForm({
           onValueChange={(value) =>
             form.setValue("sourceShiftRequisiteId", Number(value), { shouldDirty: true, shouldValidate: true })
           }
+          onSearchChange={onSourceSearchChange}
           placeholder="Выберите источник"
           searchPlaceholder="Найти реквизит"
         />
@@ -826,6 +849,7 @@ function EditTransferDialog({
   transfer,
   shiftRequisites,
   isSaving,
+  onSourceSearchChange,
   onClose,
   onSubmit,
 }: {
@@ -833,6 +857,7 @@ function EditTransferDialog({
   transfer: PayoutTransfer | null;
   shiftRequisites: ShiftRequisite[];
   isSaving: boolean;
+  onSourceSearchChange: (value: string) => void;
   onClose: () => void;
   onSubmit: (values: { payoutId: number; transferId: number; sourceShiftRequisiteId: number; amountMinor: number; comment?: string }) => void;
 }) {
@@ -900,6 +925,7 @@ function EditTransferDialog({
                 onValueChange={(value) =>
                   form.setValue("sourceShiftRequisiteId", Number(value), { shouldDirty: true, shouldValidate: true })
                 }
+                onSearchChange={onSourceSearchChange}
                 placeholder="Выберите источник"
                 searchPlaceholder="Найти реквизит"
               />

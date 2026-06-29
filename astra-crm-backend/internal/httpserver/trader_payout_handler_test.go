@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/payouts"
 	"github.com/ashpak/astra-crm-backend/internal/users"
 	"github.com/go-chi/chi/v5"
@@ -197,12 +198,12 @@ type fakeTraderPayoutService struct {
 	addTransferErr      error
 }
 
-func (s *fakeTraderPayoutService) ListOrders(ctx context.Context, teamID int64, traderID int64) ([]payouts.Order, error) {
-	return nil, nil
+func (s *fakeTraderPayoutService) ListOrders(ctx context.Context, teamID int64, traderID int64, filters payouts.OrderFilters, page pagination.Params) (pagination.Result[payouts.Order], error) {
+	return pagination.FromSlice([]payouts.Order{}, page), nil
 }
 
-func (s *fakeTraderPayoutService) ListOrderHistory(ctx context.Context, teamID int64, traderID int64) ([]payouts.Order, error) {
-	return nil, nil
+func (s *fakeTraderPayoutService) ListOrderHistory(ctx context.Context, teamID int64, traderID int64, page pagination.Params) (pagination.Result[payouts.Order], error) {
+	return pagination.FromSlice([]payouts.Order{}, page), nil
 }
 
 func (s *fakeTraderPayoutService) GetOrder(ctx context.Context, teamID int64, traderID int64, payoutID int64) (payouts.Order, []payouts.Transfer, error) {

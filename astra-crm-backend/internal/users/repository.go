@@ -3,7 +3,9 @@ package users
 import (
 	"context"
 	"errors"
+	"math"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -88,10 +90,15 @@ func (r *Repository) GetTraderByID(ctx context.Context, teamID int64, traderID i
 	return fromGetTraderByIDForTeamRow(row), nil
 }
 
-func (r *Repository) ListTraderDetailsByTeam(ctx context.Context, teamID int64) ([]Trader, error) {
-	rows, err := r.queries.ListTraderDetailsByTeam(ctx, teamID)
+func (r *Repository) ListTraderDetailsByTeam(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[Trader], error) {
+	page = pagination.Normalize(page)
+	rows, err := r.queries.ListTraderDetailsByTeam(ctx, db.ListTraderDetailsByTeamParams{
+		TeamID:      teamID,
+		OffsetCount: paginationOffset32(page),
+		LimitCount:  paginationLimit32(page),
+	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[Trader]{}, err
 	}
 
 	items := make([]Trader, 0, len(rows))
@@ -99,7 +106,12 @@ func (r *Repository) ListTraderDetailsByTeam(ctx context.Context, teamID int64) 
 		items = append(items, fromListTraderDetailsByTeamRow(row))
 	}
 
-	return items, nil
+	total, err := r.queries.CountTraderDetailsByTeam(ctx, teamID)
+	if err != nil {
+		return pagination.Result[Trader]{}, err
+	}
+
+	return pagination.NewResult(items, page, total), nil
 }
 
 func (r *Repository) UpdateTrader(ctx context.Context, params UpdateTraderRecord) (Trader, error) {
@@ -209,4 +221,18 @@ func mapTraderWriteError(err error) error {
 	default:
 		return err
 	}
+}
+
+func paginationOffset32(params pagination.Params) int32 {
+	offset := pagination.Offset(params)
+	if offset > math.MaxInt32 {
+		return math.MaxInt32
+	}
+
+	return int32(offset)
+}
+
+func paginationLimit32(params pagination.Params) int32 {
+	params = pagination.Normalize(params)
+	return int32(params.PageSize)
 }

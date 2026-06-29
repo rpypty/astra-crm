@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"time"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -629,6 +631,78 @@ func (r *Repository) LatestTraderOutboundByShift(ctx context.Context, teamID int
 	return fromDBRun(run), nil
 }
 
+func (r *Repository) GetTraderInboundRun(ctx context.Context, teamID int64, traderID int64, runID int64) (Run, error) {
+	if r.db == nil {
+		return Run{}, ErrRepositoryNotConfigured
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Run{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	run, err := db.New(tx).GetTraderInboundReconciliationRun(ctx, db.GetTraderInboundReconciliationRunParams{
+		RunID:    runID,
+		TeamID:   teamID,
+		TraderID: int8Value(&traderID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, ErrRunNotFound
+	}
+	if err != nil {
+		return Run{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Run{}, err
+	}
+	committed = true
+
+	return fromDBRun(run), nil
+}
+
+func (r *Repository) GetTraderOutboundRun(ctx context.Context, teamID int64, traderID int64, runID int64) (Run, error) {
+	if r.db == nil {
+		return Run{}, ErrRepositoryNotConfigured
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return Run{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	run, err := db.New(tx).GetTraderOutboundReconciliationRun(ctx, db.GetTraderOutboundReconciliationRunParams{
+		RunID:    runID,
+		TeamID:   teamID,
+		TraderID: int8Value(&traderID),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Run{}, ErrRunNotFound
+	}
+	if err != nil {
+		return Run{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Run{}, err
+	}
+	committed = true
+
+	return fromDBRun(run), nil
+}
+
 func (r *Repository) LatestTeamleadPeriodInbound(ctx context.Context, teamID int64, accountingPeriodID int64) (Run, error) {
 	if r.db == nil {
 		return Run{}, ErrRepositoryNotConfigured
@@ -769,14 +843,15 @@ func (r *Repository) LatestTeamleadOutbound(ctx context.Context, teamID int64, a
 	return fromDBRun(run), nil
 }
 
-func (r *Repository) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, actorID int64, direction string, limit int32) ([]Run, error) {
+func (r *Repository) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, actorID int64, direction string, page pagination.Params) (pagination.Result[Run], error) {
 	if r.db == nil {
-		return nil, ErrRepositoryNotConfigured
+		return pagination.Result[Run]{}, ErrRepositoryNotConfigured
 	}
+	page = pagination.Normalize(page)
 
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return pagination.Result[Run]{}, err
 	}
 	committed := false
 	defer func() {
@@ -786,13 +861,14 @@ func (r *Repository) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, 
 	}()
 
 	rows, err := db.New(tx).ListTeamleadCurrentReconciliationRuns(ctx, db.ListTeamleadCurrentReconciliationRunsParams{
-		TeamID:     teamID,
-		Direction:  direction,
-		UploadedBy: actorID,
-		LimitCount: limit,
+		TeamID:      teamID,
+		Direction:   direction,
+		UploadedBy:  actorID,
+		OffsetCount: paginationOffset32(page),
+		LimitCount:  paginationLimit32(page),
 	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[Run]{}, err
 	}
 
 	runs := make([]Run, 0, len(rows))
@@ -800,12 +876,21 @@ func (r *Repository) ListTeamleadCurrentRuns(ctx context.Context, teamID int64, 
 		runs = append(runs, fromDBRun(row))
 	}
 
+	total, err := db.New(tx).CountTeamleadCurrentReconciliationRuns(ctx, db.CountTeamleadCurrentReconciliationRunsParams{
+		TeamID:     teamID,
+		Direction:  direction,
+		UploadedBy: actorID,
+	})
+	if err != nil {
+		return pagination.Result[Run]{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return pagination.Result[Run]{}, err
 	}
 	committed = true
 
-	return runs, nil
+	return pagination.NewResult(runs, page, total), nil
 }
 
 func (r *Repository) GetTeamleadCurrentRun(ctx context.Context, teamID int64, actorID int64, direction string, runID int64) (Run, error) {
@@ -845,14 +930,15 @@ func (r *Repository) GetTeamleadCurrentRun(ctx context.Context, teamID int64, ac
 	return fromDBRun(run), nil
 }
 
-func (r *Repository) ListItems(ctx context.Context, runID int64) ([]Item, error) {
+func (r *Repository) ListItems(ctx context.Context, runID int64, filters ItemFilters, page pagination.Params) (pagination.Result[Item], error) {
 	if r.db == nil {
-		return nil, ErrRepositoryNotConfigured
+		return pagination.Result[Item]{}, ErrRepositoryNotConfigured
 	}
+	page = pagination.Normalize(page)
 
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return pagination.Result[Item]{}, err
 	}
 	committed := false
 	defer func() {
@@ -861,9 +947,15 @@ func (r *Repository) ListItems(ctx context.Context, runID int64) ([]Item, error)
 		}
 	}()
 
-	rows, err := db.New(tx).ListReconciliationItemsForRun(ctx, runID)
+	rows, err := db.New(tx).ListReconciliationItemsForRun(ctx, db.ListReconciliationItemsForRunParams{
+		RunID:        runID,
+		OnlyMismatch: filters.OnlyMismatch,
+		Status:       filters.Status,
+		OffsetCount:  paginationOffset32(page),
+		LimitCount:   paginationLimit32(page),
+	})
 	if err != nil {
-		return nil, err
+		return pagination.Result[Item]{}, err
 	}
 
 	items := make([]Item, 0, len(rows))
@@ -871,12 +963,21 @@ func (r *Repository) ListItems(ctx context.Context, runID int64) ([]Item, error)
 		items = append(items, fromDBItem(row))
 	}
 
+	total, err := db.New(tx).CountReconciliationItemsForRun(ctx, db.CountReconciliationItemsForRunParams{
+		RunID:        runID,
+		OnlyMismatch: filters.OnlyMismatch,
+		Status:       filters.Status,
+	})
+	if err != nil {
+		return pagination.Result[Item]{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return pagination.Result[Item]{}, err
 	}
 	committed = true
 
-	return items, nil
+	return pagination.NewResult(items, page, total), nil
 }
 
 func (r *Repository) ListActiveTeamleadInboundPeriodScopes(ctx context.Context, teamID int64) ([]TeamleadInboundPeriodScope, error) {
@@ -1203,4 +1304,18 @@ func timePtr(value pgtype.Timestamptz) *time.Time {
 	}
 
 	return &value.Time
+}
+
+func paginationOffset32(params pagination.Params) int32 {
+	offset := pagination.Offset(params)
+	if offset > math.MaxInt32 {
+		return math.MaxInt32
+	}
+
+	return int32(offset)
+}
+
+func paginationLimit32(params pagination.Params) int32 {
+	params = pagination.Normalize(params)
+	return int32(params.PageSize)
 }

@@ -5,12 +5,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/readmodels"
 )
 
 type TeamleadReadmodelService interface {
-	ListPeriods(ctx context.Context, teamID int64) ([]readmodels.AccountingPeriod, error)
-	ListAudit(ctx context.Context, teamID int64) ([]readmodels.AuditLogEntry, error)
+	ListPeriods(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[readmodels.AccountingPeriod], error)
+	ListAudit(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[readmodels.AuditLogEntry], error)
 	TraderProfile(ctx context.Context, teamID int64, traderID int64, filters readmodels.PeriodFilter) (readmodels.TraderProfile, error)
 }
 
@@ -20,14 +21,6 @@ type TeamleadReadmodelHandler struct {
 
 func NewTeamleadReadmodelHandler(service TeamleadReadmodelService) *TeamleadReadmodelHandler {
 	return &TeamleadReadmodelHandler{service: service}
-}
-
-type periodsResponse struct {
-	Items []publicAccountingPeriod `json:"items"`
-}
-
-type auditResponse struct {
-	Items []publicAuditLogEntry `json:"items"`
 }
 
 type traderProfileResponse struct {
@@ -79,14 +72,18 @@ func (h *TeamleadReadmodelHandler) Periods(w http.ResponseWriter, r *http.Reques
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.ListPeriods(r.Context(), actor.TeamID)
+	items, err := h.service.ListPeriods(r.Context(), actor.TeamID, page)
 	if err != nil {
 		RespondError(w, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, periodsResponse{Items: publicPeriods(items)})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(publicPeriods(items.Items), page, items.Total)))
 }
 
 func (h *TeamleadReadmodelHandler) Audit(w http.ResponseWriter, r *http.Request) {
@@ -99,14 +96,18 @@ func (h *TeamleadReadmodelHandler) Audit(w http.ResponseWriter, r *http.Request)
 		RespondError(w, ServiceUnavailableError())
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.ListAudit(r.Context(), actor.TeamID)
+	items, err := h.service.ListAudit(r.Context(), actor.TeamID, page)
 	if err != nil {
 		RespondError(w, err)
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, auditResponse{Items: publicAudit(items)})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(publicAudit(items.Items), page, items.Total)))
 }
 
 func (h *TeamleadReadmodelHandler) TraderProfile(w http.ResponseWriter, r *http.Request) {

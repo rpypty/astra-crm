@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/reconciliation"
 	"github.com/ashpak/astra-crm-backend/internal/shifts"
 	"github.com/go-chi/chi/v5"
@@ -14,10 +15,12 @@ import (
 
 type TraderReconciliationService interface {
 	LatestTraderInbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (reconciliation.Run, error)
-	ListTraderInboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]reconciliation.Item, error)
+	ListTraderInboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error)
 	AcceptTraderInbound(ctx context.Context, params reconciliation.AcceptTraderInboundParams) (reconciliation.Run, error)
 	LatestTraderOutbound(ctx context.Context, teamID int64, traderID int64, shiftID int64) (reconciliation.Run, error)
-	ListTraderOutboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64) ([]reconciliation.Item, error)
+	ListTraderOutboundItems(ctx context.Context, teamID int64, traderID int64, shiftID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error)
+	ListTraderInboundRunItems(ctx context.Context, teamID int64, traderID int64, runID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error)
+	ListTraderOutboundRunItems(ctx context.Context, teamID int64, traderID int64, runID int64, filters reconciliation.ItemFilters, page pagination.Params) (pagination.Result[reconciliation.Item], error)
 	AcceptTraderOutbound(ctx context.Context, params reconciliation.AcceptTraderOutboundParams) (reconciliation.Run, error)
 }
 
@@ -39,10 +42,6 @@ func NewTraderReconciliationHandler(service TraderReconciliationService, shiftSe
 
 type reconciliationRunResponse struct {
 	Run reconciliation.PublicRun `json:"run"`
-}
-
-type traderReconciliationItemsResponse struct {
-	Items []reconciliation.PublicItem `json:"items"`
 }
 
 type acceptReconciliationRequest struct {
@@ -91,16 +90,22 @@ func (h *TraderReconciliationHandler) InboundItems(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
+	filters, ok := reconciliationItemFiltersFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.ListTraderInboundItems(r.Context(), actor.TeamID, actor.ID, shift.ID)
+	items, err := h.service.ListTraderInboundItems(r.Context(), actor.TeamID, actor.ID, shift.ID, filters, page)
 	if err != nil {
 		RespondError(w, mapReconciliationError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, traderReconciliationItemsResponse{
-		Items: reconciliation.PublicItemsFromDomain(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(reconciliation.PublicItemsFromDomain(items.Items), page, items.Total)))
 }
 
 func (h *TraderReconciliationHandler) LatestOutbound(w http.ResponseWriter, r *http.Request) {
@@ -145,16 +150,30 @@ func (h *TraderReconciliationHandler) OutboundItems(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
+	filters, ok := reconciliationItemFiltersFromRequest(w, r)
+	if !ok {
+		return
+	}
 
-	items, err := h.service.ListTraderOutboundItems(r.Context(), actor.TeamID, actor.ID, shift.ID)
+	items, err := h.service.ListTraderOutboundItems(r.Context(), actor.TeamID, actor.ID, shift.ID, filters, page)
 	if err != nil {
 		RespondError(w, mapReconciliationError(err))
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, traderReconciliationItemsResponse{
-		Items: reconciliation.PublicItemsFromDomain(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(reconciliation.PublicItemsFromDomain(items.Items), page, items.Total)))
+}
+
+func (h *TraderReconciliationHandler) InboundRunItems(w http.ResponseWriter, r *http.Request) {
+	h.runItems(w, r, "inbound")
+}
+
+func (h *TraderReconciliationHandler) OutboundRunItems(w http.ResponseWriter, r *http.Request) {
+	h.runItems(w, r, "outbound")
 }
 
 func (h *TraderReconciliationHandler) ShiftInbound(w http.ResponseWriter, r *http.Request) {
@@ -227,16 +246,24 @@ func (h *TraderReconciliationHandler) shiftItems(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
+	filters, ok := reconciliationItemFiltersFromRequest(w, r)
+	if !ok {
+		return
+	}
 
 	var (
-		items []reconciliation.Item
+		items pagination.Result[reconciliation.Item]
 		err   error
 	)
 	switch direction {
 	case "inbound":
-		items, err = h.service.ListTraderInboundItems(r.Context(), actor.TeamID, actor.ID, shiftID)
+		items, err = h.service.ListTraderInboundItems(r.Context(), actor.TeamID, actor.ID, shiftID, filters, page)
 	case "outbound":
-		items, err = h.service.ListTraderOutboundItems(r.Context(), actor.TeamID, actor.ID, shiftID)
+		items, err = h.service.ListTraderOutboundItems(r.Context(), actor.TeamID, actor.ID, shiftID, filters, page)
 	default:
 		RespondError(w, NotFoundError())
 		return
@@ -246,9 +273,52 @@ func (h *TraderReconciliationHandler) shiftItems(w http.ResponseWriter, r *http.
 		return
 	}
 
-	WriteJSON(w, http.StatusOK, traderReconciliationItemsResponse{
-		Items: reconciliation.PublicItemsFromDomain(items),
-	})
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(reconciliation.PublicItemsFromDomain(items.Items), page, items.Total)))
+}
+
+func (h *TraderReconciliationHandler) runItems(w http.ResponseWriter, r *http.Request, direction string) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	runID, ok := reconciliationRunIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+	page, ok := paginationFromRequest(w, r)
+	if !ok {
+		return
+	}
+	filters, ok := reconciliationItemFiltersFromRequest(w, r)
+	if !ok {
+		return
+	}
+
+	var (
+		items pagination.Result[reconciliation.Item]
+		err   error
+	)
+	switch direction {
+	case "inbound":
+		items, err = h.service.ListTraderInboundRunItems(r.Context(), actor.TeamID, actor.ID, runID, filters, page)
+	case "outbound":
+		items, err = h.service.ListTraderOutboundRunItems(r.Context(), actor.TeamID, actor.ID, runID, filters, page)
+	default:
+		RespondError(w, NotFoundError())
+		return
+	}
+	if err != nil {
+		RespondError(w, mapReconciliationError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, paginated(pagination.NewResult(reconciliation.PublicItemsFromDomain(items.Items), page, items.Total)))
 }
 
 func (h *TraderReconciliationHandler) AcceptInbound(w http.ResponseWriter, r *http.Request) {

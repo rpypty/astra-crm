@@ -6,7 +6,7 @@ import {
   type SortingState,
   useReactTable,
 } from "@tanstack/react-table";
-import { MoreHorizontal, Search } from "lucide-react";
+import { MoreHorizontal, RefreshCw, Search } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@/shared/ui/empty-state";
@@ -44,6 +44,8 @@ type DataTableProps<TData> = {
   actions?: DataTableAction<TData>[];
   onRowClick?: (row: TData) => void;
   isLoading?: boolean;
+  isFetching?: boolean;
+  serverSidePagination?: boolean;
   error?: string | null;
   emptyTitle?: string;
   emptyDescription?: string;
@@ -66,6 +68,8 @@ export function DataTable<TData>({
   actions,
   onRowClick,
   isLoading,
+  isFetching,
+  serverSidePagination = false,
   error,
   emptyTitle = "Нет данных",
   emptyDescription,
@@ -76,8 +80,8 @@ export function DataTable<TData>({
   const pageCount = Math.max(1, Math.ceil(rowCount / pagination.pageSize));
   const pageStart = pagination.pageIndex * pagination.pageSize;
   const pageData = useMemo(
-    () => data.slice(pageStart, pageStart + pagination.pageSize),
-    [data, pageStart, pagination.pageSize],
+    () => (serverSidePagination ? data : data.slice(pageStart, pageStart + pagination.pageSize)),
+    [data, pageStart, pagination.pageSize, serverSidePagination],
   );
   const tableColumns = useMemo(
     () =>
@@ -139,6 +143,8 @@ export function DataTable<TData>({
   const firstRowNumber = rowCount === 0 ? 0 : pagination.pageIndex * pagination.pageSize + 1;
   const lastRowNumber = Math.min(rowCount, pagination.pageIndex * pagination.pageSize + currentPageRows.length);
   const remainingCount = Math.max(0, rowCount - lastRowNumber);
+  const showInitialLoading = Boolean(isLoading && data.length === 0);
+  const showRefetchOverlay = Boolean((isFetching || isLoading) && data.length > 0);
 
   return (
     <div className="space-y-3">
@@ -160,12 +166,12 @@ export function DataTable<TData>({
         {primaryAction}
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-border bg-card">
+      <div className="relative overflow-x-auto rounded-lg border border-border bg-card">
         {error ? (
           <div className="p-4">
             <ErrorState message={error} />
           </div>
-        ) : isLoading ? (
+        ) : showInitialLoading ? (
           <div className="p-4">
             <LoadingSkeleton rows={pagination.pageSize} />
           </div>
@@ -223,6 +229,12 @@ export function DataTable<TData>({
             </tbody>
           </table>
         )}
+        {showRefetchOverlay ? (
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center gap-2 border-b border-primary/20 bg-white/85 px-4 py-2 text-xs font-medium text-primary shadow-sm backdrop-blur">
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+            Обновляем данные
+          </div>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">

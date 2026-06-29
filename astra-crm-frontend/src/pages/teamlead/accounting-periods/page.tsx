@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
 import { AlertTriangle, ArrowDownLeft, ArrowUpRight, CheckCircle2, Eye, FileText, RefreshCw, Upload, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -19,6 +19,7 @@ import {
 import type { OrderDirection, OrderImportHistoryItem, ReconciliationItem, ReconciliationSummary } from "@/shared/model/domain";
 import { api } from "@/shared/api/api";
 import { queryKeys } from "@/shared/api/query-keys";
+import { paginationToQuery } from "@/shared/lib/pagination";
 import { cn, formatDateTime, formatMoneyMinor } from "@/shared/lib/utils";
 
 type ToastMessage = {
@@ -47,7 +48,6 @@ type TeamleadMismatchRow = {
 type TeamleadReconciliationHistoryRow = {
   id: number;
   direction: OrderDirection;
-  directionLabel: string;
   summary: ReconciliationSummary;
 };
 
@@ -68,30 +68,17 @@ export function TeamleadPeriodsPage() {
     queryFn: () => api.orders.reconciliation("teamlead", "outbound"),
   });
   const inboundItemsQuery = useQuery({
-    queryKey: queryKeys.teamlead.reconciliationItems("inbound"),
-    queryFn: () => api.orders.reconciliationItems("teamlead", "inbound"),
+    queryKey: queryKeys.teamlead.reconciliationItems("inbound", { onlyMismatch: true, page: 1, pageSize: 200 }),
+    queryFn: () => api.orders.reconciliationItems("teamlead", "inbound", { onlyMismatch: true, page: 1, pageSize: 200 }),
   });
   const outboundItemsQuery = useQuery({
-    queryKey: queryKeys.teamlead.reconciliationItems("outbound"),
-    queryFn: () => api.orders.reconciliationItems("teamlead", "outbound"),
+    queryKey: queryKeys.teamlead.reconciliationItems("outbound", { onlyMismatch: true, page: 1, pageSize: 200 }),
+    queryFn: () => api.orders.reconciliationItems("teamlead", "outbound", { onlyMismatch: true, page: 1, pageSize: 200 }),
   });
-  const inboundHistoryQuery = useQuery({
-    queryKey: queryKeys.teamlead.reconciliationHistory("inbound"),
-    queryFn: () => api.orders.reconciliationHistory("teamlead", "inbound"),
-  });
-  const outboundHistoryQuery = useQuery({
-    queryKey: queryKeys.teamlead.reconciliationHistory("outbound"),
-    queryFn: () => api.orders.reconciliationHistory("teamlead", "outbound"),
-  });
-
   const hasMismatch =
     inboundReconciliationQuery.data?.status === "mismatch" ||
     outboundReconciliationQuery.data?.status === "mismatch";
-  const issueCount = (inboundItemsQuery.data?.length ?? 0) + (outboundItemsQuery.data?.length ?? 0);
-  const historyRows = useMemo(
-    () => buildHistoryRows(inboundHistoryQuery.data ?? [], outboundHistoryQuery.data ?? []),
-    [inboundHistoryQuery.data, outboundHistoryQuery.data],
-  );
+  const issueCount = (inboundItemsQuery.data?.total ?? 0) + (outboundItemsQuery.data?.total ?? 0);
 
   return (
     <div className="space-y-6">
@@ -117,15 +104,13 @@ export function TeamleadPeriodsPage() {
       <TeamleadReconciliationResultsTabs
         inboundSummary={inboundReconciliationQuery.data}
         outboundSummary={outboundReconciliationQuery.data}
-        inboundItems={inboundItemsQuery.data ?? []}
-        outboundItems={outboundItemsQuery.data ?? []}
+        inboundItems={inboundItemsQuery.data?.items ?? []}
+        outboundItems={outboundItemsQuery.data?.items ?? []}
         inboundLoading={inboundReconciliationQuery.isLoading || inboundItemsQuery.isLoading}
         outboundLoading={outboundReconciliationQuery.isLoading || outboundItemsQuery.isLoading}
       />
 
       <TeamleadReconciliationHistoryCard
-        rows={historyRows}
-        isLoading={inboundHistoryQuery.isLoading || outboundHistoryQuery.isLoading}
         onOpen={(row) => setSelectedHistoryRun({ direction: row.direction, summary: row.summary })}
       />
 
@@ -481,40 +466,111 @@ function MismatchAmountCell({ amount, count, status }: { amount?: number; count?
 }
 
 function TeamleadReconciliationHistoryCard({
-  rows,
-  isLoading,
   onOpen,
 }: {
-  rows: TeamleadReconciliationHistoryRow[];
-  isLoading?: boolean;
   onOpen: (row: TeamleadReconciliationHistoryRow) => void;
 }) {
-  const columns = useTeamleadHistoryColumns();
-  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
+  const [direction, setDirection] = useState<OrderDirection>("inbound");
 
   return (
     <Card>
       <CardContent className="space-y-3 p-4">
-        <div>
-          <div className="font-semibold">История сверок</div>
-          <div className="text-sm text-muted-foreground">Каждый запуск сверки сохраняется отдельно вместе с результатом и комментарием.</div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="font-semibold">История сверок</div>
+            <div className="text-sm text-muted-foreground">Каждый запуск сверки сохраняется отдельно вместе с результатом и комментарием.</div>
+          </div>
+          <div className="inline-flex rounded-lg border border-border bg-white p-1">
+            <Button
+              type="button"
+              variant={direction === "inbound" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setDirection("inbound")}
+            >
+              <ArrowDownLeft className="h-4 w-4" />
+              Входы
+            </Button>
+            <Button
+              type="button"
+              variant={direction === "outbound" ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setDirection("outbound")}
+            >
+              <ArrowUpRight className="h-4 w-4" />
+              Выходы
+            </Button>
+          </div>
         </div>
-        <DataTable
-          columns={columns}
-          data={rows}
-          rowCount={rows.length}
-          pagination={pagination}
-          onPaginationChange={setPagination}
-          isLoading={isLoading}
-          emptyTitle="Истории сверок пока нет"
-          emptyDescription="После запуска сверки запись появится здесь."
-          pageSizeOptions={[8, 15, 25, 50]}
-          onRowClick={onOpen}
-          actions={[{ label: "Открыть", onSelect: onOpen }]}
-          getRowClassName={(row) => (row.summary.status === "mismatch" ? "bg-red-50 text-red-950 hover:bg-red-100" : undefined)}
-        />
+        {direction === "inbound" ? <InboundReconciliationHistoryTable onOpen={onOpen} /> : null}
+        {direction === "outbound" ? <OutboundReconciliationHistoryTable onOpen={onOpen} /> : null}
       </CardContent>
     </Card>
+  );
+}
+
+function InboundReconciliationHistoryTable({ onOpen }: { onOpen: (row: TeamleadReconciliationHistoryRow) => void }) {
+  const columns = useTeamleadHistoryColumns();
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
+  const historyQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliationHistory("inbound", paginationToQuery(pagination)),
+    queryFn: () => api.orders.reconciliationHistory("teamlead", "inbound", paginationToQuery(pagination)),
+    placeholderData: keepPreviousData,
+  });
+  const rows = useMemo(
+    () => buildHistoryRows("inbound", historyQuery.data?.items ?? []),
+    [historyQuery.data?.items],
+  );
+
+  return (
+    <DataTable
+      columns={columns}
+      data={rows}
+      rowCount={historyQuery.data?.total ?? 0}
+      pagination={pagination}
+      onPaginationChange={setPagination}
+      serverSidePagination
+      isLoading={historyQuery.isLoading}
+      isFetching={historyQuery.isFetching}
+      emptyTitle="Истории сверок по входам пока нет"
+      emptyDescription="После запуска сверки входов запись появится здесь."
+      pageSizeOptions={[8, 15, 25, 50]}
+      onRowClick={onOpen}
+      actions={[{ label: "Открыть", onSelect: onOpen }]}
+      getRowClassName={(row) => (row.summary.status === "mismatch" ? "bg-red-50 text-red-950 hover:bg-red-100" : undefined)}
+    />
+  );
+}
+
+function OutboundReconciliationHistoryTable({ onOpen }: { onOpen: (row: TeamleadReconciliationHistoryRow) => void }) {
+  const columns = useTeamleadHistoryColumns();
+  const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
+  const historyQuery = useQuery({
+    queryKey: queryKeys.teamlead.reconciliationHistory("outbound", paginationToQuery(pagination)),
+    queryFn: () => api.orders.reconciliationHistory("teamlead", "outbound", paginationToQuery(pagination)),
+    placeholderData: keepPreviousData,
+  });
+  const rows = useMemo(
+    () => buildHistoryRows("outbound", historyQuery.data?.items ?? []),
+    [historyQuery.data?.items],
+  );
+
+  return (
+    <DataTable
+      columns={columns}
+      data={rows}
+      rowCount={historyQuery.data?.total ?? 0}
+      pagination={pagination}
+      onPaginationChange={setPagination}
+      serverSidePagination
+      isLoading={historyQuery.isLoading}
+      isFetching={historyQuery.isFetching}
+      emptyTitle="Истории сверок по выплатам пока нет"
+      emptyDescription="После запуска сверки выплат запись появится здесь."
+      pageSizeOptions={[8, 15, 25, 50]}
+      onRowClick={onOpen}
+      actions={[{ label: "Открыть", onSelect: onOpen }]}
+      getRowClassName={(row) => (row.summary.status === "mismatch" ? "bg-red-50 text-red-950 hover:bg-red-100" : undefined)}
+    />
   );
 }
 
@@ -530,11 +586,6 @@ function useTeamleadHistoryColumns() {
             #{row.original.id}
           </span>
         ),
-      },
-      {
-        accessorKey: "directionLabel",
-        header: "Тип",
-        cell: ({ row }) => row.original.directionLabel,
       },
       {
         accessorKey: "createdAt",
@@ -590,8 +641,8 @@ function TeamleadReconciliationHistoryDialog({
     enabled: Boolean(runID),
   });
   const itemsQuery = useQuery({
-    queryKey: queryKeys.teamlead.reconciliationRunItems(direction, runID),
-    queryFn: () => api.orders.reconciliationRunItems("teamlead", direction, runID ?? 0),
+    queryKey: queryKeys.teamlead.reconciliationRunItems(direction, runID, { onlyMismatch: true, page: 1, pageSize: 200 }),
+    queryFn: () => api.orders.reconciliationRunItems("teamlead", direction, runID ?? 0, { onlyMismatch: true, page: 1, pageSize: 200 }),
     enabled: Boolean(runID),
   });
   const summary = runQuery.data ?? selected?.summary;
@@ -613,7 +664,7 @@ function TeamleadReconciliationHistoryDialog({
               title={directionLabel(direction)}
               direction={direction}
               summary={summary}
-              items={itemsQuery.data ?? []}
+              items={itemsQuery.data?.items ?? []}
               isLoading={runQuery.isLoading || itemsQuery.isLoading}
             />
           ) : null}
@@ -651,13 +702,13 @@ function TeamleadReconciliationUploadDialog({ open, onOpenChange }: { open: bool
     enabled: open,
   });
   const inboundItemsQuery = useQuery({
-    queryKey: queryKeys.teamlead.reconciliationItems("inbound"),
-    queryFn: () => api.orders.reconciliationItems("teamlead", "inbound"),
+    queryKey: queryKeys.teamlead.reconciliationItems("inbound", { uploadDialog: true, onlyMismatch: true, page: 1, pageSize: 200 }),
+    queryFn: () => api.orders.reconciliationItems("teamlead", "inbound", { onlyMismatch: true, page: 1, pageSize: 200 }),
     enabled: open,
   });
   const outboundItemsQuery = useQuery({
-    queryKey: queryKeys.teamlead.reconciliationItems("outbound"),
-    queryFn: () => api.orders.reconciliationItems("teamlead", "outbound"),
+    queryKey: queryKeys.teamlead.reconciliationItems("outbound", { uploadDialog: true, onlyMismatch: true, page: 1, pageSize: 200 }),
+    queryFn: () => api.orders.reconciliationItems("teamlead", "outbound", { onlyMismatch: true, page: 1, pageSize: 200 }),
     enabled: open,
   });
 
@@ -766,8 +817,8 @@ function TeamleadReconciliationUploadDialog({ open, onOpenChange }: { open: bool
               <TeamleadReconciliationResultsTabs
                 inboundSummary={inboundReconciliationQuery.data}
                 outboundSummary={outboundReconciliationQuery.data}
-                inboundItems={inboundItemsQuery.data ?? []}
-                outboundItems={outboundItemsQuery.data ?? []}
+                inboundItems={inboundItemsQuery.data?.items ?? []}
+                outboundItems={outboundItemsQuery.data?.items ?? []}
                 inboundLoading={inboundReconciliationQuery.isLoading || inboundItemsQuery.isLoading}
                 outboundLoading={outboundReconciliationQuery.isLoading || outboundItemsQuery.isLoading}
               />
@@ -1009,28 +1060,12 @@ function issueTypeLabel(issueType: string) {
   return labels[issueType] ?? issueType;
 }
 
-function buildHistoryRows(
-  inbound: ReconciliationSummary[],
-  outbound: ReconciliationSummary[],
-): TeamleadReconciliationHistoryRow[] {
-  return [
-    ...inbound.map((summary) => ({
-      id: summary.runId ?? 0,
-      direction: "inbound" as const,
-      directionLabel: directionLabel("inbound"),
-      summary,
-    })),
-    ...outbound.map((summary) => ({
-      id: summary.runId ?? 0,
-      direction: "outbound" as const,
-      directionLabel: directionLabel("outbound"),
-      summary,
-    })),
-  ].sort((left, right) => {
-    const rightTime = right.summary.createdAt ? new Date(right.summary.createdAt).getTime() : 0;
-    const leftTime = left.summary.createdAt ? new Date(left.summary.createdAt).getTime() : 0;
-    return rightTime - leftTime || right.id - left.id;
-  });
+function buildHistoryRows(direction: OrderDirection, items: ReconciliationSummary[]): TeamleadReconciliationHistoryRow[] {
+  return items.map((summary) => ({
+    id: summary.runId ?? 0,
+    direction,
+    summary,
+  }));
 }
 
 function directionLabel(direction: OrderDirection) {

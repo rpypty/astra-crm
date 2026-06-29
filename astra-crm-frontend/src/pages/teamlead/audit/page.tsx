@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
 import { CalendarDays, Copy, Eye, FileText, History, Pencil, Plus, UserRound, X } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
@@ -61,6 +61,7 @@ import { filterOrdersBySearch } from "@/shared/lib/order-filters";
 import type { PeriodFilter } from "@/shared/lib/period-filter";
 import { usePersistentPeriodFilter } from "@/shared/lib/period-filter";
 import { queryKeys } from "@/shared/api/query-keys";
+import { paginationToQuery } from "@/shared/lib/pagination";
 import {
   bpsToPercent,
   formatCardNumber,
@@ -123,20 +124,20 @@ type RequisiteReportTarget = {
 const TEAMLEAD_PERIOD_FILTER_STORAGE_KEY = "astra-crm:teamlead-period-filter";
 
 export function TeamleadAuditPage() {
-  const auditQuery = useQuery({ queryKey: queryKeys.teamlead.audit(), queryFn: api.audit.list });
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 8 });
   const [detailsEntry, setDetailsEntry] = useState<AuditLogEntry | null>(null);
-  const auditItems = auditQuery.data ?? [];
-  const normalizedSearch = search.trim().toLowerCase();
-  const filteredAuditItems = normalizedSearch
-    ? auditItems.filter((item) =>
-        [item.actorLogin, item.action, item.entityType, item.entityId, item.comment ?? ""].some((value) =>
-          value.toLowerCase().includes(normalizedSearch),
-        ),
-      )
-    : auditItems;
+  const auditQuery = useQuery({
+    queryKey: queryKeys.teamlead.audit({ search: deferredSearch, ...paginationToQuery(pagination) }),
+    queryFn: () => api.audit.list({ search: deferredSearch, ...paginationToQuery(pagination) }),
+    placeholderData: keepPreviousData,
+  });
+  const auditItems = auditQuery.data?.items ?? [];
   const actorsCount = new Set(auditItems.map((item) => item.actorLogin)).size;
+  useEffect(() => {
+    setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
+  }, [deferredSearch]);
   const columns = useMemo<ColumnDef<AuditLogEntry>[]>(
     () => [
       { accessorKey: "createdAt", header: "Время", cell: ({ row }) => <DateTimeCell value={row.original.createdAt} /> },
@@ -158,13 +159,15 @@ export function TeamleadAuditPage() {
       </div>
       <DataTable
         columns={columns}
-        data={filteredAuditItems}
-        rowCount={filteredAuditItems.length}
+        data={auditItems}
+        rowCount={auditQuery.data?.total ?? 0}
         pagination={pagination}
         onPaginationChange={setPagination}
+        serverSidePagination
         search={search}
         onSearchChange={setSearch}
         isLoading={auditQuery.isLoading}
+        isFetching={auditQuery.isFetching}
         error={auditQuery.error instanceof Error ? auditQuery.error.message : null}
         emptyTitle="Событий аудита нет"
         emptyDescription="Мутации в системе будут отображаться здесь."
@@ -202,4 +205,3 @@ function AuditDetailsDialog({ entry, onClose }: { entry: AuditLogEntry | null; o
     </Dialog>
   );
 }
-

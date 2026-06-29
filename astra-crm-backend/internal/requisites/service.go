@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/ashpak/astra-crm-backend/internal/audit"
+	"github.com/ashpak/astra-crm-backend/internal/pagination"
 	"github.com/ashpak/astra-crm-backend/internal/users"
 )
 
@@ -24,20 +25,20 @@ const defaultMethodType = "SBP"
 type Store interface {
 	Create(ctx context.Context, params CreateRecord) (Requisite, error)
 	GetDetails(ctx context.Context, teamID int64, requisiteID int64) (RequisiteDetails, error)
-	ListDetails(ctx context.Context, teamID int64) ([]RequisiteDetails, error)
+	ListDetails(ctx context.Context, teamID int64, params ListParams, page pagination.Params) (pagination.Result[RequisiteDetails], error)
 	Update(ctx context.Context, params UpdateRecord) (Requisite, error)
 	Assign(ctx context.Context, params AssignRecord) (Assignment, error)
 	CreatePlan(ctx context.Context, params CreatePlanRecord) (Assignment, error)
 	Unassign(ctx context.Context, teamID int64, requisiteID int64) (Assignment, error)
-	AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64) ([]Assignment, error)
-	ListPlans(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error)
-	ListActivity(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error)
+	AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64, page pagination.Params) (pagination.Result[Assignment], error)
+	ListPlans(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[AssignmentWorkRow], error)
+	ListActivity(ctx context.Context, teamID int64, params ListParams, page pagination.Params) (pagination.Result[AssignmentWorkRow], error)
 	Report(ctx context.Context, teamID int64, requisiteID int64) (RequisiteReport, error)
 	GetAssignment(ctx context.Context, teamID int64, assignmentID int64) (Assignment, error)
 	UpdatePlan(ctx context.Context, params UpdatePlanRecord) (Assignment, error)
 	CancelPlan(ctx context.Context, teamID int64, assignmentID int64) (Assignment, error)
 	CreateAssignmentEvent(ctx context.Context, params AssignmentEventRecord) (AssignmentEvent, error)
-	AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]AssignmentEvent, error)
+	AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64, page pagination.Params) (pagination.Result[AssignmentEvent], error)
 }
 
 type TraderReader interface {
@@ -106,10 +107,11 @@ type PlanParams struct {
 }
 
 type ListParams struct {
-	Search   string
-	BankCode string
-	Status   string
-	TraderID string
+	Search               string
+	BankCode             string
+	Status               string
+	TraderID             string
+	AvailableForPlanning bool
 }
 
 func (s *Service) Create(ctx context.Context, params CreateParams) (RequisiteDetails, error) {
@@ -185,25 +187,8 @@ func (s *Service) Create(ctx context.Context, params CreateParams) (RequisiteDet
 	return details, nil
 }
 
-func (s *Service) List(ctx context.Context, teamID int64, params ListParams) ([]RequisiteDetails, error) {
-	items, err := s.store.ListDetails(ctx, teamID)
-	if err != nil {
-		return nil, err
-	}
-
-	filters := normalizeListParams(params)
-	if filters.Search == "" && filters.BankCode == "" && filters.Status == "" && filters.TraderID == "" {
-		return items, nil
-	}
-
-	result := make([]RequisiteDetails, 0, len(items))
-	for _, item := range items {
-		if requisiteMatchesListParams(item, filters) {
-			result = append(result, item)
-		}
-	}
-
-	return result, nil
+func (s *Service) List(ctx context.Context, teamID int64, params ListParams, page pagination.Params) (pagination.Result[RequisiteDetails], error) {
+	return s.store.ListDetails(ctx, teamID, normalizeListParams(params), page)
 }
 
 func (s *Service) Get(ctx context.Context, teamID int64, requisiteID int64) (RequisiteDetails, error) {
@@ -368,16 +353,16 @@ func (s *Service) Unassign(ctx context.Context, actorID int64, teamID int64, req
 	})
 }
 
-func (s *Service) AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64) ([]Assignment, error) {
-	return s.store.AssignmentHistory(ctx, teamID, requisiteID)
+func (s *Service) AssignmentHistory(ctx context.Context, teamID int64, requisiteID int64, page pagination.Params) (pagination.Result[Assignment], error) {
+	return s.store.AssignmentHistory(ctx, teamID, requisiteID, page)
 }
 
-func (s *Service) Plans(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {
-	return s.store.ListPlans(ctx, teamID)
+func (s *Service) Plans(ctx context.Context, teamID int64, page pagination.Params) (pagination.Result[AssignmentWorkRow], error) {
+	return s.store.ListPlans(ctx, teamID, page)
 }
 
-func (s *Service) Activity(ctx context.Context, teamID int64) ([]AssignmentWorkRow, error) {
-	return s.store.ListActivity(ctx, teamID)
+func (s *Service) Activity(ctx context.Context, teamID int64, params ListParams, page pagination.Params) (pagination.Result[AssignmentWorkRow], error) {
+	return s.store.ListActivity(ctx, teamID, normalizeListParams(params), page)
 }
 
 func (s *Service) Report(ctx context.Context, teamID int64, requisiteID int64) (RequisiteReport, error) {
@@ -469,12 +454,12 @@ func (s *Service) CancelPlan(ctx context.Context, actorID int64, teamID int64, a
 	return cancelled, nil
 }
 
-func (s *Service) AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64) ([]AssignmentEvent, error) {
+func (s *Service) AssignmentEvents(ctx context.Context, teamID int64, assignmentID int64, page pagination.Params) (pagination.Result[AssignmentEvent], error) {
 	if teamID <= 0 || assignmentID <= 0 {
-		return nil, ErrInvalidInput
+		return pagination.Result[AssignmentEvent]{}, ErrInvalidInput
 	}
 
-	return s.store.AssignmentEvents(ctx, teamID, assignmentID)
+	return s.store.AssignmentEvents(ctx, teamID, assignmentID, page)
 }
 
 func (s *Service) writeAudit(ctx context.Context, event audit.Event) error {
@@ -587,10 +572,11 @@ func validStatus(status string) bool {
 
 func normalizeListParams(params ListParams) ListParams {
 	return ListParams{
-		Search:   strings.TrimSpace(params.Search),
-		BankCode: normalizeBankCode(params.BankCode),
-		Status:   strings.TrimSpace(params.Status),
-		TraderID: strings.TrimSpace(params.TraderID),
+		Search:               strings.TrimSpace(params.Search),
+		BankCode:             normalizeBankCode(params.BankCode),
+		Status:               strings.TrimSpace(params.Status),
+		TraderID:             strings.TrimSpace(params.TraderID),
+		AvailableForPlanning: params.AvailableForPlanning,
 	}
 }
 
@@ -599,6 +585,9 @@ func requisiteMatchesListParams(item RequisiteDetails, params ListParams) bool {
 		return false
 	}
 	if params.Status != "" && params.Status != "all" && item.Status != params.Status {
+		return false
+	}
+	if params.AvailableForPlanning && (item.Status != StatusActive || stringPtrValue(item.AssignmentStatus) == AssignmentStatusBlocked) {
 		return false
 	}
 	if params.TraderID != "" && params.TraderID != "all" {
@@ -615,6 +604,13 @@ func requisiteMatchesListParams(item RequisiteDetails, params ListParams) bool {
 	}
 
 	return requisiteMatchesSearch(item, params.Search)
+}
+
+func stringPtrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func requisiteMatchesSearch(item RequisiteDetails, search string) bool {
