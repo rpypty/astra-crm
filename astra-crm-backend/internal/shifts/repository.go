@@ -13,12 +13,13 @@ import (
 )
 
 var (
-	ErrCurrentShiftNotFound     = errors.New("current shift not found")
-	ErrActiveAssignmentNotFound = errors.New("active requisite assignment not found")
-	ErrShiftRequisiteNotFound   = errors.New("shift requisite not found")
-	ErrShiftRequisiteExists     = errors.New("shift requisite already exists")
-	ErrTurnoverTargetNotFound   = errors.New("turnover target not found")
-	ErrShiftCannotBeClosed      = errors.New("shift cannot be closed")
+	ErrCurrentShiftNotFound           = errors.New("current shift not found")
+	ErrActiveAssignmentNotFound       = errors.New("active requisite assignment not found")
+	ErrShiftRequisiteNotFound         = errors.New("shift requisite not found")
+	ErrShiftRequisiteExists           = errors.New("shift requisite already exists")
+	ErrTurnoverTargetNotFound         = errors.New("turnover target not found")
+	ErrShiftCannotBeClosed            = errors.New("shift cannot be closed")
+	ErrInternalTransferTargetNotFound = errors.New("internal transfer target not found")
 )
 
 type Repository struct {
@@ -507,6 +508,61 @@ func (r *Repository) TurnoversByShiftRequisite(ctx context.Context, teamID int64
 	return items, nil
 }
 
+func (r *Repository) InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]InternalTransfer, error) {
+	rows, err := r.queries.ListInternalTransfersForShiftRequisite(ctx, db.ListInternalTransfersForShiftRequisiteParams{
+		TeamID:           teamID,
+		TraderID:         traderID,
+		ShiftRequisiteID: shiftRequisiteID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]InternalTransfer, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fromListInternalTransferRow(row))
+	}
+
+	return items, nil
+}
+
+func (r *Repository) CreateInternalTransfer(ctx context.Context, params CreateInternalTransferRecord) (InternalTransfer, error) {
+	row, err := r.queries.CreateInternalTransfer(ctx, db.CreateInternalTransferParams{
+		TeamID:                      params.TeamID,
+		TraderID:                    params.TraderID,
+		SourceShiftRequisiteID:      params.SourceShiftRequisiteID,
+		DestinationShiftRequisiteID: params.DestinationShiftRequisiteID,
+		AmountMinor:                 params.AmountMinor,
+		CreatedBy:                   params.CreatedBy,
+		Comment:                     textValue(params.Comment),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return InternalTransfer{}, ErrInternalTransferTargetNotFound
+	}
+	if err != nil {
+		return InternalTransfer{}, err
+	}
+
+	return fromCreateInternalTransferRow(row), nil
+}
+
+func (r *Repository) CancelInternalTransfer(ctx context.Context, params CancelInternalTransferRecord) (InternalTransfer, error) {
+	row, err := r.queries.CancelInternalTransfer(ctx, db.CancelInternalTransferParams{
+		TeamID:      params.TeamID,
+		TraderID:    params.TraderID,
+		TransferID:  params.TransferID,
+		CancelledBy: pgtype.Int8{Int64: params.CancelledBy, Valid: true},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return InternalTransfer{}, ErrInternalTransferNotFound
+	}
+	if err != nil {
+		return InternalTransfer{}, err
+	}
+
+	return fromCancelInternalTransferRow(row), nil
+}
+
 func (r *Repository) CurrentShiftChecklist(ctx context.Context, teamID int64, traderID int64) (CloseChecklist, error) {
 	row, err := r.queries.GetCurrentShiftChecklist(ctx, db.GetCurrentShiftChecklistParams{
 		TeamID:   teamID,
@@ -586,6 +642,23 @@ type CloseShiftRecord struct {
 	TraderID     int64
 	ShiftID      int64
 	CloseComment *string
+}
+
+type CreateInternalTransferRecord struct {
+	TeamID                      int64
+	TraderID                    int64
+	SourceShiftRequisiteID      int64
+	DestinationShiftRequisiteID int64
+	AmountMinor                 int64
+	CreatedBy                   int64
+	Comment                     *string
+}
+
+type CancelInternalTransferRecord struct {
+	TeamID      int64
+	TraderID    int64
+	TransferID  int64
+	CancelledBy int64
 }
 
 type UpdateShiftRequisiteDetailsRecord struct {
@@ -813,6 +886,84 @@ func fromReturnShiftRequisiteToWorkRow(row db.ReturnShiftRequisiteToWorkRow) Shi
 
 func fromGetShiftRequisiteForTraderRow(row db.GetShiftRequisiteForTraderRow) ShiftRequisite {
 	return fromShiftRequisiteFields(row.ID, row.TeamID, row.ShiftID, row.TraderID, row.RequisiteID, row.AssignmentID, row.CardNumber, row.HolderName, row.TakenAt, row.ReleasedAt, row.Status, row.InboundTurnoverMinor, row.OutboundTurnoverMinor, row.ClosingBalanceMinor, row.CreatedAt, row.UpdatedAt)
+}
+
+func fromListInternalTransferRow(row db.ListInternalTransfersForShiftRequisiteRow) InternalTransfer {
+	return InternalTransfer{
+		ID:                          row.ID,
+		TeamID:                      row.TeamID,
+		ShiftID:                     row.ShiftID,
+		TraderID:                    row.TraderID,
+		SourceShiftRequisiteID:      row.SourceShiftRequisiteID,
+		SourceRequisiteID:           row.SourceRequisiteID,
+		SourcePhone:                 row.SourcePhone,
+		SourceBankCode:              row.SourceBankCode,
+		SourceBankName:              row.SourceBankName,
+		DestinationShiftRequisiteID: row.DestinationShiftRequisiteID,
+		DestinationRequisiteID:      row.DestinationRequisiteID,
+		DestinationPhone:            row.DestinationPhone,
+		DestinationBankCode:         row.DestinationBankCode,
+		DestinationBankName:         row.DestinationBankName,
+		AmountMinor:                 row.AmountMinor,
+		Status:                      row.Status,
+		CreatedBy:                   row.CreatedBy,
+		CreatedAt:                   row.CreatedAt.Time,
+		CancelledBy:                 int64Ptr(row.CancelledBy),
+		CancelledAt:                 timePtr(row.CancelledAt),
+		Comment:                     textPtr(row.Comment),
+	}
+}
+
+func fromCreateInternalTransferRow(row db.CreateInternalTransferRow) InternalTransfer {
+	return InternalTransfer{
+		ID:                          row.ID,
+		TeamID:                      row.TeamID,
+		ShiftID:                     row.ShiftID,
+		TraderID:                    row.TraderID,
+		SourceShiftRequisiteID:      row.SourceShiftRequisiteID,
+		SourceRequisiteID:           row.SourceRequisiteID,
+		SourcePhone:                 row.SourcePhone,
+		SourceBankCode:              row.SourceBankCode,
+		SourceBankName:              row.SourceBankName,
+		DestinationShiftRequisiteID: row.DestinationShiftRequisiteID,
+		DestinationRequisiteID:      row.DestinationRequisiteID,
+		DestinationPhone:            row.DestinationPhone,
+		DestinationBankCode:         row.DestinationBankCode,
+		DestinationBankName:         row.DestinationBankName,
+		AmountMinor:                 row.AmountMinor,
+		Status:                      row.Status,
+		CreatedBy:                   row.CreatedBy,
+		CreatedAt:                   row.CreatedAt.Time,
+		CancelledBy:                 int64Ptr(row.CancelledBy),
+		CancelledAt:                 timePtr(row.CancelledAt),
+		Comment:                     textPtr(row.Comment),
+	}
+}
+
+func fromCancelInternalTransferRow(row db.CancelInternalTransferRow) InternalTransfer {
+	return InternalTransfer{
+		ID:                          row.ID,
+		TeamID:                      row.TeamID,
+		ShiftID:                     row.ShiftID,
+		TraderID:                    row.TraderID,
+		SourceShiftRequisiteID:      row.SourceShiftRequisiteID,
+		SourceRequisiteID:           row.SourceRequisiteID,
+		SourcePhone:                 row.SourcePhone,
+		SourceBankCode:              row.SourceBankCode,
+		SourceBankName:              row.SourceBankName,
+		DestinationShiftRequisiteID: row.DestinationShiftRequisiteID,
+		DestinationRequisiteID:      row.DestinationRequisiteID,
+		DestinationPhone:            row.DestinationPhone,
+		DestinationBankCode:         row.DestinationBankCode,
+		DestinationBankName:         row.DestinationBankName,
+		AmountMinor:                 row.AmountMinor,
+		Status:                      row.Status,
+		CreatedBy:                   row.CreatedBy,
+		CreatedAt:                   row.CreatedAt.Time,
+		CancelledBy:                 int64Ptr(row.CancelledBy),
+		CancelledAt:                 timePtr(row.CancelledAt),
+		Comment:                     textPtr(row.Comment),
+	}
 }
 
 func fromShiftRequisiteFields(id int64, teamID int64, shiftID int64, traderID int64, requisiteID int64, assignmentID pgtype.Int8, cardNumber string, holderName string, takenAt pgtype.Timestamptz, releasedAt pgtype.Timestamptz, status string, inboundTurnoverMinor int64, outboundTurnoverMinor int64, closingBalanceMinor int64, createdAt pgtype.Timestamptz, updatedAt pgtype.Timestamptz) ShiftRequisite {

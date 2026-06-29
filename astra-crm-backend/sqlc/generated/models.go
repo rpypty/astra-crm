@@ -307,6 +307,24 @@ type ShiftRequisite struct {
 	ClosingBalanceMinor   int64
 }
 
+type ShiftRequisiteInternalTransfer struct {
+	ID                          int64
+	TeamID                      int64
+	ShiftID                     int64
+	TraderID                    int64
+	SourceShiftRequisiteID      int64
+	SourceRequisiteID           int64
+	DestinationShiftRequisiteID int64
+	DestinationRequisiteID      int64
+	AmountMinor                 int64
+	Status                      string
+	CreatedBy                   int64
+	CreatedAt                   pgtype.Timestamptz
+	CancelledBy                 pgtype.Int8
+	CancelledAt                 pgtype.Timestamptz
+	Comment                     pgtype.Text
+}
+
 type Team struct {
 	ID        int64
 	Name      string

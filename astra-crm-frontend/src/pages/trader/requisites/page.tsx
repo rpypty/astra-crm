@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef, PaginationState } from "@tanstack/react-table";
-import { AlertTriangle, CalendarDays, CheckCircle2, Eye, FileText, History, Plus, RefreshCw, Upload } from "lucide-react";
+import { AlertTriangle, ArrowDownLeft, ArrowUpRight, CalendarDays, CheckCircle2, ChevronDown, Eye, FileText, History, Plus, RefreshCw, Trash2, Upload } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -31,7 +31,7 @@ import { Input } from "@/shared/ui/input";
 import { SearchableSelect, type SearchableSelectOption } from "@/shared/ui/searchable-select";
 import { Select } from "@/shared/ui/select";
 import { Textarea } from "@/shared/ui/textarea";
-import type { OrderDirection, Payout, PayoutTransfer, ReconciliationItem, ReconciliationSummary, ShiftReport, ShiftRequisite } from "@/shared/model/domain";
+import type { InternalTransfer, OrderDirection, Payout, PayoutTransfer, ReconciliationItem, ReconciliationSummary, ShiftReport, ShiftRequisite } from "@/shared/model/domain";
 import { api } from "@/shared/api/api";
 import { filterOrdersBySearch } from "@/shared/lib/order-filters";
 import type { PeriodFilter } from "@/shared/lib/period-filter";
@@ -78,6 +78,13 @@ const payoutSchema = z.object({
 
 const transferSchema = z.object({
   sourceShiftRequisiteId: z.coerce.number().min(1, "Выберите источник"),
+  amount: z.string().min(1, "Введите сумму").refine((value) => parseMoneyToMinor(value) > 0, "Сумма должна быть больше 0"),
+  comment: z.string().optional(),
+});
+
+const internalTransferSchema = z.object({
+  direction: z.enum(["incoming", "outgoing"]),
+  counterpartyShiftRequisiteId: z.string().min(1, "Выберите реквизит"),
   amount: z.string().min(1, "Введите сумму").refine((value) => parseMoneyToMinor(value) > 0, "Сумма должна быть больше 0"),
   comment: z.string().optional(),
 });
@@ -509,18 +516,75 @@ function EditDetailsDialog({ item }: { item: ShiftRequisite }) {
 function CloseRequisiteDialog({ item }: { item: ShiftRequisite }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [transfersCollapsed, setTransfersCollapsed] = useState(false);
   const form = useForm<z.infer<typeof closeRequisiteSchema>>({
     resolver: zodResolver(closeRequisiteSchema),
     defaultValues: { inboundTurnover: "", outboundTurnover: "", closingBalance: "", releasedAt: todayDateInputValue(), blocked: false, comment: "" },
   });
+  const transferForm = useForm<z.infer<typeof internalTransferSchema>>({
+    resolver: zodResolver(internalTransferSchema),
+    defaultValues: { direction: "outgoing", counterpartyShiftRequisiteId: "", amount: "", comment: "" },
+  });
+  const currentRequisitesQuery = useQuery({
+    queryKey: queryKeys.trader.requisites(),
+    queryFn: api.traderShift.requisites,
+    enabled: open,
+  });
+  const internalTransfersQuery = useQuery({
+    queryKey: queryKeys.trader.internalTransfers(item.id),
+    queryFn: () => api.traderShift.internalTransfers(item.id),
+    enabled: open && item.id > 0,
+  });
+  const transferOptions = useMemo<SearchableSelectOption[]>(
+    () =>
+      (currentRequisitesQuery.data ?? [])
+        .filter((requisite) => requisite.id !== item.id && (requisite.status === "in_work" || requisite.status === "correction"))
+        .map((requisite) => ({
+          value: String(requisite.id),
+          label: `${formatRussianPhone(requisite.phone)} · ${requisite.bankName}`,
+          searchText: `${requisite.phone} ${requisite.bankName} ${requisite.cardNumber ?? ""}`,
+        })),
+    [currentRequisitesQuery.data, item.id],
+  );
+  const internalTransfers = internalTransfersQuery.data ?? [];
+  const incomingTotalMinor = internalTransfers
+    .filter((transfer) => transfer.destinationShiftRequisiteId === item.id)
+    .reduce((sum, transfer) => sum + transfer.amountMinor, 0);
+  const outgoingTotalMinor = internalTransfers
+    .filter((transfer) => transfer.sourceShiftRequisiteId === item.id)
+    .reduce((sum, transfer) => sum + transfer.amountMinor, 0);
   const mutation = useMutation({
     mutationFn: api.traderShift.closeRequisite,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["trader"] });
       setOpen(false);
       form.reset();
+      transferForm.reset();
     },
   });
+  const createTransferMutation = useMutation({
+    mutationFn: api.traderShift.createInternalTransfer,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.trader.internalTransfers(item.id) });
+      transferForm.reset({ direction: transferForm.getValues("direction"), counterpartyShiftRequisiteId: "", amount: "", comment: "" });
+    },
+  });
+  const cancelTransferMutation = useMutation({
+    mutationFn: api.traderShift.cancelInternalTransfer,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.trader.internalTransfers(item.id) });
+    },
+  });
+  const addInternalTransfer = transferForm.handleSubmit((values) => {
+    const counterpartyShiftRequisiteId = Number(values.counterpartyShiftRequisiteId);
+    createTransferMutation.mutate({
+      sourceShiftRequisiteId: values.direction === "outgoing" ? item.id : counterpartyShiftRequisiteId,
+      destinationShiftRequisiteId: values.direction === "outgoing" ? counterpartyShiftRequisiteId : item.id,
+      amountMinor: parseMoneyToMinor(values.amount),
+      comment: values.comment?.trim() || undefined,
+    });
+  });
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -528,25 +592,12 @@ function CloseRequisiteDialog({ item }: { item: ShiftRequisite }) {
           Закрыть
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100vh-32px)] max-w-[560px] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold">Закрыть реквизит</DialogTitle>
           <DialogDescription>Укажите финальный оборот на момент завершения работы по реквизиту.</DialogDescription>
         </DialogHeader>
-        <form
-          className="space-y-4"
-          onSubmit={form.handleSubmit((values) =>
-            mutation.mutate({
-              shiftRequisiteId: item.id,
-              inboundTurnoverMinor: parseMoneyToMinor(values.inboundTurnover),
-              outboundTurnoverMinor: parseMoneyToMinor(values.outboundTurnover),
-              closingBalanceMinor: parseMoneyToMinor(values.closingBalance),
-              releasedAt: dateInputToCurrentTimeISO(values.releasedAt),
-              blocked: values.blocked,
-              comment: values.comment,
-            }),
-          )}
-        >
+        <div className="space-y-4">
           <FormField label="Оборот по оплатам" error={form.formState.errors.inboundTurnover?.message}>
             <Input {...form.register("inboundTurnover")} />
           </FormField>
@@ -556,6 +607,80 @@ function CloseRequisiteDialog({ item }: { item: ShiftRequisite }) {
           <FormField label="Остаток" error={form.formState.errors.closingBalance?.message}>
             <Input {...form.register("closingBalance")} />
           </FormField>
+          <div className="space-y-3 rounded-md border border-border p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium">Внутренние переливы</div>
+                <div className="mt-1 grid grid-cols-2 gap-3 text-xs text-muted-foreground">
+                  <span>Приход: {formatMoneyMinor(incomingTotalMinor)}</span>
+                  <span>Отправка: {formatMoneyMinor(outgoingTotalMinor)}</span>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-expanded={!transfersCollapsed}
+                title={transfersCollapsed ? "Развернуть внутренние переливы" : "Свернуть внутренние переливы"}
+                onClick={() => setTransfersCollapsed((value) => !value)}
+              >
+                <ChevronDown className={`h-4 w-4 transition-transform ${transfersCollapsed ? "-rotate-90" : ""}`} />
+              </Button>
+            </div>
+
+            {!transfersCollapsed ? (
+              <div className="space-y-3">
+                {internalTransfers.length > 0 ? (
+                  <div className="space-y-2">
+                    {internalTransfers.map((transfer) => (
+                      <InternalTransferLine
+                        key={transfer.id}
+                        transfer={transfer}
+                        currentShiftRequisiteId={item.id}
+                        onCancel={() => cancelTransferMutation.mutate(transfer.id)}
+                        isCancelling={cancelTransferMutation.isPending}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-md bg-muted/50 px-3 py-2 text-sm text-muted-foreground">Переливов по реквизиту нет</div>
+                )}
+
+                <div className="grid gap-3 sm:grid-cols-[140px_1fr]">
+                  <FormField label="Тип" error={transferForm.formState.errors.direction?.message}>
+                    <Select {...transferForm.register("direction")}>
+                      <option value="outgoing">Отправка</option>
+                      <option value="incoming">Приход</option>
+                    </Select>
+                  </FormField>
+                  <FormField label="Реквизит" error={transferForm.formState.errors.counterpartyShiftRequisiteId?.message}>
+                    <SearchableSelect
+                      value={transferForm.watch("counterpartyShiftRequisiteId")}
+                      options={transferOptions}
+                      onValueChange={(value) => transferForm.setValue("counterpartyShiftRequisiteId", value, { shouldValidate: true })}
+                      placeholder="Выберите реквизит"
+                      searchPlaceholder="Найти реквизит"
+                      emptyText="Нет доступных реквизитов"
+                    />
+                  </FormField>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                  <FormField label="Сумма" error={transferForm.formState.errors.amount?.message}>
+                    <Input {...transferForm.register("amount")} />
+                  </FormField>
+                  <div className="flex items-end">
+                    <Button type="button" variant="outline" onClick={() => void addInternalTransfer()} disabled={createTransferMutation.isPending}>
+                      <Plus className="h-4 w-4" />
+                      Добавить
+                    </Button>
+                  </div>
+                </div>
+                <FormField label="Комментарий">
+                  <Textarea {...transferForm.register("comment")} />
+                </FormField>
+              </div>
+            ) : null}
+          </div>
           <FormField label="Дата закрытия" error={form.formState.errors.releasedAt?.message}>
             <Input type="date" max={todayDateInputValue()} {...form.register("releasedAt")} />
           </FormField>
@@ -566,12 +691,66 @@ function CloseRequisiteDialog({ item }: { item: ShiftRequisite }) {
           <FormField label="Комментарий">
             <Textarea {...form.register("comment")} />
           </FormField>
-          <Button type="submit" disabled={mutation.isPending}>
+          <Button
+            type="button"
+            disabled={mutation.isPending}
+            onClick={form.handleSubmit((values) =>
+              mutation.mutate({
+                shiftRequisiteId: item.id,
+                inboundTurnoverMinor: parseMoneyToMinor(values.inboundTurnover),
+                outboundTurnoverMinor: parseMoneyToMinor(values.outboundTurnover),
+                closingBalanceMinor: parseMoneyToMinor(values.closingBalance),
+                releasedAt: dateInputToCurrentTimeISO(values.releasedAt),
+                blocked: values.blocked,
+                comment: values.comment,
+              }),
+            )}
+          >
             Закрыть реквизит
           </Button>
-        </form>
+        </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function InternalTransferLine({
+  transfer,
+  currentShiftRequisiteId,
+  onCancel,
+  isCancelling,
+}: {
+  transfer: InternalTransfer;
+  currentShiftRequisiteId: number;
+  onCancel: () => void;
+  isCancelling: boolean;
+}) {
+  const incoming = transfer.destinationShiftRequisiteId === currentShiftRequisiteId;
+  const counterpartyPhone = incoming ? transfer.sourcePhone : transfer.destinationPhone;
+  const counterpartyBank = incoming ? transfer.sourceBankName : transfer.destinationBankName;
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2">
+      <div className="flex min-w-0 items-center gap-2">
+        {incoming ? (
+          <ArrowDownLeft className="h-4 w-4 shrink-0 text-emerald-600" />
+        ) : (
+          <ArrowUpRight className="h-4 w-4 shrink-0 text-amber-600" />
+        )}
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium">
+            {incoming ? "Приход с" : "Отправка на"} {formatRussianPhone(counterpartyPhone)}
+          </div>
+          <div className="truncate text-xs text-muted-foreground">{counterpartyBank}</div>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <span className="text-sm font-medium">{formatMoneyMinor(transfer.amountMinor)}</span>
+        <Button type="button" variant="ghost" size="icon" onClick={onCancel} disabled={isCancelling} title="Отменить перелив">
+          <Trash2 className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
   );
 }
 

@@ -171,6 +171,124 @@ func TestTraderShiftHandlerCreateTurnoverPassesActorScope(t *testing.T) {
 	}
 }
 
+func TestTraderShiftHandlerCreateInternalTransferValidatesAmount(t *testing.T) {
+	handler := NewTraderShiftHandler(&fakeTraderShiftService{})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/trader/shift/internal-transfers", strings.NewReader(`{"sourceShiftRequisiteId":20,"destinationShiftRequisiteId":21,"amountMinor":0}`))
+	request = request.WithContext(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     3,
+		TeamID: 2,
+		Role:   users.RoleTrader,
+		Status: users.StatusActive,
+	}))
+
+	handler.CreateInternalTransfer(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(response.Body.String(), "amountMinor") {
+		t.Fatalf("response does not mention amountMinor: %s", response.Body.String())
+	}
+}
+
+func TestTraderShiftHandlerCreateInternalTransferPassesActorScope(t *testing.T) {
+	service := &fakeTraderShiftService{
+		internalTransfer: shifts.InternalTransfer{
+			ID:                          40,
+			TeamID:                      2,
+			ShiftID:                     10,
+			TraderID:                    3,
+			SourceShiftRequisiteID:      20,
+			SourceRequisiteID:           4,
+			SourcePhone:                 "+79991234567",
+			SourceBankCode:              "sber",
+			SourceBankName:              "Сбер",
+			DestinationShiftRequisiteID: 21,
+			DestinationRequisiteID:      5,
+			DestinationPhone:            "+79997654321",
+			DestinationBankCode:         "tinkoff",
+			DestinationBankName:         "Т-Банк",
+			AmountMinor:                 50000,
+			Status:                      "active",
+			CreatedBy:                   3,
+			CreatedAt:                   time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC),
+		},
+	}
+	handler := NewTraderShiftHandler(service)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/trader/shift/internal-transfers", strings.NewReader(`{"sourceShiftRequisiteId":20,"destinationShiftRequisiteId":21,"amountMinor":50000}`))
+	request = request.WithContext(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     3,
+		TeamID: 2,
+		Role:   users.RoleTrader,
+		Status: users.StatusActive,
+	}))
+
+	handler.CreateInternalTransfer(response, request)
+
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusCreated, response.Body.String())
+	}
+	if service.internalTransferParams.TeamID != 2 || service.internalTransferParams.TraderID != 3 || service.internalTransferParams.ActorID != 3 {
+		t.Fatalf("transfer params actor/team/trader = %d/%d/%d, want 3/2/3", service.internalTransferParams.ActorID, service.internalTransferParams.TeamID, service.internalTransferParams.TraderID)
+	}
+	if !strings.Contains(response.Body.String(), `"amountMinor":50000`) {
+		t.Fatalf("response does not include transfer amount: %s", response.Body.String())
+	}
+}
+
+func TestTraderShiftHandlerInternalTransfersByShiftRequisite(t *testing.T) {
+	service := &fakeTraderShiftService{
+		internalTransfers: []shifts.InternalTransfer{
+			{
+				ID:                          40,
+				TeamID:                      2,
+				ShiftID:                     10,
+				TraderID:                    3,
+				SourceShiftRequisiteID:      20,
+				SourceRequisiteID:           4,
+				SourcePhone:                 "+79991234567",
+				SourceBankCode:              "sber",
+				SourceBankName:              "Сбер",
+				DestinationShiftRequisiteID: 21,
+				DestinationRequisiteID:      5,
+				DestinationPhone:            "+79997654321",
+				DestinationBankCode:         "tinkoff",
+				DestinationBankName:         "Т-Банк",
+				AmountMinor:                 50000,
+				Status:                      "active",
+				CreatedBy:                   3,
+				CreatedAt:                   time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	handler := NewTraderShiftHandler(service)
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/trader/shift-requisites/20/internal-transfers", nil)
+	request = request.WithContext(withShiftRouteParam(ContextWithCurrentUser(request.Context(), users.User{
+		ID:     3,
+		TeamID: 2,
+		Role:   users.RoleTrader,
+		Status: users.StatusActive,
+	}), "shiftRequisiteId", "20"))
+
+	handler.InternalTransfersByShiftRequisite(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if service.internalTransfersShiftRequisiteID != 20 {
+		t.Fatalf("shift requisite id = %d, want 20", service.internalTransfersShiftRequisiteID)
+	}
+	if !strings.Contains(response.Body.String(), `"sourcePhone":"+79991234567"`) {
+		t.Fatalf("response does not include source phone: %s", response.Body.String())
+	}
+}
+
 func TestTraderShiftHandlerAssignedRequisitesByShiftPassesShiftScope(t *testing.T) {
 	service := &fakeTraderShiftService{
 		shiftAssignedRequisites: []shifts.AssignedRequisite{
@@ -501,23 +619,28 @@ func withShiftRouteParam(ctx context.Context, key string, value string) context.
 }
 
 type fakeTraderShiftService struct {
-	takeParams                   shifts.TakeRequisiteParams
-	takeResult                   shifts.TakeRequisiteResult
-	turnoverParams               shifts.CreateTurnoverParams
-	turnover                     shifts.TurnoverEntry
-	closeRequisiteParams         shifts.CloseShiftRequisiteParams
-	correctRequisiteParams       shifts.CorrectShiftRequisiteParams
-	returnRequisiteParams        shifts.ReturnShiftRequisiteParams
-	shiftRequisitesByShiftID     int64
-	shiftAssignedRequisites      []shifts.AssignedRequisite
-	teamShiftRequisitesByShiftID int64
-	teamShiftAssignedRequisites  []shifts.AssignedRequisite
-	shiftReportTraderID          int64
-	shiftReportShiftID           int64
-	shiftReport                  shifts.ShiftReportDetails
-	teamShiftReportShiftID       int64
-	teamShiftReport              shifts.ShiftReportDetails
-	closeErr                     error
+	takeParams                        shifts.TakeRequisiteParams
+	takeResult                        shifts.TakeRequisiteResult
+	turnoverParams                    shifts.CreateTurnoverParams
+	turnover                          shifts.TurnoverEntry
+	internalTransferParams            shifts.CreateInternalTransferParams
+	internalTransfer                  shifts.InternalTransfer
+	internalTransfersShiftRequisiteID int64
+	internalTransfers                 []shifts.InternalTransfer
+	cancelInternalTransferParams      shifts.CancelInternalTransferParams
+	closeRequisiteParams              shifts.CloseShiftRequisiteParams
+	correctRequisiteParams            shifts.CorrectShiftRequisiteParams
+	returnRequisiteParams             shifts.ReturnShiftRequisiteParams
+	shiftRequisitesByShiftID          int64
+	shiftAssignedRequisites           []shifts.AssignedRequisite
+	teamShiftRequisitesByShiftID      int64
+	teamShiftAssignedRequisites       []shifts.AssignedRequisite
+	shiftReportTraderID               int64
+	shiftReportShiftID                int64
+	shiftReport                       shifts.ShiftReportDetails
+	teamShiftReportShiftID            int64
+	teamShiftReport                   shifts.ShiftReportDetails
+	closeErr                          error
 }
 
 func (s *fakeTraderShiftService) Current(ctx context.Context, teamID int64, traderID int64) (*shifts.Shift, error) {
@@ -649,6 +772,21 @@ func (s *fakeTraderShiftService) TurnoversByShiftRequisite(ctx context.Context, 
 func (s *fakeTraderShiftService) CreateTurnover(ctx context.Context, params shifts.CreateTurnoverParams) (shifts.TurnoverEntry, error) {
 	s.turnoverParams = params
 	return s.turnover, nil
+}
+
+func (s *fakeTraderShiftService) InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]shifts.InternalTransfer, error) {
+	s.internalTransfersShiftRequisiteID = shiftRequisiteID
+	return s.internalTransfers, nil
+}
+
+func (s *fakeTraderShiftService) CreateInternalTransfer(ctx context.Context, params shifts.CreateInternalTransferParams) (shifts.InternalTransfer, error) {
+	s.internalTransferParams = params
+	return s.internalTransfer, nil
+}
+
+func (s *fakeTraderShiftService) CancelInternalTransfer(ctx context.Context, params shifts.CancelInternalTransferParams) (shifts.InternalTransfer, error) {
+	s.cancelInternalTransferParams = params
+	return s.internalTransfer, nil
 }
 
 func (s *fakeTraderShiftService) CloseChecklist(ctx context.Context, teamID int64, traderID int64) (shifts.CloseChecklist, error) {

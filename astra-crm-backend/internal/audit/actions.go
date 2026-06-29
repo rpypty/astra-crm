@@ -17,6 +17,8 @@ const (
 	ActionShiftRequisiteClosed              = "shift.requisite_closed"
 	ActionShiftRequisiteCorrected           = "shift.requisite_corrected"
 	ActionShiftRequisiteReturnedToWork      = "shift.requisite_returned_to_work"
+	ActionShiftInternalTransferCreated      = "shift.internal_transfer_created"
+	ActionShiftInternalTransferCancelled    = "shift.internal_transfer_cancelled"
 	ActionManualPayoutCreated               = "manual_payout.created"
 	ActionManualPayoutUpdated               = "manual_payout.updated"
 	ActionManualPayoutCancelled             = "manual_payout.cancelled"

@@ -34,10 +34,23 @@ type APIError struct {
 	Message string
 	Fields  map[string]string
 	Details []string
+	Cause   error
 }
 
 func (e *APIError) Error() string {
 	return e.Code
+}
+
+func (e *APIError) Unwrap() error {
+	return e.Cause
+}
+
+func (e *APIError) WithCause(cause error) *APIError {
+	if cause == nil || cause == e {
+		return e
+	}
+	e.Cause = cause
+	return e
 }
 
 func ValidationError(fields map[string]string) *APIError {
@@ -117,6 +130,8 @@ func RespondError(w http.ResponseWriter, err error) {
 	if !errors.As(err, &apiErr) {
 		apiErr = InternalError()
 	}
+
+	recordResponseError(w, err, apiErr)
 
 	WriteJSON(w, apiErr.Status, ErrorResponse{
 		Error: ErrorBody{

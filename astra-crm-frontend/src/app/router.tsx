@@ -1,28 +1,48 @@
 import { Navigate, Outlet, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { Suspense, lazy, type ReactNode } from "react";
 import { useAuth } from "@/features/auth/model/auth";
 import { AppShell } from "@/widgets/app-shell/ui/app-shell";
 import { LoadingSkeleton } from "@/shared/ui/loading-skeleton";
-import { LoginPage } from "@/pages/login";
-import {
-  TeamleadAuditPage,
-  TeamleadDashboardPage,
-  TeamleadPeriodsPage,
-  TeamleadReportsPage,
-  TeamleadRequisitesPage,
-  TeamleadTransactionsPage,
-  TeamleadTradersPage,
-} from "@/pages/teamlead";
-import {
-  TraderAnalyticsPage,
-  TraderPayoutsPage,
-  TraderReportsPage,
-  TraderRequisitesPage,
-  TraderTransactionsPage,
-} from "@/pages/trader";
+
+const LoginPage = lazy(() => import("@/pages/login").then((module) => ({ default: module.LoginPage })));
+const TeamleadAuditPage = lazy(() => import("@/pages/teamlead/audit/page").then((module) => ({ default: module.TeamleadAuditPage })));
+const TeamleadDashboardPage = lazy(() =>
+  import("@/pages/teamlead/dashboard/page").then((module) => ({ default: module.TeamleadDashboardPage })),
+);
+const TeamleadDebugPage = lazy(() => import("@/pages/teamlead/debug/page").then((module) => ({ default: module.TeamleadDebugPage })));
+const TeamleadPeriodsPage = lazy(() =>
+  import("@/pages/teamlead/accounting-periods/page").then((module) => ({ default: module.TeamleadPeriodsPage })),
+);
+const TeamleadReportsPage = lazy(() =>
+  import("@/pages/teamlead/reports/page").then((module) => ({ default: module.TeamleadReportsPage })),
+);
+const TeamleadRequisitesPage = lazy(() =>
+  import("@/pages/teamlead/requisites/page").then((module) => ({ default: module.TeamleadRequisitesPage })),
+);
+const TeamleadTransactionsPage = lazy(() =>
+  import("@/pages/teamlead/transactions/page").then((module) => ({ default: module.TeamleadTransactionsPage })),
+);
+const TeamleadTradersPage = lazy(() =>
+  import("@/pages/teamlead/employees/page").then((module) => ({ default: module.TeamleadTradersPage })),
+);
+const TraderAnalyticsPage = lazy(() =>
+  import("@/pages/trader/analytics/page").then((module) => ({ default: module.TraderAnalyticsPage })),
+);
+const TraderPayoutsPage = lazy(() => import("@/pages/trader/payouts/page").then((module) => ({ default: module.TraderPayoutsPage })));
+const TraderReportsPage = lazy(() => import("@/pages/trader/reports/page").then((module) => ({ default: module.TraderReportsPage })));
+const TraderRequisitesPage = lazy(() =>
+  import("@/pages/trader/requisites/page").then((module) => ({ default: module.TraderRequisitesPage })),
+);
+const TraderTransactionsPage = lazy(() =>
+  import("@/pages/trader/transactions/page").then((module) => ({ default: module.TraderTransactionsPage })),
+);
 
 const rootRoute = createRootRoute({
-  component: () => <Outlet />,
+  component: () => (
+    <Suspense fallback={<FullPageLoading />}>
+      <Outlet />
+    </Suspense>
+  ),
 });
 
 const indexRoute = createRoute({
@@ -101,6 +121,12 @@ const teamleadAuditRoute = createRoute({
   component: TeamleadAuditPage,
 });
 
+const teamleadDebugRoute = createRoute({
+  getParentRoute: () => teamleadRoute,
+  path: "debug",
+  component: TeamleadDebugPage,
+});
+
 const traderRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "trader",
@@ -166,6 +192,7 @@ const routeTree = rootRoute.addChildren([
     teamleadPeriodsRoute,
     teamleadReportsRoute,
     teamleadAuditRoute,
+    teamleadDebugRoute,
   ]),
   traderRoute.addChildren([
     traderRequisitesRoute,

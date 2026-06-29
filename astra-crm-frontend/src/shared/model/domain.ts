@@ -239,6 +239,25 @@ export type TurnoverEntry = {
   createdAt: string;
 };
 
+export type InternalTransfer = {
+  id: number;
+  shiftId: number;
+  sourceShiftRequisiteId: number;
+  sourceRequisiteId: number;
+  sourcePhone: string;
+  sourceBankCode: string;
+  sourceBankName: string;
+  destinationShiftRequisiteId: number;
+  destinationRequisiteId: number;
+  destinationPhone: string;
+  destinationBankCode: string;
+  destinationBankName: string;
+  amountMinor: number;
+  status: "active" | "cancelled";
+  createdAt: string;
+  comment?: string;
+};
+
 export type Payout = {
   id: number;
   shiftId: number;
@@ -330,7 +349,43 @@ export type OrderDashboard = {
 
 export type ImportIssue = {
   row: number;
+  circle?: number;
   message: string;
+};
+
+export type DebugFinAllImportResult = {
+  dryRun: boolean;
+  fileName: string;
+  sourceHash: string;
+  parsedRows: number;
+  parsedCircles: number;
+  importedCircles: number;
+  skippedExistingCircles: number;
+  createdTraders: number;
+  createdRequisites: number;
+  createdAssignments: number;
+  createdShifts: number;
+  createdShiftRequisites: number;
+  blockedRequisites: number;
+  inboundTurnoverMinor: number;
+  outboundTurnoverMinor: number;
+  closingBalanceMinor: number;
+  warnings: ImportIssue[];
+};
+
+export type DebugFinAllImportJob = {
+  id: number;
+  teamId: number;
+  actorId: number;
+  fileName: string;
+  sourceHash: string;
+  dryRun: boolean;
+  status: "queued" | "running" | "succeeded" | "failed";
+  result?: DebugFinAllImportResult;
+  errorMessage?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
 };
 
 export type ImportResult = {

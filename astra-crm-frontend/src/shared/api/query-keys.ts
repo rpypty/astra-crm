@@ -51,6 +51,8 @@ export const queryKeys = {
     requisites: (params?: Record<string, unknown>) => ["trader", "requisites", params] as const,
     futureRequisites: ["trader", "requisites", "future"] as const,
     historicalRequisites: ["trader", "requisites", "history"] as const,
+    internalTransfers: (shiftRequisiteId: number | undefined) =>
+      ["trader", "shift-requisites", shiftRequisiteId, "internal-transfers"] as const,
     payouts: (params?: Record<string, unknown>) => ["trader", "payouts", params] as const,
     payoutHistory: ["trader", "payouts", "history"] as const,
     dashboard: (direction: "inbound" | "outbound", params?: Record<string, unknown>) =>

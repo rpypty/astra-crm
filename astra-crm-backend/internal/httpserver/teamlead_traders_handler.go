@@ -315,15 +315,15 @@ func validPatchStatus(status string) bool {
 func mapTraderError(err error) error {
 	switch {
 	case errors.Is(err, users.ErrTraderNotFound):
-		return NotFoundError()
+		return NotFoundError().WithCause(err)
 	case errors.Is(err, users.ErrDuplicateLogin):
-		return DomainError("TRADER_LOGIN_EXISTS", "Трейдер с таким логином уже существует")
+		return DomainError("TRADER_LOGIN_EXISTS", "Трейдер с таким логином уже существует").WithCause(err)
 	case errors.Is(err, users.ErrDuplicateWorkerName):
-		return DomainError("TRADER_WORKER_NAME_EXISTS", "Трейдер с таким логином уже существует")
+		return DomainError("TRADER_WORKER_NAME_EXISTS", "Трейдер с таким логином уже существует").WithCause(err)
 	case errors.Is(err, users.ErrInvalidTraderInput):
 		return ValidationError(map[string]string{
 			"body": "Некоторые поля заполнены неверно",
-		})
+		}).WithCause(err)
 	default:
 		return err
 	}

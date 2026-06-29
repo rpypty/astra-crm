@@ -129,6 +129,100 @@ func TestServiceCreateTurnoverRejectsNegativeAmount(t *testing.T) {
 	}
 }
 
+func TestServiceCreateInternalTransferAuditsMutation(t *testing.T) {
+	store := &fakeStore{}
+	auditService := &fakeAuditService{}
+	service := NewService(store, auditService)
+
+	comment := "перелив остатка"
+	transfer, err := service.CreateInternalTransfer(context.Background(), CreateInternalTransferParams{
+		ActorID:                     1,
+		TeamID:                      2,
+		TraderID:                    3,
+		SourceShiftRequisiteID:      20,
+		DestinationShiftRequisiteID: 21,
+		AmountMinor:                 50000,
+		Comment:                     &comment,
+	})
+	if err != nil {
+		t.Fatalf("CreateInternalTransfer() error = %v", err)
+	}
+
+	if transfer.AmountMinor != 50000 {
+		t.Fatalf("amount = %d, want 50000", transfer.AmountMinor)
+	}
+	if store.createdInternalTransfer.SourceShiftRequisiteID != 20 || store.createdInternalTransfer.DestinationShiftRequisiteID != 21 {
+		t.Fatalf("source/destination = %d/%d, want 20/21", store.createdInternalTransfer.SourceShiftRequisiteID, store.createdInternalTransfer.DestinationShiftRequisiteID)
+	}
+	if len(auditService.events) != 1 {
+		t.Fatalf("audit events count = %d, want 1", len(auditService.events))
+	}
+	if auditService.events[0].Action != audit.ActionShiftInternalTransferCreated {
+		t.Fatalf("audit action = %q, want %q", auditService.events[0].Action, audit.ActionShiftInternalTransferCreated)
+	}
+}
+
+func TestServiceCreateInternalTransferRejectsSameRequisite(t *testing.T) {
+	service := NewService(&fakeStore{}, nil)
+
+	_, err := service.CreateInternalTransfer(context.Background(), CreateInternalTransferParams{
+		ActorID:                     1,
+		TeamID:                      2,
+		TraderID:                    3,
+		SourceShiftRequisiteID:      20,
+		DestinationShiftRequisiteID: 20,
+		AmountMinor:                 50000,
+	})
+	if err != ErrInvalidInput {
+		t.Fatalf("CreateInternalTransfer() error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestServiceCreateInternalTransferRejectsNonPositiveAmount(t *testing.T) {
+	service := NewService(&fakeStore{}, nil)
+
+	_, err := service.CreateInternalTransfer(context.Background(), CreateInternalTransferParams{
+		ActorID:                     1,
+		TeamID:                      2,
+		TraderID:                    3,
+		SourceShiftRequisiteID:      20,
+		DestinationShiftRequisiteID: 21,
+		AmountMinor:                 0,
+	})
+	if err != ErrInvalidInput {
+		t.Fatalf("CreateInternalTransfer() error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestServiceCancelInternalTransferAuditsMutation(t *testing.T) {
+	store := &fakeStore{}
+	auditService := &fakeAuditService{}
+	service := NewService(store, auditService)
+
+	transfer, err := service.CancelInternalTransfer(context.Background(), CancelInternalTransferParams{
+		ActorID:    1,
+		TeamID:     2,
+		TraderID:   3,
+		TransferID: 40,
+	})
+	if err != nil {
+		t.Fatalf("CancelInternalTransfer() error = %v", err)
+	}
+
+	if transfer.Status != "cancelled" {
+		t.Fatalf("status = %q, want cancelled", transfer.Status)
+	}
+	if store.cancelledInternalTransfer.TransferID != 40 || store.cancelledInternalTransfer.CancelledBy != 1 {
+		t.Fatalf("cancel params transfer/cancelled_by = %d/%d, want 40/1", store.cancelledInternalTransfer.TransferID, store.cancelledInternalTransfer.CancelledBy)
+	}
+	if len(auditService.events) != 1 {
+		t.Fatalf("audit events count = %d, want 1", len(auditService.events))
+	}
+	if auditService.events[0].Action != audit.ActionShiftInternalTransferCancelled {
+		t.Fatalf("audit action = %q, want %q", auditService.events[0].Action, audit.ActionShiftInternalTransferCancelled)
+	}
+}
+
 func TestServiceCloseShiftRequisiteStoresFinalTurnoversAndAudits(t *testing.T) {
 	store := &fakeStore{}
 	auditService := &fakeAuditService{}
@@ -443,22 +537,24 @@ func TestServiceCloseCurrentAuditsClosedShift(t *testing.T) {
 }
 
 type fakeStore struct {
-	currentErr               error
-	currentShift             Shift
-	createdShift             Shift
-	assignmentID             int64
-	assignmentErr            error
-	createdShiftRequisite    CreateShiftRequisiteRecord
-	createdTurnover          CreateTurnoverEntryRecord
-	closedShiftRequisite     CloseShiftRequisiteRecord
-	correctedShiftRequisite  CorrectShiftRequisiteTurnoversRecord
-	refreshedShiftRequisite  ShiftRequisite
-	returnedShiftRequisiteID int64
-	shiftRequisites          []ShiftRequisite
-	checklist                CloseChecklist
-	closeRecord              CloseShiftRecord
-	closedShift              Shift
-	closeErr                 error
+	currentErr                error
+	currentShift              Shift
+	createdShift              Shift
+	assignmentID              int64
+	assignmentErr             error
+	createdShiftRequisite     CreateShiftRequisiteRecord
+	createdTurnover           CreateTurnoverEntryRecord
+	createdInternalTransfer   CreateInternalTransferRecord
+	cancelledInternalTransfer CancelInternalTransferRecord
+	closedShiftRequisite      CloseShiftRequisiteRecord
+	correctedShiftRequisite   CorrectShiftRequisiteTurnoversRecord
+	refreshedShiftRequisite   ShiftRequisite
+	returnedShiftRequisiteID  int64
+	shiftRequisites           []ShiftRequisite
+	checklist                 CloseChecklist
+	closeRecord               CloseShiftRecord
+	closedShift               Shift
+	closeErr                  error
 }
 
 func (s *fakeStore) CurrentShift(ctx context.Context, teamID int64, traderID int64) (Shift, error) {
@@ -666,6 +762,62 @@ func (s *fakeStore) LatestTurnovers(ctx context.Context, teamID int64, traderID 
 
 func (s *fakeStore) TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]TurnoverEntry, error) {
 	return nil, nil
+}
+
+func (s *fakeStore) InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]InternalTransfer, error) {
+	return nil, nil
+}
+
+func (s *fakeStore) CreateInternalTransfer(ctx context.Context, params CreateInternalTransferRecord) (InternalTransfer, error) {
+	s.createdInternalTransfer = params
+	return InternalTransfer{
+		ID:                          40,
+		TeamID:                      params.TeamID,
+		ShiftID:                     10,
+		TraderID:                    params.TraderID,
+		SourceShiftRequisiteID:      params.SourceShiftRequisiteID,
+		SourceRequisiteID:           4,
+		SourcePhone:                 "+79991234567",
+		SourceBankCode:              "sber",
+		SourceBankName:              "Сбер",
+		DestinationShiftRequisiteID: params.DestinationShiftRequisiteID,
+		DestinationRequisiteID:      5,
+		DestinationPhone:            "+79997654321",
+		DestinationBankCode:         "tinkoff",
+		DestinationBankName:         "Т-Банк",
+		AmountMinor:                 params.AmountMinor,
+		Status:                      "active",
+		CreatedBy:                   params.CreatedBy,
+		CreatedAt:                   time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC),
+		Comment:                     params.Comment,
+	}, nil
+}
+
+func (s *fakeStore) CancelInternalTransfer(ctx context.Context, params CancelInternalTransferRecord) (InternalTransfer, error) {
+	s.cancelledInternalTransfer = params
+	cancelledAt := time.Date(2026, 6, 8, 13, 0, 0, 0, time.UTC)
+	return InternalTransfer{
+		ID:                          params.TransferID,
+		TeamID:                      params.TeamID,
+		ShiftID:                     10,
+		TraderID:                    params.TraderID,
+		SourceShiftRequisiteID:      20,
+		SourceRequisiteID:           4,
+		SourcePhone:                 "+79991234567",
+		SourceBankCode:              "sber",
+		SourceBankName:              "Сбер",
+		DestinationShiftRequisiteID: 21,
+		DestinationRequisiteID:      5,
+		DestinationPhone:            "+79997654321",
+		DestinationBankCode:         "tinkoff",
+		DestinationBankName:         "Т-Банк",
+		AmountMinor:                 50000,
+		Status:                      "cancelled",
+		CreatedBy:                   1,
+		CreatedAt:                   time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC),
+		CancelledBy:                 &params.CancelledBy,
+		CancelledAt:                 &cancelledAt,
+	}, nil
 }
 
 func (s *fakeStore) CurrentShiftChecklist(ctx context.Context, teamID int64, traderID int64) (CloseChecklist, error) {

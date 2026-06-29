@@ -379,11 +379,11 @@ func mapReconciliationError(err error) error {
 	case errors.Is(err, reconciliation.ErrInvalidInput):
 		return ValidationError(map[string]string{
 			"body": "Некоторые поля заполнены неверно",
-		})
+		}).WithCause(err)
 	case errors.Is(err, reconciliation.ErrRunNotFound):
-		return NotFoundError()
+		return NotFoundError().WithCause(err)
 	case errors.Is(err, reconciliation.ErrRepositoryNotConfigured):
-		return ServiceUnavailableError()
+		return ServiceUnavailableError().WithCause(err)
 	default:
 		return err
 	}

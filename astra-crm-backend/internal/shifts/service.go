@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	ErrInvalidInput         = errors.New("invalid shift input")
-	ErrRequisiteNotAssigned = errors.New("requisite is not assigned to trader")
-	ErrCloseBlocked         = errors.New("shift close is blocked")
+	ErrInvalidInput             = errors.New("invalid shift input")
+	ErrRequisiteNotAssigned     = errors.New("requisite is not assigned to trader")
+	ErrCloseBlocked             = errors.New("shift close is blocked")
+	ErrInternalTransferNotFound = errors.New("internal transfer not found")
 )
 
 type Store interface {
@@ -39,6 +40,9 @@ type Store interface {
 	CreateTurnoverEntry(ctx context.Context, params CreateTurnoverEntryRecord) (TurnoverEntry, error)
 	LatestTurnovers(ctx context.Context, teamID int64, traderID int64) ([]TurnoverEntry, error)
 	TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]TurnoverEntry, error)
+	InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]InternalTransfer, error)
+	CreateInternalTransfer(ctx context.Context, params CreateInternalTransferRecord) (InternalTransfer, error)
+	CancelInternalTransfer(ctx context.Context, params CancelInternalTransferRecord) (InternalTransfer, error)
 	CurrentShiftChecklist(ctx context.Context, teamID int64, traderID int64) (CloseChecklist, error)
 	CloseCurrentShift(ctx context.Context, params CloseShiftRecord) (Shift, error)
 }
@@ -140,6 +144,23 @@ type CloseShiftParams struct {
 	CloseComment *string
 }
 
+type CreateInternalTransferParams struct {
+	ActorID                     int64
+	TeamID                      int64
+	TraderID                    int64
+	SourceShiftRequisiteID      int64
+	DestinationShiftRequisiteID int64
+	AmountMinor                 int64
+	Comment                     *string
+}
+
+type CancelInternalTransferParams struct {
+	ActorID    int64
+	TeamID     int64
+	TraderID   int64
+	TransferID int64
+}
+
 func (s *Service) Current(ctx context.Context, teamID int64, traderID int64) (*Shift, error) {
 	shift, err := s.store.CurrentShift(ctx, teamID, traderID)
 	if errors.Is(err, ErrCurrentShiftNotFound) {
@@ -232,6 +253,14 @@ func (s *Service) TurnoversByShiftRequisite(ctx context.Context, teamID int64, t
 	}
 
 	return s.store.TurnoversByShiftRequisite(ctx, teamID, traderID, shiftRequisiteID)
+}
+
+func (s *Service) InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]InternalTransfer, error) {
+	if teamID <= 0 || traderID <= 0 || shiftRequisiteID <= 0 {
+		return nil, ErrInvalidInput
+	}
+
+	return s.store.InternalTransfersByShiftRequisite(ctx, teamID, traderID, shiftRequisiteID)
 }
 
 func (s *Service) TakeRequisite(ctx context.Context, params TakeRequisiteParams) (TakeRequisiteResult, error) {
@@ -371,6 +400,75 @@ func (s *Service) CreateTurnover(ctx context.Context, params CreateTurnoverParam
 	}
 
 	return entry, nil
+}
+
+func (s *Service) CreateInternalTransfer(ctx context.Context, params CreateInternalTransferParams) (InternalTransfer, error) {
+	if params.ActorID <= 0 ||
+		params.TeamID <= 0 ||
+		params.TraderID <= 0 ||
+		params.SourceShiftRequisiteID <= 0 ||
+		params.DestinationShiftRequisiteID <= 0 ||
+		params.SourceShiftRequisiteID == params.DestinationShiftRequisiteID ||
+		params.AmountMinor <= 0 {
+		return InternalTransfer{}, ErrInvalidInput
+	}
+
+	comment := cleanOptionalString(params.Comment)
+	transfer, err := s.store.CreateInternalTransfer(ctx, CreateInternalTransferRecord{
+		TeamID:                      params.TeamID,
+		TraderID:                    params.TraderID,
+		SourceShiftRequisiteID:      params.SourceShiftRequisiteID,
+		DestinationShiftRequisiteID: params.DestinationShiftRequisiteID,
+		AmountMinor:                 params.AmountMinor,
+		CreatedBy:                   params.ActorID,
+		Comment:                     comment,
+	})
+	if err != nil {
+		return InternalTransfer{}, err
+	}
+
+	if err := s.writeAudit(ctx, audit.Event{
+		TeamID:     params.TeamID,
+		ActorID:    params.ActorID,
+		Action:     audit.ActionShiftInternalTransferCreated,
+		EntityType: "shift_requisite_internal_transfer",
+		EntityID:   strconv.FormatInt(transfer.ID, 10),
+		After:      PublicInternalTransferFromDomain(transfer),
+		Comment:    comment,
+	}); err != nil {
+		return InternalTransfer{}, err
+	}
+
+	return transfer, nil
+}
+
+func (s *Service) CancelInternalTransfer(ctx context.Context, params CancelInternalTransferParams) (InternalTransfer, error) {
+	if params.ActorID <= 0 || params.TeamID <= 0 || params.TraderID <= 0 || params.TransferID <= 0 {
+		return InternalTransfer{}, ErrInvalidInput
+	}
+
+	transfer, err := s.store.CancelInternalTransfer(ctx, CancelInternalTransferRecord{
+		TeamID:      params.TeamID,
+		TraderID:    params.TraderID,
+		TransferID:  params.TransferID,
+		CancelledBy: params.ActorID,
+	})
+	if err != nil {
+		return InternalTransfer{}, err
+	}
+
+	if err := s.writeAudit(ctx, audit.Event{
+		TeamID:     params.TeamID,
+		ActorID:    params.ActorID,
+		Action:     audit.ActionShiftInternalTransferCancelled,
+		EntityType: "shift_requisite_internal_transfer",
+		EntityID:   strconv.FormatInt(transfer.ID, 10),
+		After:      PublicInternalTransferFromDomain(transfer),
+	}); err != nil {
+		return InternalTransfer{}, err
+	}
+
+	return transfer, nil
 }
 
 func (s *Service) CloseShiftRequisite(ctx context.Context, params CloseShiftRequisiteParams) (ShiftRequisite, error) {

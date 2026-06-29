@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -85,6 +86,66 @@ func TestRequestLoggerIncludesAuthenticatedUserMetadata(t *testing.T) {
 
 	if !strings.Contains(logs.String(), "user_id=42") || !strings.Contains(logs.String(), "team_id=7") {
 		t.Fatalf("user metadata missing from request log: %s", logs.String())
+	}
+}
+
+func TestRequestLoggerLogsUnknownErrorDetails(t *testing.T) {
+	var logs bytes.Buffer
+	router := chi.NewRouter()
+	router.Use(middleware.RequestID)
+	router.Use(RequestLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+	router.Get("/broken", func(w http.ResponseWriter, r *http.Request) {
+		RespondError(w, errors.New("select trader dashboard: connection refused"))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/broken", nil)
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusInternalServerError)
+	}
+	logText := logs.String()
+	for _, want := range []string{
+		"level=ERROR",
+		"error_code=INTERNAL_ERROR",
+		"error=\"select trader dashboard: connection refused\"",
+		"error_type=*errors.errorString",
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("log %q missing %q", logText, want)
+		}
+	}
+}
+
+func TestRequestLoggerLogsAPIErrorCause(t *testing.T) {
+	var logs bytes.Buffer
+	router := chi.NewRouter()
+	router.Use(middleware.RequestID)
+	router.Use(RequestLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+	router.Get("/blocked", func(w http.ResponseWriter, r *http.Request) {
+		RespondError(w, DomainError("SHIFT_CANNOT_BE_CLOSED", "Смену нельзя закрыть").WithCause(errors.New("shift close is blocked")))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/blocked", nil)
+
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusConflict)
+	}
+	logText := logs.String()
+	for _, want := range []string{
+		"level=WARN",
+		"error_code=SHIFT_CANNOT_BE_CLOSED",
+		"error=\"shift close is blocked\"",
+		"error_cause=\"shift close is blocked\"",
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("log %q missing %q", logText, want)
+		}
 	}
 }
 

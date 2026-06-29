@@ -32,6 +32,9 @@ type TraderShiftService interface {
 	LatestTurnovers(ctx context.Context, teamID int64, traderID int64) ([]shifts.TurnoverEntry, error)
 	TurnoversByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]shifts.TurnoverEntry, error)
 	CreateTurnover(ctx context.Context, params shifts.CreateTurnoverParams) (shifts.TurnoverEntry, error)
+	InternalTransfersByShiftRequisite(ctx context.Context, teamID int64, traderID int64, shiftRequisiteID int64) ([]shifts.InternalTransfer, error)
+	CreateInternalTransfer(ctx context.Context, params shifts.CreateInternalTransferParams) (shifts.InternalTransfer, error)
+	CancelInternalTransfer(ctx context.Context, params shifts.CancelInternalTransferParams) (shifts.InternalTransfer, error)
 	CloseChecklist(ctx context.Context, teamID int64, traderID int64) (shifts.CloseChecklist, error)
 	CloseCurrent(ctx context.Context, params shifts.CloseShiftParams) (shifts.Shift, error)
 }
@@ -78,6 +81,14 @@ type turnoverResponse struct {
 	Turnover shifts.PublicTurnoverEntry `json:"turnover"`
 }
 
+type internalTransfersResponse struct {
+	Items []shifts.PublicInternalTransfer `json:"items"`
+}
+
+type internalTransferResponse struct {
+	Transfer shifts.PublicInternalTransfer `json:"transfer"`
+}
+
 type closeChecklistResponse struct {
 	Checklist shifts.PublicCloseChecklist `json:"checklist"`
 }
@@ -104,6 +115,13 @@ type createTurnoverRequest struct {
 	ShiftRequisiteID int64   `json:"shiftRequisiteId"`
 	AmountMinor      int64   `json:"amountMinor"`
 	Comment          *string `json:"comment"`
+}
+
+type createInternalTransferRequest struct {
+	SourceShiftRequisiteID      int64   `json:"sourceShiftRequisiteId"`
+	DestinationShiftRequisiteID int64   `json:"destinationShiftRequisiteId"`
+	AmountMinor                 int64   `json:"amountMinor"`
+	Comment                     *string `json:"comment"`
 }
 
 type closeShiftRequisiteRequest struct {
@@ -693,6 +711,104 @@ func (h *TraderShiftHandler) TurnoversByShiftRequisite(w http.ResponseWriter, r 
 	})
 }
 
+func (h *TraderShiftHandler) InternalTransfersByShiftRequisite(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	shiftRequisiteID, ok := shiftRequisiteRouteID(w, r, "shiftRequisiteId", "Некорректный ID shift requisite")
+	if !ok {
+		return
+	}
+
+	items, err := h.service.InternalTransfersByShiftRequisite(r.Context(), actor.TeamID, actor.ID, shiftRequisiteID)
+	if err != nil {
+		RespondError(w, mapShiftError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, internalTransfersResponse{
+		Items: shifts.PublicInternalTransfers(items),
+	})
+}
+
+func (h *TraderShiftHandler) CreateInternalTransfer(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	var request createInternalTransferRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	if fields := validateCreateInternalTransferRequest(request); len(fields) > 0 {
+		RespondError(w, ValidationError(fields))
+		return
+	}
+
+	transfer, err := h.service.CreateInternalTransfer(r.Context(), shifts.CreateInternalTransferParams{
+		ActorID:                     actor.ID,
+		TeamID:                      actor.TeamID,
+		TraderID:                    actor.ID,
+		SourceShiftRequisiteID:      request.SourceShiftRequisiteID,
+		DestinationShiftRequisiteID: request.DestinationShiftRequisiteID,
+		AmountMinor:                 request.AmountMinor,
+		Comment:                     request.Comment,
+	})
+	if err != nil {
+		RespondError(w, mapShiftError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusCreated, internalTransferResponse{
+		Transfer: shifts.PublicInternalTransferFromDomain(transfer),
+	})
+}
+
+func (h *TraderShiftHandler) CancelInternalTransfer(w http.ResponseWriter, r *http.Request) {
+	actor, ok := CurrentUser(r.Context())
+	if !ok {
+		RespondError(w, UnauthorizedError())
+		return
+	}
+	if h.service == nil {
+		RespondError(w, ServiceUnavailableError())
+		return
+	}
+
+	transferID, ok := shiftRequisiteRouteID(w, r, "transferId", "Некорректный ID внутреннего перевода")
+	if !ok {
+		return
+	}
+
+	transfer, err := h.service.CancelInternalTransfer(r.Context(), shifts.CancelInternalTransferParams{
+		ActorID:    actor.ID,
+		TeamID:     actor.TeamID,
+		TraderID:   actor.ID,
+		TransferID: transferID,
+	})
+	if err != nil {
+		RespondError(w, mapShiftError(err))
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, internalTransferResponse{
+		Transfer: shifts.PublicInternalTransferFromDomain(transfer),
+	})
+}
+
 func (h *TraderShiftHandler) CloseChecklist(w http.ResponseWriter, r *http.Request) {
 	actor, ok := CurrentUser(r.Context())
 	if !ok {
@@ -798,6 +914,24 @@ func validateCreateTurnoverRequest(request createTurnoverRequest) map[string]str
 	return fields
 }
 
+func validateCreateInternalTransferRequest(request createInternalTransferRequest) map[string]string {
+	fields := map[string]string{}
+	if request.SourceShiftRequisiteID <= 0 {
+		fields["sourceShiftRequisiteId"] = "Некорректный ID реквизита-источника"
+	}
+	if request.DestinationShiftRequisiteID <= 0 {
+		fields["destinationShiftRequisiteId"] = "Некорректный ID реквизита-получателя"
+	}
+	if request.SourceShiftRequisiteID > 0 && request.SourceShiftRequisiteID == request.DestinationShiftRequisiteID {
+		fields["destinationShiftRequisiteId"] = "Нельзя перелить сумму на тот же реквизит"
+	}
+	if request.AmountMinor <= 0 {
+		fields["amountMinor"] = "Сумма должна быть больше нуля"
+	}
+
+	return fields
+}
+
 func validateCloseShiftRequisiteRequest(request closeShiftRequisiteRequest) (*time.Time, map[string]string) {
 	fields := map[string]string{}
 	if request.InboundTurnoverMinor < 0 {
@@ -858,21 +992,25 @@ func mapShiftError(err error) error {
 	case errors.Is(err, shifts.ErrInvalidInput):
 		return ValidationError(map[string]string{
 			"body": "Некоторые поля заполнены неверно",
-		})
+		}).WithCause(err)
 	case errors.Is(err, shifts.ErrRequisiteNotAssigned):
-		return DomainError("REQUISITE_NOT_ASSIGNED", "Реквизит не назначен текущему трейдеру")
+		return DomainError("REQUISITE_NOT_ASSIGNED", "Реквизит не назначен текущему трейдеру").WithCause(err)
 	case errors.Is(err, shifts.ErrShiftRequisiteExists):
-		return DomainError("REQUISITE_ALREADY_IN_WORK", "Реквизит уже взят в работу в текущей смене")
+		return DomainError("REQUISITE_ALREADY_IN_WORK", "Реквизит уже взят в работу в текущей смене").WithCause(err)
 	case errors.Is(err, shifts.ErrShiftRequisiteNotFound):
-		return NotFoundError()
+		return NotFoundError().WithCause(err)
 	case errors.Is(err, shifts.ErrTurnoverTargetNotFound):
-		return NotFoundError()
+		return NotFoundError().WithCause(err)
+	case errors.Is(err, shifts.ErrInternalTransferNotFound):
+		return NotFoundError().WithCause(err)
+	case errors.Is(err, shifts.ErrInternalTransferTargetNotFound):
+		return DomainError("INTERNAL_TRANSFER_TARGET_NOT_FOUND", "Реквизиты для внутреннего перевода не найдены в текущей смене").WithCause(err)
 	case errors.Is(err, shifts.ErrCurrentShiftNotFound):
-		return NotFoundError()
+		return NotFoundError().WithCause(err)
 	case errors.Is(err, shifts.ErrCloseBlocked):
-		return DomainError("SHIFT_CANNOT_BE_CLOSED", "Смену нельзя закрыть: checklist не выполнен")
+		return DomainError("SHIFT_CANNOT_BE_CLOSED", "Смену нельзя закрыть: checklist не выполнен").WithCause(err)
 	case errors.Is(err, shifts.ErrShiftCannotBeClosed):
-		return DomainError("SHIFT_CANNOT_BE_CLOSED", "Смену нельзя закрыть: checklist не выполнен")
+		return DomainError("SHIFT_CANNOT_BE_CLOSED", "Смену нельзя закрыть: checklist не выполнен").WithCause(err)
 	default:
 		return err
 	}

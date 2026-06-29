@@ -21,6 +21,7 @@ type RouterConfig struct {
 	ShiftService     TraderShiftService
 	PayoutService    TraderPayoutService
 	ImportService    ImportService
+	DebugService     TeamleadDebugService
 	OrderReadService OrderReadService
 	ReadmodelService TeamleadReadmodelService
 	BankService      BankService
@@ -51,6 +52,7 @@ func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
 	traderShiftHandler := NewTraderShiftHandler(cfg.ShiftService)
 	traderPayoutHandler := NewTraderPayoutHandler(cfg.PayoutService)
 	importHandler := NewImportHandler(cfg.ImportService, cfg.ShiftService)
+	debugHandler := NewTeamleadDebugHandler(cfg.DebugService)
 	orderReadHandler := NewOrderReadHandler(cfg.OrderReadService)
 	readmodelHandler := NewTeamleadReadmodelHandler(cfg.ReadmodelService)
 	banksHandler := NewBanksHandler(cfg.BankService)
@@ -119,6 +121,8 @@ func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
 			r.Get("/outbound/reconciliation/{runId}", teamleadReconciliationHandler.OutboundRun)
 			r.Get("/outbound/reconciliation/{runId}/items", teamleadReconciliationHandler.OutboundRunItems)
 			r.Post("/outbound/reconciliation/{runId}/accept", teamleadReconciliationHandler.AcceptOutbound)
+			r.Post("/debug/fin-all/import", debugHandler.ImportFinAll)
+			r.Get("/debug/fin-all/import/jobs/{jobId}", debugHandler.FinAllImportJob)
 			r.Get("/periods", readmodelHandler.Periods)
 			r.Get("/audit", readmodelHandler.Audit)
 			r.Get("/periods/{periodId}/reconciliation/inbound", teamleadReconciliationHandler.PeriodInbound)
@@ -157,6 +161,9 @@ func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
 			r.Post("/shift-requisites/{shiftRequisiteId}/correction", traderShiftHandler.CorrectShiftRequisite)
 			r.Post("/shift-requisites/{shiftRequisiteId}/return-to-work", traderShiftHandler.ReturnShiftRequisiteToWork)
 			r.Get("/shift-requisites/{shiftRequisiteId}/turnovers", traderShiftHandler.TurnoversByShiftRequisite)
+			r.Get("/shift-requisites/{shiftRequisiteId}/internal-transfers", traderShiftHandler.InternalTransfersByShiftRequisite)
+			r.Post("/shift/internal-transfers", traderShiftHandler.CreateInternalTransfer)
+			r.Delete("/shift/internal-transfers/{transferId}", traderShiftHandler.CancelInternalTransfer)
 			r.Get("/payouts", traderPayoutHandler.List)
 			r.Get("/payouts/history", traderPayoutHandler.History)
 			r.Post("/payouts", traderPayoutHandler.Create)

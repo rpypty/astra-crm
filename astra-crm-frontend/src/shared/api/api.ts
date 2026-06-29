@@ -6,8 +6,11 @@ import type {
   AuditLogEntry,
   Bank,
   CurrentUser,
+  DebugFinAllImportJob,
+  DebugFinAllImportResult,
   ImportIssue,
   ImportResult,
+  InternalTransfer,
   Order,
   OrderDashboard,
   OrderDirection,
@@ -54,6 +57,8 @@ type TakeRequisiteResponse = ApiSchema<"TakeRequisiteResponse">;
 type ShiftRequisiteResponse = ApiSchema<"ShiftRequisiteResponse">;
 type TurnoversResponse = ApiSchema<"TurnoversResponse">;
 type TurnoverResponse = ApiSchema<"TurnoverResponse">;
+type InternalTransfersResponse = { items: BackendInternalTransfer[] };
+type InternalTransferResponse = { transfer: BackendInternalTransfer };
 type PayoutsResponse = ApiSchema<"PayoutsResponse">;
 type PayoutDetailsResponse = ApiSchema<"PayoutDetailsResponse">;
 type PayoutResponse = ApiSchema<"PayoutResponse">;
@@ -67,6 +72,7 @@ type OrdersListResponse = ApiSchema<"OrdersListResponse">;
 type AccountingPeriodsResponse = ApiSchema<"AccountingPeriodsResponse">;
 type AuditLogResponse = ApiSchema<"AuditLogResponse">;
 type TraderProfileResponse = ApiSchema<"TraderProfileResponse">;
+type DebugFinAllImportJobResponse = { job: DebugFinAllImportJob };
 
 type BackendTrader = ApiSchema<"Trader">;
 type BackendRequisite = ApiSchema<"Requisite">;
@@ -77,6 +83,24 @@ type BackendRequisiteReportSummary = ApiSchema<"RequisiteReportSummary">;
 type BackendRequisiteReportShift = ApiSchema<"RequisiteReportShift">;
 type BackendAssignedRequisite = ApiSchema<"AssignedRequisite">;
 type BackendTurnover = ApiSchema<"TurnoverEntry">;
+type BackendInternalTransfer = {
+  id: number;
+  shiftId: number;
+  sourceShiftRequisiteId: number;
+  sourceRequisiteId: number;
+  sourcePhone: string;
+  sourceBankCode: string;
+  sourceBankName: string;
+  destinationShiftRequisiteId: number;
+  destinationRequisiteId: number;
+  destinationPhone: string;
+  destinationBankCode: string;
+  destinationBankName: string;
+  amountMinor: number;
+  status: "active" | "cancelled";
+  createdAt: string;
+  comment?: string;
+};
 type BackendPayout = ApiSchema<"Payout">;
 type BackendTransfer = ApiSchema<"PayoutTransfer">;
 type BackendOrder = ApiSchema<"Order">;
@@ -388,6 +412,30 @@ export const api = {
       );
       return response.items.map(toTurnover);
     },
+    async internalTransfers(shiftRequisiteId: number) {
+      const response = await apiClient.get<InternalTransfersResponse>(
+        `/trader/shift-requisites/${shiftRequisiteId}/internal-transfers`,
+      );
+      return response.items.map(toInternalTransfer);
+    },
+    async createInternalTransfer(input: {
+      sourceShiftRequisiteId: number;
+      destinationShiftRequisiteId: number;
+      amountMinor: number;
+      comment?: string;
+    }) {
+      const response = await apiClient.post<InternalTransferResponse>("/trader/shift/internal-transfers", {
+        sourceShiftRequisiteId: input.sourceShiftRequisiteId,
+        destinationShiftRequisiteId: input.destinationShiftRequisiteId,
+        amountMinor: input.amountMinor,
+        comment: input.comment,
+      });
+      return toInternalTransfer(response.transfer);
+    },
+    async cancelInternalTransfer(transferId: number) {
+      const response = await apiClient.delete<InternalTransferResponse>(`/trader/shift/internal-transfers/${transferId}`);
+      return toInternalTransfer(response.transfer);
+    },
     async close(input?: { closeComment?: string }) {
       const response = await apiClient.post<CloseShiftResponse>("/trader/shift/current/close", {
         closeComment: input?.closeComment,
@@ -543,6 +591,20 @@ export const api = {
       await apiClient.post<ReconciliationResponse>(path, {
         comment: input.comment,
       });
+    },
+  },
+
+  debug: {
+    async importFinAll(input: { file: File; dryRun: boolean }) {
+      const formData = new FormData();
+      formData.set("file", input.file);
+      formData.set("dryRun", String(input.dryRun));
+      const response = await apiClient.upload<DebugFinAllImportJobResponse>("/teamlead/debug/fin-all/import", formData);
+      return response.job;
+    },
+    async finAllImportJob(jobId: number) {
+      const response = await apiClient.get<DebugFinAllImportJobResponse>(`/teamlead/debug/fin-all/import/jobs/${jobId}`);
+      return response.job;
     },
   },
 
@@ -881,6 +943,27 @@ function toTurnover(item: BackendTurnover): TurnoverEntry {
     amountMinor: item.amountMinor,
     comment: item.comment,
     createdAt: item.createdAt,
+  };
+}
+
+function toInternalTransfer(item: BackendInternalTransfer): InternalTransfer {
+  return {
+    id: item.id,
+    shiftId: item.shiftId,
+    sourceShiftRequisiteId: item.sourceShiftRequisiteId,
+    sourceRequisiteId: item.sourceRequisiteId,
+    sourcePhone: item.sourcePhone,
+    sourceBankCode: item.sourceBankCode,
+    sourceBankName: item.sourceBankName,
+    destinationShiftRequisiteId: item.destinationShiftRequisiteId,
+    destinationRequisiteId: item.destinationRequisiteId,
+    destinationPhone: item.destinationPhone,
+    destinationBankCode: item.destinationBankCode,
+    destinationBankName: item.destinationBankName,
+    amountMinor: item.amountMinor,
+    status: item.status,
+    createdAt: item.createdAt,
+    comment: item.comment,
   };
 }
 

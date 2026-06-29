@@ -456,17 +456,17 @@ func mapPayoutError(err error) error {
 	case errors.Is(err, payouts.ErrInvalidInput):
 		return ValidationError(map[string]string{
 			"body": "Некоторые поля заполнены неверно",
-		})
+		}).WithCause(err)
 	case errors.Is(err, payouts.ErrOrderNotFound):
-		return NotFoundError()
+		return NotFoundError().WithCause(err)
 	case errors.Is(err, payouts.ErrTransferNotFound):
-		return NotFoundError()
+		return NotFoundError().WithCause(err)
 	case errors.Is(err, payouts.ErrNoCurrentShift):
-		return DomainError("CURRENT_SHIFT_REQUIRED", "Нужно открыть смену перед созданием выплаты")
+		return DomainError("CURRENT_SHIFT_REQUIRED", "Нужно открыть смену перед созданием выплаты").WithCause(err)
 	case errors.Is(err, payouts.ErrTransferRejected):
-		return DomainError("PAYOUT_TRANSFER_REJECTED", "Перевод не может превышать остаток выплаты или реквизит недоступен")
+		return DomainError("PAYOUT_TRANSFER_REJECTED", "Перевод не может превышать остаток выплаты или реквизит недоступен").WithCause(err)
 	case errors.Is(err, payouts.ErrOrderUpdateRejected):
-		return DomainError("PAYOUT_UPDATE_REJECTED", "Выплату нельзя обновить с указанными параметрами")
+		return DomainError("PAYOUT_UPDATE_REJECTED", "Выплату нельзя обновить с указанными параметрами").WithCause(err)
 	default:
 		return err
 	}

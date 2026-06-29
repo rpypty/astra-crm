@@ -89,6 +89,30 @@ type TurnoverEntry struct {
 	Comment          *string
 }
 
+type InternalTransfer struct {
+	ID                          int64
+	TeamID                      int64
+	ShiftID                     int64
+	TraderID                    int64
+	SourceShiftRequisiteID      int64
+	SourceRequisiteID           int64
+	SourcePhone                 string
+	SourceBankCode              string
+	SourceBankName              string
+	DestinationShiftRequisiteID int64
+	DestinationRequisiteID      int64
+	DestinationPhone            string
+	DestinationBankCode         string
+	DestinationBankName         string
+	AmountMinor                 int64
+	Status                      string
+	CreatedBy                   int64
+	CreatedAt                   time.Time
+	CancelledBy                 *int64
+	CancelledAt                 *time.Time
+	Comment                     *string
+}
+
 type CloseChecklist struct {
 	Shift               Shift
 	InboundImported     bool

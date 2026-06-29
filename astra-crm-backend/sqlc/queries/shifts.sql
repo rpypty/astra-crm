@@ -713,6 +713,164 @@ WHERE sr.id = sqlc.arg(shift_requisite_id)
   AND sr.team_id = sqlc.arg(team_id)
   AND sr.trader_id = sqlc.arg(trader_id);
 
+-- name: ListInternalTransfersForShiftRequisite :many
+SELECT
+    t.id,
+    t.team_id,
+    t.shift_id,
+    t.trader_id,
+    t.source_shift_requisite_id,
+    t.source_requisite_id,
+    source_r.phone AS source_phone,
+    source_r.bank_code AS source_bank_code,
+    source_b.name AS source_bank_name,
+    t.destination_shift_requisite_id,
+    t.destination_requisite_id,
+    destination_r.phone AS destination_phone,
+    destination_r.bank_code AS destination_bank_code,
+    destination_b.name AS destination_bank_name,
+    t.amount_minor,
+    t.status,
+    t.created_by,
+    t.created_at,
+    t.cancelled_by,
+    t.cancelled_at,
+    t.comment
+FROM shift_requisite_internal_transfers t
+JOIN requisites source_r ON source_r.id = t.source_requisite_id
+JOIN banks source_b ON source_b.code = source_r.bank_code
+JOIN requisites destination_r ON destination_r.id = t.destination_requisite_id
+JOIN banks destination_b ON destination_b.code = destination_r.bank_code
+WHERE t.team_id = sqlc.arg(team_id)
+  AND t.trader_id = sqlc.arg(trader_id)
+  AND t.status = 'active'
+  AND (
+      t.source_shift_requisite_id = sqlc.arg(shift_requisite_id)
+      OR t.destination_shift_requisite_id = sqlc.arg(shift_requisite_id)
+  )
+ORDER BY t.created_at DESC, t.id DESC;
+
+-- name: CreateInternalTransfer :one
+WITH source_sr AS (
+    SELECT sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id
+    FROM shift_requisites sr
+    JOIN trader_shifts ts ON ts.id = sr.shift_id
+    WHERE sr.id = sqlc.arg(source_shift_requisite_id)
+      AND sr.team_id = sqlc.arg(team_id)
+      AND sr.trader_id = sqlc.arg(trader_id)
+      AND sr.status IN ('active', 'correction')
+      AND ts.status IN ('open', 'closing')
+),
+destination_sr AS (
+    SELECT sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id
+    FROM shift_requisites sr
+    JOIN source_sr source ON source.shift_id = sr.shift_id
+    WHERE sr.id = sqlc.arg(destination_shift_requisite_id)
+      AND sr.team_id = source.team_id
+      AND sr.trader_id = source.trader_id
+      AND sr.id <> source.id
+      AND sr.status IN ('active', 'correction')
+),
+inserted AS (
+    INSERT INTO shift_requisite_internal_transfers (
+        team_id,
+        shift_id,
+        trader_id,
+        source_shift_requisite_id,
+        source_requisite_id,
+        destination_shift_requisite_id,
+        destination_requisite_id,
+        amount_minor,
+        created_by,
+        comment
+    )
+    SELECT
+        source.team_id,
+        source.shift_id,
+        source.trader_id,
+        source.id,
+        source.requisite_id,
+        destination.id,
+        destination.requisite_id,
+        sqlc.arg(amount_minor),
+        sqlc.arg(created_by),
+        sqlc.narg(comment)
+    FROM source_sr source
+    JOIN destination_sr destination ON destination.shift_id = source.shift_id
+    RETURNING *
+)
+SELECT
+    inserted.id,
+    inserted.team_id,
+    inserted.shift_id,
+    inserted.trader_id,
+    inserted.source_shift_requisite_id,
+    inserted.source_requisite_id,
+    source_r.phone AS source_phone,
+    source_r.bank_code AS source_bank_code,
+    source_b.name AS source_bank_name,
+    inserted.destination_shift_requisite_id,
+    inserted.destination_requisite_id,
+    destination_r.phone AS destination_phone,
+    destination_r.bank_code AS destination_bank_code,
+    destination_b.name AS destination_bank_name,
+    inserted.amount_minor,
+    inserted.status,
+    inserted.created_by,
+    inserted.created_at,
+    inserted.cancelled_by,
+    inserted.cancelled_at,
+    inserted.comment
+FROM inserted
+JOIN requisites source_r ON source_r.id = inserted.source_requisite_id
+JOIN banks source_b ON source_b.code = source_r.bank_code
+JOIN requisites destination_r ON destination_r.id = inserted.destination_requisite_id
+JOIN banks destination_b ON destination_b.code = destination_r.bank_code;
+
+-- name: CancelInternalTransfer :one
+WITH updated AS (
+    UPDATE shift_requisite_internal_transfers t
+    SET
+        status = 'cancelled',
+        cancelled_by = sqlc.arg(cancelled_by),
+        cancelled_at = now()
+    FROM trader_shifts ts
+    WHERE t.id = sqlc.arg(transfer_id)
+      AND t.team_id = sqlc.arg(team_id)
+      AND t.trader_id = sqlc.arg(trader_id)
+      AND t.status = 'active'
+      AND ts.id = t.shift_id
+      AND ts.status IN ('open', 'closing')
+    RETURNING t.*
+)
+SELECT
+    updated.id,
+    updated.team_id,
+    updated.shift_id,
+    updated.trader_id,
+    updated.source_shift_requisite_id,
+    updated.source_requisite_id,
+    source_r.phone AS source_phone,
+    source_r.bank_code AS source_bank_code,
+    source_b.name AS source_bank_name,
+    updated.destination_shift_requisite_id,
+    updated.destination_requisite_id,
+    destination_r.phone AS destination_phone,
+    destination_r.bank_code AS destination_bank_code,
+    destination_b.name AS destination_bank_name,
+    updated.amount_minor,
+    updated.status,
+    updated.created_by,
+    updated.created_at,
+    updated.cancelled_by,
+    updated.cancelled_at,
+    updated.comment
+FROM updated
+JOIN requisites source_r ON source_r.id = updated.source_requisite_id
+JOIN banks source_b ON source_b.code = source_r.bank_code
+JOIN requisites destination_r ON destination_r.id = updated.destination_requisite_id
+JOIN banks destination_b ON destination_b.code = destination_r.bank_code;
+
 -- name: CreateTurnoverEntry :one
 WITH target_shift_requisite AS (
     SELECT sr.id, sr.team_id, sr.shift_id, sr.requisite_id, sr.trader_id

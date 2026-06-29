@@ -14,6 +14,7 @@ import (
 	"github.com/ashpak/astra-crm-backend/internal/auth"
 	"github.com/ashpak/astra-crm-backend/internal/banks"
 	"github.com/ashpak/astra-crm-backend/internal/config"
+	"github.com/ashpak/astra-crm-backend/internal/debugimport"
 	"github.com/ashpak/astra-crm-backend/internal/httpserver"
 	"github.com/ashpak/astra-crm-backend/internal/imports"
 	"github.com/ashpak/astra-crm-backend/internal/orders"
@@ -62,6 +63,7 @@ func run() int {
 	var shiftService *shifts.Service
 	var payoutService *payouts.Service
 	var importService *imports.Service
+	var debugService *debugimport.Service
 	var orderReadService *orders.Service
 	var readmodelService *readmodels.Service
 	var reconciliationService *reconciliation.Service
@@ -88,6 +90,7 @@ func run() int {
 		shiftService = shifts.NewService(shiftRepository, auditService, reconciliationService)
 		payoutService = payouts.NewService(payoutRepository, auditService, reconciliationService)
 		importService = imports.NewService(importRepository, auditService, reconciliationService)
+		debugService = debugimport.NewService(dbPool.Raw(), auth.HashPassword)
 		orderReadService = orders.NewService(orderReadRepository)
 		readmodelService = readmodels.NewService(dbPool.Raw())
 	}
@@ -100,6 +103,7 @@ func run() int {
 		ShiftService:           shiftService,
 		PayoutService:          payoutService,
 		ImportService:          importService,
+		DebugService:           debugService,
 		OrderReadService:       orderReadService,
 		ReadmodelService:       readmodelService,
 		BankService:            bankService,

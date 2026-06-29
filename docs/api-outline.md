@@ -155,6 +155,9 @@ GET  /trader/requisites/{requisiteId}
 POST /trader/requisites/{requisiteId}/take
 PATCH /trader/shift-requisites/{shiftRequisiteId}
 GET  /trader/shift-requisites
+GET  /trader/shift-requisites/{shiftRequisiteId}/internal-transfers
+POST /trader/shift/internal-transfers
+DELETE /trader/shift/internal-transfers/{transferId}
 ```
 
 Take requisite into work:
@@ -172,6 +175,19 @@ This endpoint:
 - creates current shift if absent;
 - creates `shift_requisite`;
 - writes audit.
+
+Create internal transfer:
+
+```json
+{
+  "sourceShiftRequisiteId": 55,
+  "destinationShiftRequisiteId": 56,
+  "amountMinor": 1250000,
+  "comment": "Перелив остатка"
+}
+```
+
+Internal transfers are shown on both requisites and are not included in CSV reconciliation, order reports, or payout orders.
 
 ---
 

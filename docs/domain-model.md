@@ -33,6 +33,7 @@ RequisiteAssignment
 TraderShift
 ShiftRequisite
 RequisiteTurnoverEntry
+ShiftRequisiteInternalTransfer
 ManualPayoutOrder
 ManualPayoutTransfer
 AccountingPeriod
@@ -325,7 +326,41 @@ For shift reconciliation, Requisite A contributes `180_000`.
 
 ---
 
-# 11. ManualPayoutOrder
+# 11. ShiftRequisiteInternalTransfer
+
+Internal balance transfer between two requisites in the same trader shift.
+
+Fields:
+
+```text
+id
+team_id
+shift_id
+trader_id
+source_shift_requisite_id
+source_requisite_id
+destination_shift_requisite_id
+destination_requisite_id
+amount_minor
+status: active / cancelled
+created_by
+created_at
+cancelled_by nullable
+cancelled_at nullable
+comment nullable
+```
+
+Rules:
+
+- Source and destination must be different `shift_requisites`.
+- Source and destination must belong to the same open/current shift, trader, and team.
+- The transfer is shown as outgoing on the source requisite and incoming on the destination requisite.
+- Internal transfers are not external orders and must not be included in CSV imports, payout orders, reconciliation totals, salary turnover, or order reports.
+- In MVP, editing is not allowed. If a transfer is wrong, cancel it and create a new one.
+
+---
+
+# 12. ManualPayoutOrder
 
 Manual payout order created by trader.
 
@@ -354,7 +389,7 @@ Rules:
 
 ---
 
-# 12. ManualPayoutTransfer
+# 13. ManualPayoutTransfer
 
 Intermediate transfer that fills a manual payout order.
 
@@ -391,7 +426,7 @@ Rules:
 
 ---
 
-# 13. AccountingPeriod
+# 14. AccountingPeriod
 
 Period controlled by teamlead, usually month/30 days.
 

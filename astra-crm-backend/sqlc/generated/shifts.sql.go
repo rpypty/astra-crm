@@ -11,6 +11,116 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelInternalTransfer = `-- name: CancelInternalTransfer :one
+WITH updated AS (
+    UPDATE shift_requisite_internal_transfers t
+    SET
+        status = 'cancelled',
+        cancelled_by = $1,
+        cancelled_at = now()
+    FROM trader_shifts ts
+    WHERE t.id = $2
+      AND t.team_id = $3
+      AND t.trader_id = $4
+      AND t.status = 'active'
+      AND ts.id = t.shift_id
+      AND ts.status IN ('open', 'closing')
+    RETURNING t.id, t.team_id, t.shift_id, t.trader_id, t.source_shift_requisite_id, t.source_requisite_id, t.destination_shift_requisite_id, t.destination_requisite_id, t.amount_minor, t.status, t.created_by, t.created_at, t.cancelled_by, t.cancelled_at, t.comment
+)
+SELECT
+    updated.id,
+    updated.team_id,
+    updated.shift_id,
+    updated.trader_id,
+    updated.source_shift_requisite_id,
+    updated.source_requisite_id,
+    source_r.phone AS source_phone,
+    source_r.bank_code AS source_bank_code,
+    source_b.name AS source_bank_name,
+    updated.destination_shift_requisite_id,
+    updated.destination_requisite_id,
+    destination_r.phone AS destination_phone,
+    destination_r.bank_code AS destination_bank_code,
+    destination_b.name AS destination_bank_name,
+    updated.amount_minor,
+    updated.status,
+    updated.created_by,
+    updated.created_at,
+    updated.cancelled_by,
+    updated.cancelled_at,
+    updated.comment
+FROM updated
+JOIN requisites source_r ON source_r.id = updated.source_requisite_id
+JOIN banks source_b ON source_b.code = source_r.bank_code
+JOIN requisites destination_r ON destination_r.id = updated.destination_requisite_id
+JOIN banks destination_b ON destination_b.code = destination_r.bank_code
+`
+
+type CancelInternalTransferParams struct {
+	CancelledBy pgtype.Int8
+	TransferID  int64
+	TeamID      int64
+	TraderID    int64
+}
+
+type CancelInternalTransferRow struct {
+	ID                          int64
+	TeamID                      int64
+	ShiftID                     int64
+	TraderID                    int64
+	SourceShiftRequisiteID      int64
+	SourceRequisiteID           int64
+	SourcePhone                 string
+	SourceBankCode              string
+	SourceBankName              string
+	DestinationShiftRequisiteID int64
+	DestinationRequisiteID      int64
+	DestinationPhone            string
+	DestinationBankCode         string
+	DestinationBankName         string
+	AmountMinor                 int64
+	Status                      string
+	CreatedBy                   int64
+	CreatedAt                   pgtype.Timestamptz
+	CancelledBy                 pgtype.Int8
+	CancelledAt                 pgtype.Timestamptz
+	Comment                     pgtype.Text
+}
+
+func (q *Queries) CancelInternalTransfer(ctx context.Context, arg CancelInternalTransferParams) (CancelInternalTransferRow, error) {
+	row := q.db.QueryRow(ctx, cancelInternalTransfer,
+		arg.CancelledBy,
+		arg.TransferID,
+		arg.TeamID,
+		arg.TraderID,
+	)
+	var i CancelInternalTransferRow
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.ShiftID,
+		&i.TraderID,
+		&i.SourceShiftRequisiteID,
+		&i.SourceRequisiteID,
+		&i.SourcePhone,
+		&i.SourceBankCode,
+		&i.SourceBankName,
+		&i.DestinationShiftRequisiteID,
+		&i.DestinationRequisiteID,
+		&i.DestinationPhone,
+		&i.DestinationBankCode,
+		&i.DestinationBankName,
+		&i.AmountMinor,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.CancelledBy,
+		&i.CancelledAt,
+		&i.Comment,
+	)
+	return i, err
+}
+
 const closeCurrentTraderShift = `-- name: CloseCurrentTraderShift :one
 UPDATE trader_shifts
 SET
@@ -384,6 +494,155 @@ func (q *Queries) CorrectClosedShiftRequisiteTurnovers(ctx context.Context, arg 
 		&i.ClosingBalanceMinor,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createInternalTransfer = `-- name: CreateInternalTransfer :one
+WITH source_sr AS (
+    SELECT sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id
+    FROM shift_requisites sr
+    JOIN trader_shifts ts ON ts.id = sr.shift_id
+    WHERE sr.id = $1
+      AND sr.team_id = $2
+      AND sr.trader_id = $3
+      AND sr.status IN ('active', 'correction')
+      AND ts.status IN ('open', 'closing')
+),
+destination_sr AS (
+    SELECT sr.id, sr.team_id, sr.shift_id, sr.trader_id, sr.requisite_id
+    FROM shift_requisites sr
+    JOIN source_sr source ON source.shift_id = sr.shift_id
+    WHERE sr.id = $4
+      AND sr.team_id = source.team_id
+      AND sr.trader_id = source.trader_id
+      AND sr.id <> source.id
+      AND sr.status IN ('active', 'correction')
+),
+inserted AS (
+    INSERT INTO shift_requisite_internal_transfers (
+        team_id,
+        shift_id,
+        trader_id,
+        source_shift_requisite_id,
+        source_requisite_id,
+        destination_shift_requisite_id,
+        destination_requisite_id,
+        amount_minor,
+        created_by,
+        comment
+    )
+    SELECT
+        source.team_id,
+        source.shift_id,
+        source.trader_id,
+        source.id,
+        source.requisite_id,
+        destination.id,
+        destination.requisite_id,
+        $5,
+        $6,
+        $7
+    FROM source_sr source
+    JOIN destination_sr destination ON destination.shift_id = source.shift_id
+    RETURNING id, team_id, shift_id, trader_id, source_shift_requisite_id, source_requisite_id, destination_shift_requisite_id, destination_requisite_id, amount_minor, status, created_by, created_at, cancelled_by, cancelled_at, comment
+)
+SELECT
+    inserted.id,
+    inserted.team_id,
+    inserted.shift_id,
+    inserted.trader_id,
+    inserted.source_shift_requisite_id,
+    inserted.source_requisite_id,
+    source_r.phone AS source_phone,
+    source_r.bank_code AS source_bank_code,
+    source_b.name AS source_bank_name,
+    inserted.destination_shift_requisite_id,
+    inserted.destination_requisite_id,
+    destination_r.phone AS destination_phone,
+    destination_r.bank_code AS destination_bank_code,
+    destination_b.name AS destination_bank_name,
+    inserted.amount_minor,
+    inserted.status,
+    inserted.created_by,
+    inserted.created_at,
+    inserted.cancelled_by,
+    inserted.cancelled_at,
+    inserted.comment
+FROM inserted
+JOIN requisites source_r ON source_r.id = inserted.source_requisite_id
+JOIN banks source_b ON source_b.code = source_r.bank_code
+JOIN requisites destination_r ON destination_r.id = inserted.destination_requisite_id
+JOIN banks destination_b ON destination_b.code = destination_r.bank_code
+`
+
+type CreateInternalTransferParams struct {
+	SourceShiftRequisiteID      int64
+	TeamID                      int64
+	TraderID                    int64
+	DestinationShiftRequisiteID int64
+	AmountMinor                 int64
+	CreatedBy                   int64
+	Comment                     pgtype.Text
+}
+
+type CreateInternalTransferRow struct {
+	ID                          int64
+	TeamID                      int64
+	ShiftID                     int64
+	TraderID                    int64
+	SourceShiftRequisiteID      int64
+	SourceRequisiteID           int64
+	SourcePhone                 string
+	SourceBankCode              string
+	SourceBankName              string
+	DestinationShiftRequisiteID int64
+	DestinationRequisiteID      int64
+	DestinationPhone            string
+	DestinationBankCode         string
+	DestinationBankName         string
+	AmountMinor                 int64
+	Status                      string
+	CreatedBy                   int64
+	CreatedAt                   pgtype.Timestamptz
+	CancelledBy                 pgtype.Int8
+	CancelledAt                 pgtype.Timestamptz
+	Comment                     pgtype.Text
+}
+
+func (q *Queries) CreateInternalTransfer(ctx context.Context, arg CreateInternalTransferParams) (CreateInternalTransferRow, error) {
+	row := q.db.QueryRow(ctx, createInternalTransfer,
+		arg.SourceShiftRequisiteID,
+		arg.TeamID,
+		arg.TraderID,
+		arg.DestinationShiftRequisiteID,
+		arg.AmountMinor,
+		arg.CreatedBy,
+		arg.Comment,
+	)
+	var i CreateInternalTransferRow
+	err := row.Scan(
+		&i.ID,
+		&i.TeamID,
+		&i.ShiftID,
+		&i.TraderID,
+		&i.SourceShiftRequisiteID,
+		&i.SourceRequisiteID,
+		&i.SourcePhone,
+		&i.SourceBankCode,
+		&i.SourceBankName,
+		&i.DestinationShiftRequisiteID,
+		&i.DestinationRequisiteID,
+		&i.DestinationPhone,
+		&i.DestinationBankCode,
+		&i.DestinationBankName,
+		&i.AmountMinor,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.CancelledBy,
+		&i.CancelledAt,
+		&i.Comment,
 	)
 	return i, err
 }
@@ -1436,6 +1695,116 @@ func (q *Queries) ListHistoricalAssignedRequisitesForTrader(ctx context.Context,
 			&i.InboundTurnoverMinor,
 			&i.OutboundTurnoverMinor,
 			&i.ClosingBalanceMinor,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listInternalTransfersForShiftRequisite = `-- name: ListInternalTransfersForShiftRequisite :many
+SELECT
+    t.id,
+    t.team_id,
+    t.shift_id,
+    t.trader_id,
+    t.source_shift_requisite_id,
+    t.source_requisite_id,
+    source_r.phone AS source_phone,
+    source_r.bank_code AS source_bank_code,
+    source_b.name AS source_bank_name,
+    t.destination_shift_requisite_id,
+    t.destination_requisite_id,
+    destination_r.phone AS destination_phone,
+    destination_r.bank_code AS destination_bank_code,
+    destination_b.name AS destination_bank_name,
+    t.amount_minor,
+    t.status,
+    t.created_by,
+    t.created_at,
+    t.cancelled_by,
+    t.cancelled_at,
+    t.comment
+FROM shift_requisite_internal_transfers t
+JOIN requisites source_r ON source_r.id = t.source_requisite_id
+JOIN banks source_b ON source_b.code = source_r.bank_code
+JOIN requisites destination_r ON destination_r.id = t.destination_requisite_id
+JOIN banks destination_b ON destination_b.code = destination_r.bank_code
+WHERE t.team_id = $1
+  AND t.trader_id = $2
+  AND t.status = 'active'
+  AND (
+      t.source_shift_requisite_id = $3
+      OR t.destination_shift_requisite_id = $3
+  )
+ORDER BY t.created_at DESC, t.id DESC
+`
+
+type ListInternalTransfersForShiftRequisiteParams struct {
+	TeamID           int64
+	TraderID         int64
+	ShiftRequisiteID int64
+}
+
+type ListInternalTransfersForShiftRequisiteRow struct {
+	ID                          int64
+	TeamID                      int64
+	ShiftID                     int64
+	TraderID                    int64
+	SourceShiftRequisiteID      int64
+	SourceRequisiteID           int64
+	SourcePhone                 string
+	SourceBankCode              string
+	SourceBankName              string
+	DestinationShiftRequisiteID int64
+	DestinationRequisiteID      int64
+	DestinationPhone            string
+	DestinationBankCode         string
+	DestinationBankName         string
+	AmountMinor                 int64
+	Status                      string
+	CreatedBy                   int64
+	CreatedAt                   pgtype.Timestamptz
+	CancelledBy                 pgtype.Int8
+	CancelledAt                 pgtype.Timestamptz
+	Comment                     pgtype.Text
+}
+
+func (q *Queries) ListInternalTransfersForShiftRequisite(ctx context.Context, arg ListInternalTransfersForShiftRequisiteParams) ([]ListInternalTransfersForShiftRequisiteRow, error) {
+	rows, err := q.db.Query(ctx, listInternalTransfersForShiftRequisite, arg.TeamID, arg.TraderID, arg.ShiftRequisiteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListInternalTransfersForShiftRequisiteRow
+	for rows.Next() {
+		var i ListInternalTransfersForShiftRequisiteRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TeamID,
+			&i.ShiftID,
+			&i.TraderID,
+			&i.SourceShiftRequisiteID,
+			&i.SourceRequisiteID,
+			&i.SourcePhone,
+			&i.SourceBankCode,
+			&i.SourceBankName,
+			&i.DestinationShiftRequisiteID,
+			&i.DestinationRequisiteID,
+			&i.DestinationPhone,
+			&i.DestinationBankCode,
+			&i.DestinationBankName,
+			&i.AmountMinor,
+			&i.Status,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.CancelledBy,
+			&i.CancelledAt,
+			&i.Comment,
 		); err != nil {
 			return nil, err
 		}

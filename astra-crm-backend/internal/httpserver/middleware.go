@@ -48,7 +48,16 @@ func RequestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 				attrs = append(attrs, slog.Int64("user_id", metadata.userID), slog.Int64("team_id", metadata.teamID))
 			}
 
-			log.LogAttrs(r.Context(), slog.LevelInfo, "http request", attrs...)
+			level := slog.LevelInfo
+			if recorder.err != nil {
+				level = slog.LevelWarn
+				if status >= http.StatusInternalServerError {
+					level = slog.LevelError
+				}
+				attrs = append(attrs, responseErrorAttrs(recorder.err)...)
+			}
+
+			log.LogAttrs(r.Context(), level, "http request", attrs...)
 		})
 	}
 }
@@ -214,6 +223,7 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status int
 	bytes  int
+	err    *responseError
 }
 
 func (r *statusRecorder) WriteHeader(status int) {
@@ -233,4 +243,56 @@ func (r *statusRecorder) Write(data []byte) (int, error) {
 	written, err := r.ResponseWriter.Write(data)
 	r.bytes += written
 	return written, err
+}
+
+type responseError struct {
+	err    error
+	apiErr *APIError
+}
+
+type responseErrorRecorder interface {
+	recordError(err error, apiErr *APIError)
+}
+
+func (r *statusRecorder) recordError(err error, apiErr *APIError) {
+	r.err = &responseError{
+		err:    err,
+		apiErr: apiErr,
+	}
+}
+
+func recordResponseError(w http.ResponseWriter, err error, apiErr *APIError) {
+	recorder, ok := w.(responseErrorRecorder)
+	if !ok {
+		return
+	}
+
+	recorder.recordError(err, apiErr)
+}
+
+func responseErrorAttrs(responseErr *responseError) []slog.Attr {
+	if responseErr == nil {
+		return nil
+	}
+
+	err := responseErr.err
+	attrs := []slog.Attr{}
+	if responseErr.apiErr != nil {
+		attrs = append(attrs, slog.String("error_code", responseErr.apiErr.Code))
+		if responseErr.apiErr.Cause != nil {
+			err = responseErr.apiErr.Cause
+			attrs = append(attrs,
+				slog.String("error_cause", responseErr.apiErr.Cause.Error()),
+				slog.String("error_cause_type", fmt.Sprintf("%T", responseErr.apiErr.Cause)),
+			)
+		}
+	}
+	if err != nil {
+		attrs = append(attrs,
+			slog.String("error", err.Error()),
+			slog.String("error_type", fmt.Sprintf("%T", err)),
+		)
+	}
+
+	return attrs
 }

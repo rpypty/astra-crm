@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 )
@@ -23,6 +24,7 @@ func HealthHandler() http.HandlerFunc {
 func ReadyHandler(pinger ReadyPinger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if pinger == nil {
+			recordResponseError(w, errors.New("ready pinger is not configured"), ServiceUnavailableError())
 			WriteJSON(w, http.StatusServiceUnavailable, HealthResponse{Status: "not_ready"})
 			return
 		}
@@ -31,6 +33,7 @@ func ReadyHandler(pinger ReadyPinger) http.HandlerFunc {
 		defer cancel()
 
 		if err := pinger.Ping(ctx); err != nil {
+			recordResponseError(w, err, ServiceUnavailableError().WithCause(err))
 			WriteJSON(w, http.StatusServiceUnavailable, HealthResponse{Status: "not_ready"})
 			return
 		}

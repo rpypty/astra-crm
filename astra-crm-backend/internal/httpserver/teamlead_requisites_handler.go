@@ -669,25 +669,25 @@ func validRequisitePatchStatus(status string) bool {
 func mapRequisiteError(err error) error {
 	switch {
 	case errors.Is(err, requisites.ErrNotFound):
-		return NotFoundError()
+		return NotFoundError().WithCause(err)
 	case errors.Is(err, requisites.ErrAssignmentNotFound):
-		return NotFoundError()
+		return NotFoundError().WithCause(err)
 	case errors.Is(err, users.ErrTraderNotFound):
-		return NotFoundError()
+		return NotFoundError().WithCause(err)
 	case errors.Is(err, requisites.ErrInactiveTrader):
-		return DomainError("TRADER_NOT_ACTIVE", "Назначить реквизит можно только активному трейдеру")
+		return DomainError("TRADER_NOT_ACTIVE", "Назначить реквизит можно только активному трейдеру").WithCause(err)
 	case errors.Is(err, requisites.ErrRequisiteInOpenShift):
-		return DomainError("REQUISITE_IN_OPEN_SHIFT", "Реквизит уже находится в работе в открытой смене")
+		return DomainError("REQUISITE_IN_OPEN_SHIFT", "Реквизит уже находится в работе в открытой смене").WithCause(err)
 	case errors.Is(err, requisites.ErrPhoneBankDuplicate):
-		return DomainError("REQUISITE_PHONE_BANK_DUPLICATE", "Такой номер с этим банком уже существует")
+		return DomainError("REQUISITE_PHONE_BANK_DUPLICATE", "Такой номер с этим банком уже существует").WithCause(err)
 	case errors.Is(err, requisites.ErrProxyDuplicate):
-		return DomainError("REQUISITE_PROXY_DUPLICATE", "Такой proxy уже используется")
+		return DomainError("REQUISITE_PROXY_DUPLICATE", "Такой proxy уже используется").WithCause(err)
 	case errors.Is(err, requisites.ErrBankNotFound):
-		return DomainError("REQUISITE_BANK_NOT_FOUND", "Банк не найден")
+		return DomainError("REQUISITE_BANK_NOT_FOUND", "Банк не найден").WithCause(err)
 	case errors.Is(err, requisites.ErrInvalidInput):
 		return ValidationError(map[string]string{
 			"body": "Некоторые поля заполнены неверно",
-		})
+		}).WithCause(err)
 	default:
 		return err
 	}

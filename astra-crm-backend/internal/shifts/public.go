@@ -75,6 +75,30 @@ type PublicTurnoverEntry struct {
 	Comment          *string   `json:"comment,omitempty"`
 }
 
+type PublicInternalTransfer struct {
+	ID                          int64      `json:"id"`
+	TeamID                      int64      `json:"teamId"`
+	ShiftID                     int64      `json:"shiftId"`
+	TraderID                    int64      `json:"traderId"`
+	SourceShiftRequisiteID      int64      `json:"sourceShiftRequisiteId"`
+	SourceRequisiteID           int64      `json:"sourceRequisiteId"`
+	SourcePhone                 string     `json:"sourcePhone"`
+	SourceBankCode              string     `json:"sourceBankCode"`
+	SourceBankName              string     `json:"sourceBankName"`
+	DestinationShiftRequisiteID int64      `json:"destinationShiftRequisiteId"`
+	DestinationRequisiteID      int64      `json:"destinationRequisiteId"`
+	DestinationPhone            string     `json:"destinationPhone"`
+	DestinationBankCode         string     `json:"destinationBankCode"`
+	DestinationBankName         string     `json:"destinationBankName"`
+	AmountMinor                 int64      `json:"amountMinor"`
+	Status                      string     `json:"status"`
+	CreatedBy                   int64      `json:"createdBy"`
+	CreatedAt                   time.Time  `json:"createdAt"`
+	CancelledBy                 *int64     `json:"cancelledBy,omitempty"`
+	CancelledAt                 *time.Time `json:"cancelledAt,omitempty"`
+	Comment                     *string    `json:"comment,omitempty"`
+}
+
 type PublicCloseChecklist struct {
 	Shift               PublicShift `json:"shift"`
 	InboundImported     bool        `json:"inboundImported"`
@@ -242,6 +266,41 @@ func PublicTurnoverEntries(items []TurnoverEntry) []PublicTurnoverEntry {
 	result := make([]PublicTurnoverEntry, 0, len(items))
 	for _, item := range items {
 		result = append(result, PublicTurnoverEntryFromDomain(item))
+	}
+
+	return result
+}
+
+func PublicInternalTransferFromDomain(item InternalTransfer) PublicInternalTransfer {
+	return PublicInternalTransfer{
+		ID:                          item.ID,
+		TeamID:                      item.TeamID,
+		ShiftID:                     item.ShiftID,
+		TraderID:                    item.TraderID,
+		SourceShiftRequisiteID:      item.SourceShiftRequisiteID,
+		SourceRequisiteID:           item.SourceRequisiteID,
+		SourcePhone:                 item.SourcePhone,
+		SourceBankCode:              item.SourceBankCode,
+		SourceBankName:              item.SourceBankName,
+		DestinationShiftRequisiteID: item.DestinationShiftRequisiteID,
+		DestinationRequisiteID:      item.DestinationRequisiteID,
+		DestinationPhone:            item.DestinationPhone,
+		DestinationBankCode:         item.DestinationBankCode,
+		DestinationBankName:         item.DestinationBankName,
+		AmountMinor:                 item.AmountMinor,
+		Status:                      item.Status,
+		CreatedBy:                   item.CreatedBy,
+		CreatedAt:                   item.CreatedAt,
+		CancelledBy:                 item.CancelledBy,
+		CancelledAt:                 item.CancelledAt,
+		Comment:                     item.Comment,
+	}
+}
+
+func PublicInternalTransfers(items []InternalTransfer) []PublicInternalTransfer {
+	result := make([]PublicInternalTransfer, 0, len(items))
+	for _, item := range items {
+		result = append(result, PublicInternalTransferFromDomain(item))
 	}
 
 	return result

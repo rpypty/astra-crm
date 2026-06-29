@@ -8,7 +8,8 @@ import (
 
 func New(appEnv string) *slog.Logger {
 	opts := &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level:     slog.LevelInfo,
+		AddSource: true,
 	}
 
 	if strings.EqualFold(appEnv, "development") || strings.EqualFold(appEnv, "test") {

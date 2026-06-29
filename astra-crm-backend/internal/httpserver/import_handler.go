@@ -219,16 +219,16 @@ func unknownStatuses(parse imports.ParseResult) []string {
 func mapImportError(err error, parse imports.ParseResult) error {
 	switch {
 	case errors.Is(err, imports.ErrInvalidInput):
-		return &APIError{
+		return (&APIError{
 			Status:  http.StatusBadRequest,
 			Code:    CodeValidation,
 			Message: "Некорректные параметры импорта CSV",
 			Details: []string{"Проверьте роль, направление импорта, файл и scope. Для сверки тимлида месячный период не нужен."},
-		}
+		}).WithCause(err)
 	case errors.Is(err, imports.ErrRepositoryNotConfigured):
-		return ServiceUnavailableError()
+		return ServiceUnavailableError().WithCause(err)
 	case errors.Is(err, imports.ErrValidation):
-		return csvValidationError(parse)
+		return csvValidationError(parse).WithCause(err)
 	default:
 		return err
 	}

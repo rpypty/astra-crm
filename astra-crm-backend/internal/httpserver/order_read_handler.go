@@ -357,7 +357,7 @@ func mapOrderReadError(err error) error {
 	case errors.Is(err, orders.ErrInvalidInput):
 		return ValidationError(map[string]string{
 			"query": "Некоторые параметры фильтра заполнены неверно",
-		})
+		}).WithCause(err)
 	default:
 		return err
 	}

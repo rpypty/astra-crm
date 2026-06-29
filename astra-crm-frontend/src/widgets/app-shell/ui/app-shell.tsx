@@ -1,6 +1,7 @@
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
   BarChart3,
+  Bug,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -24,6 +25,7 @@ const teamleadNavigation = [
   { label: "Транзакции", to: "/teamlead/transactions", icon: ReceiptText },
   { label: "Сверка", to: "/teamlead/periods", icon: ClipboardList },
   { label: "Отчеты", to: "/teamlead/reports", icon: ClipboardList },
+  { label: "Дебаг", to: "/teamlead/debug", icon: Bug },
 ] as const;
 
 const traderNavigation = [
