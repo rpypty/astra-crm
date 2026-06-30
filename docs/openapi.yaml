@@ -107,6 +107,9 @@ components:
       properties:
         code: { type: string }
         name: { type: string }
+        csvAlias:
+          type: string
+          description: Custom bank name from CSV used for reconciliation matching.
     BanksListResponse:
       type: object
       required: [items]
@@ -114,6 +117,11 @@ components:
         items:
           type: array
           items: { $ref: "#/components/schemas/Bank" }
+    BankResponse:
+      type: object
+      required: [bank]
+      properties:
+        bank: { $ref: "#/components/schemas/Bank" }
     Requisite:
       type: object
       required: [id, teamId, phone, methodType, bankCode, bankName, status, targetTurnoverMinor, createdAt, updatedAt]
@@ -847,12 +855,26 @@ components:
         total: { type: integer, format: int64 }
     TeamleadReconciliationPipelineStep:
       type: object
-      required: [stage, status, issuesCount, directionsCount]
+      required: [direction, stage, status, issuesCount]
       properties:
+        direction: { type: string, enum: [inbound, outbound] }
         stage: { type: string, enum: [normalization, matching, turnover_check, transaction_check, preview] }
         status: { type: string, enum: [matched, mismatch] }
         issuesCount: { type: integer, format: int64 }
-        directionsCount: { type: integer, format: int64 }
+        facts:
+          type: array
+          items:
+            type: object
+            required: [label, value]
+            properties:
+              label: { type: string }
+              value:
+                oneOf:
+                  - type: string
+                  - type: integer
+                    format: int64
+                  - type: number
+                  - type: boolean
     TeamleadReconciliationSummary:
       type: object
       properties:
@@ -867,6 +889,7 @@ components:
         crmAmountMinor: { type: integer, format: int64 }
         crmCount: { type: integer, format: int64 }
         diffAmountMinor: { type: integer, format: int64 }
+        applyRowsCount: { type: integer, format: int64 }
     TeamleadReconciliationPreview:
       type: object
       additionalProperties:
@@ -875,6 +898,7 @@ components:
           createCount: { type: integer, format: int64 }
           updateCount: { type: integer, format: int64 }
           unchangedCount: { type: integer, format: int64 }
+          applyRowsCount: { type: integer, format: int64 }
           blockedCount: { type: integer, format: int64 }
     TeamleadReconciliationApplyDirectionResult:
       type: object
@@ -1250,6 +1274,31 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/BanksListResponse" }
         default: { $ref: "#/components/responses/Error" }
+  /teamlead/banks/{bankCode}:
+    parameters:
+      - name: bankCode
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csvAlias]
+              properties:
+                csvAlias:
+                  type: string
+                  description: Empty string clears the alias.
+      responses:
+        "200":
+          description: Bank CSV alias updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BankResponse" }
+        default: { $ref: "#/components/responses/Error" }
   /teamlead/traders:
     get:
       parameters:
@@ -1297,6 +1346,16 @@ paths:
               schema: { $ref: "#/components/schemas/TraderResponse" }
         default: { $ref: "#/components/responses/Error" }
     patch:
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                salaryRateBps: { type: integer, format: int64 }
+                externalWorkerName: { type: string }
+                status: { type: string, enum: [active, disabled, deleted] }
       responses:
         "200":
           description: Trader updated
@@ -1608,6 +1667,10 @@ paths:
               properties:
                 dateFrom: { type: string, format: date }
                 dateTo: { type: string, format: date }
+                traderIds:
+                  type: array
+                  items: { type: integer, format: int64 }
+                  description: Optional trader scope. Empty or omitted means all active traders.
                 inboundFile:
                   type: string
                   format: binary

@@ -60,9 +60,13 @@ export type components = {
     Bank: {
   code: string;
   name: string;
+  csvAlias?: string;
 };
     BanksListResponse: {
   items: components["schemas"]["Bank"][];
+};
+    BankResponse: {
+  bank: components["schemas"]["Bank"];
 };
     Requisite: {
   id: number;
@@ -584,10 +588,14 @@ export type components = {
   total: number;
 };
     TeamleadReconciliationPipelineStep: {
+  direction: "inbound" | "outbound";
   stage: "normalization" | "matching" | "turnover_check" | "transaction_check" | "preview";
   status: "matched" | "mismatch";
   issuesCount: number;
-  directionsCount: number;
+  facts?: {
+  label: string;
+  value: string | number | number | boolean;
+}[];
 };
     TeamleadReconciliationSummary: {
   rowsTotal?: number;
@@ -601,12 +609,14 @@ export type components = {
   crmAmountMinor?: number;
   crmCount?: number;
   diffAmountMinor?: number;
+  applyRowsCount?: number;
 };
     TeamleadReconciliationPreview: {
   [key: string]: {
   createCount?: number;
   updateCount?: number;
   unchangedCount?: number;
+  applyRowsCount?: number;
   blockedCount?: number;
 };
 };

@@ -31,8 +31,9 @@ func TestTeamleadReconciliationHandlerCreateParsesPeriodAndInboundFile(t *testin
 	}
 	handler := NewTeamleadReconciliationHandler(service)
 	body, contentType := teamleadReconciliationMultipart(t, map[string]string{
-		"dateFrom": "2026-06-10",
-		"dateTo":   "2026-06-12",
+		"dateFrom":  "2026-06-10",
+		"dateTo":    "2026-06-12",
+		"traderIds": "3,4",
 	}, map[string]teamleadReconciliationFile{
 		"inboundFile": {
 			name:    "inbound.csv",
@@ -66,6 +67,9 @@ func TestTeamleadReconciliationHandlerCreateParsesPeriodAndInboundFile(t *testin
 	}
 	if service.createRecord.Outbound != nil {
 		t.Fatalf("outbound input = %+v, want nil", service.createRecord.Outbound)
+	}
+	if len(service.createRecord.TraderIDs) != 2 || service.createRecord.TraderIDs[0] != 3 || service.createRecord.TraderIDs[1] != 4 {
+		t.Fatalf("trader ids = %+v, want [3 4]", service.createRecord.TraderIDs)
 	}
 	if !strings.Contains(response.Body.String(), `"status":"mismatch"`) {
 		t.Fatalf("response does not include created run status: %s", response.Body.String())

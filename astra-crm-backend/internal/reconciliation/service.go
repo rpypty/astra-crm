@@ -55,12 +55,13 @@ type Store interface {
 	QueueTeamleadReconciliationApply(ctx context.Context, record QueueTeamleadApplyRecord) (TeamleadRun, error)
 	RejectTeamleadReconciliation(ctx context.Context, record RejectTeamleadReconciliationRecord) (TeamleadRun, error)
 	ApplyQueuedTeamleadReconciliation(ctx context.Context, teamID int64, runID int64) (TeamleadRun, error)
+	ListTeamleadReconciliationBankAliases(ctx context.Context) ([]TeamleadBankAliasMatch, error)
 	ListTeamleadReconciliationTraders(ctx context.Context, teamID int64) ([]TeamleadTraderMatch, error)
 	ListTeamleadReconciliationRequisites(ctx context.Context, teamID int64) ([]TeamleadRequisiteMatch, error)
 	ListTeamleadReconciliationExternalOrders(ctx context.Context, teamID int64, direction string, innerIDs []string) ([]TeamleadExternalOrderSnapshot, error)
-	ListTeamleadReconciliationExternalOrdersInPeriod(ctx context.Context, teamID int64, direction string, dateFrom time.Time, dateTo time.Time) ([]TeamleadExternalOrderSnapshot, error)
-	CalculateTeamleadV2InboundTurnover(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time) (TeamleadTurnoverSnapshot, error)
-	CalculateTeamleadV2OutboundTransfers(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time) (TeamleadTurnoverSnapshot, error)
+	ListTeamleadReconciliationExternalOrdersInPeriod(ctx context.Context, teamID int64, direction string, dateFrom time.Time, dateTo time.Time, traderIDs []int64) ([]TeamleadExternalOrderSnapshot, error)
+	CalculateTeamleadV2InboundTurnover(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time, traderIDs []int64) (TeamleadTurnoverSnapshot, error)
+	CalculateTeamleadV2OutboundTransfers(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time, traderIDs []int64) (TeamleadTurnoverSnapshot, error)
 }
 
 type AuditService interface {
@@ -198,12 +199,20 @@ func (s *Service) CreateTeamleadReconciliation(ctx context.Context, params Creat
 	if err != nil {
 		return TeamleadRun{}, err
 	}
-	lookups := newTeamleadAnalysisLookups(traders, requisites)
+	bankAliases, err := s.store.ListTeamleadReconciliationBankAliases(ctx)
+	if err != nil {
+		return TeamleadRun{}, err
+	}
+	lookups := newTeamleadAnalysisLookups(traders, requisites, bankAliases)
+	traderScope, err := newTeamleadTraderScope(params.TraderIDs, traders)
+	if err != nil {
+		return TeamleadRun{}, err
+	}
 
 	var directions []TeamleadDirectionAnalysisRecord
 	var allItems []TeamleadItemRecord
 	if params.Inbound != nil {
-		analysis, items, err := s.analyzeTeamleadDirection(ctx, params.TeamID, imports.DirectionInbound, *params.Inbound, dateFrom, dateTo, lookups)
+		analysis, items, err := s.analyzeTeamleadDirection(ctx, params.TeamID, imports.DirectionInbound, *params.Inbound, dateFrom, dateTo, lookups, traderScope)
 		if err != nil {
 			return TeamleadRun{}, err
 		}
@@ -211,7 +220,7 @@ func (s *Service) CreateTeamleadReconciliation(ctx context.Context, params Creat
 		allItems = append(allItems, items...)
 	}
 	if params.Outbound != nil {
-		analysis, items, err := s.analyzeTeamleadDirection(ctx, params.TeamID, imports.DirectionOutbound, *params.Outbound, dateFrom, dateTo, lookups)
+		analysis, items, err := s.analyzeTeamleadDirection(ctx, params.TeamID, imports.DirectionOutbound, *params.Outbound, dateFrom, dateTo, lookups, traderScope)
 		if err != nil {
 			return TeamleadRun{}, err
 		}
@@ -433,7 +442,7 @@ func (s *Service) EnqueueTeamleadApply(teamID int64, runID int64) {
 	}()
 }
 
-func (s *Service) analyzeTeamleadDirection(ctx context.Context, teamID int64, direction string, input TeamleadCSVInput, dateFrom time.Time, dateTo time.Time, lookups teamleadAnalysisLookups) (TeamleadDirectionAnalysisRecord, []TeamleadItemRecord, error) {
+func (s *Service) analyzeTeamleadDirection(ctx context.Context, teamID int64, direction string, input TeamleadCSVInput, dateFrom time.Time, dateTo time.Time, lookups teamleadAnalysisLookups, traderScope teamleadTraderScope) (TeamleadDirectionAnalysisRecord, []TeamleadItemRecord, error) {
 	fileName := strings.TrimSpace(input.FileName)
 	if fileName == "" || len(input.Payload) == 0 {
 		return TeamleadDirectionAnalysisRecord{}, nil, ErrInvalidInput
@@ -444,7 +453,7 @@ func (s *Service) analyzeTeamleadDirection(ctx context.Context, teamID int64, di
 		return TeamleadDirectionAnalysisRecord{}, nil, &TeamleadCSVValidationError{Direction: direction, Parse: parse, Err: err}
 	}
 
-	filtered := filterRowsByPeriod(parse.Rows, dateFrom, dateTo)
+	filtered := filterRowsByTraderScope(filterRowsByPeriod(parse.Rows, dateFrom, dateTo), traderScope)
 	hash := sha256.Sum256(input.Payload)
 	summary := summarizeTLRows(direction, parse.Rows, filtered)
 	items := make([]TeamleadItemRecord, 0)
@@ -452,24 +461,18 @@ func (s *Service) analyzeTeamleadDirection(ctx context.Context, teamID int64, di
 	for _, row := range filtered {
 		traderID := lookups.matchTrader(row.WorkerName)
 		if traderID == nil {
-			items = append(items, teamleadItem(direction, TeamleadItemStageMatching, "unmatched_trader", TeamleadItemSeverityBlocker, nil, &row.ExternalInnerID, nil, nil, map[string]any{
-				"workerName": row.WorkerName,
-				"rowNumber":  row.RowNumber,
-			}, "CSV workerName is not mapped to an active trader", true))
+			items = append(items, teamleadItem(direction, TeamleadItemStageMatching, "unmatched_trader", TeamleadItemSeverityBlocker, nil, &row.ExternalInnerID, nil, nil, teamleadOrderJSON(row, nil, nil), "CSV workerName is not mapped to an active trader", true))
 		}
 
-		requisiteMatch := lookups.matchRequisite(row)
-		if requisiteMatch.issueType != "" {
-			items = append(items, teamleadItem(direction, TeamleadItemStageMatching, requisiteMatch.issueType, requisiteMatch.severity, nil, &row.ExternalInnerID, nil, requisiteMatch.requisiteID, map[string]any{
-				"methodName":     optionalStringValue(row.MethodName),
-				"requisite":      optionalStringValue(row.RequisiteRaw),
-				"requisitePhone": optionalStringValue(row.RequisitePhone),
-				"rowNumber":      row.RowNumber,
-			}, requisiteMatch.message, requisiteMatch.blocking))
+		if direction == imports.DirectionInbound {
+			requisiteMatch := lookups.matchRequisite(row)
+			if requisiteMatch.issueType != "" {
+				items = append(items, teamleadItem(direction, TeamleadItemStageMatching, requisiteMatch.issueType, requisiteMatch.severity, nil, &row.ExternalInnerID, traderID, requisiteMatch.requisiteID, teamleadOrderJSON(row, traderID, requisiteMatch.requisiteID), requisiteMatch.message, requisiteMatch.blocking))
+			}
 		}
 	}
 
-	turnover, err := s.teamleadTurnoverSnapshot(ctx, teamID, direction, dateFrom, dateTo)
+	turnover, err := s.teamleadTurnoverSnapshot(ctx, teamID, direction, dateFrom, dateTo, traderScope.traderIDs)
 	if err != nil {
 		return TeamleadDirectionAnalysisRecord{}, nil, err
 	}
@@ -484,14 +487,26 @@ func (s *Service) analyzeTeamleadDirection(ctx context.Context, teamID int64, di
 		}, "TL CSV success total differs from CRM turnover total", false))
 	}
 
-	transactionItems, createCount, updateCount, unchangedCount, err := s.teamleadTransactionDiff(ctx, teamID, direction, filtered, dateFrom, dateTo, lookups)
-	if err != nil {
-		return TeamleadDirectionAnalysisRecord{}, nil, err
+	if direction == imports.DirectionInbound {
+		transactionItems, createCount, updateCount, unchangedCount, err := s.teamleadTransactionDiff(ctx, teamID, direction, filtered, dateFrom, dateTo, lookups, traderScope.traderIDs)
+		if err != nil {
+			return TeamleadDirectionAnalysisRecord{}, nil, err
+		}
+		items = append(items, transactionItems...)
+		summary.CreateCount = createCount
+		summary.UpdateCount = updateCount
+		summary.UnchangedCount = unchangedCount
+		summary.ApplyRowsCount = createCount + updateCount + unchangedCount
+	} else {
+		createCount, updateCount, unchangedCount, err := s.teamleadApplyPlanCounts(ctx, teamID, direction, filtered, lookups)
+		if err != nil {
+			return TeamleadDirectionAnalysisRecord{}, nil, err
+		}
+		summary.CreateCount = createCount
+		summary.UpdateCount = updateCount
+		summary.UnchangedCount = unchangedCount
+		summary.ApplyRowsCount = createCount + updateCount + unchangedCount
 	}
-	items = append(items, transactionItems...)
-	summary.CreateCount = createCount
-	summary.UpdateCount = updateCount
-	summary.UnchangedCount = unchangedCount
 	for _, item := range items {
 		if item.Direction == direction && item.IsBlocking {
 			summary.BlockedCount++
@@ -501,6 +516,7 @@ func (s *Service) analyzeTeamleadDirection(ctx context.Context, teamID int64, di
 		"createCount":    summary.CreateCount,
 		"updateCount":    summary.UpdateCount,
 		"unchangedCount": summary.UnchangedCount,
+		"applyRowsCount": summary.ApplyRowsCount,
 		"blockedCount":   summary.BlockedCount,
 	}, "Preview changes calculated", false))
 
@@ -514,18 +530,18 @@ func (s *Service) analyzeTeamleadDirection(ctx context.Context, teamID int64, di
 	}, items, nil
 }
 
-func (s *Service) teamleadTurnoverSnapshot(ctx context.Context, teamID int64, direction string, dateFrom time.Time, dateTo time.Time) (TeamleadTurnoverSnapshot, error) {
+func (s *Service) teamleadTurnoverSnapshot(ctx context.Context, teamID int64, direction string, dateFrom time.Time, dateTo time.Time, traderIDs []int64) (TeamleadTurnoverSnapshot, error) {
 	switch direction {
 	case imports.DirectionInbound:
-		return s.store.CalculateTeamleadV2InboundTurnover(ctx, teamID, dateFrom, dateTo)
+		return s.store.CalculateTeamleadV2InboundTurnover(ctx, teamID, dateFrom, dateTo, traderIDs)
 	case imports.DirectionOutbound:
-		return s.store.CalculateTeamleadV2OutboundTransfers(ctx, teamID, dateFrom, dateTo)
+		return s.store.CalculateTeamleadV2OutboundTransfers(ctx, teamID, dateFrom, dateTo, traderIDs)
 	default:
 		return TeamleadTurnoverSnapshot{}, ErrInvalidInput
 	}
 }
 
-func (s *Service) teamleadTransactionDiff(ctx context.Context, teamID int64, direction string, rows []imports.ParsedOrderRow, dateFrom time.Time, dateTo time.Time, lookups teamleadAnalysisLookups) ([]TeamleadItemRecord, int64, int64, int64, error) {
+func (s *Service) teamleadTransactionDiff(ctx context.Context, teamID int64, direction string, rows []imports.ParsedOrderRow, dateFrom time.Time, dateTo time.Time, lookups teamleadAnalysisLookups, traderIDs []int64) ([]TeamleadItemRecord, int64, int64, int64, error) {
 	innerIDs := make([]string, 0, len(rows))
 	seenInnerID := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
@@ -546,7 +562,7 @@ func (s *Service) teamleadTransactionDiff(ctx context.Context, teamID int64, dir
 			existingByInnerID[item.ExternalInnerID] = item
 		}
 	}
-	periodExisting, err := s.store.ListTeamleadReconciliationExternalOrdersInPeriod(ctx, teamID, direction, dateFrom, dateTo)
+	periodExisting, err := s.store.ListTeamleadReconciliationExternalOrdersInPeriod(ctx, teamID, direction, dateFrom, dateTo, traderIDs)
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
@@ -617,9 +633,57 @@ func (s *Service) teamleadTransactionDiff(ctx context.Context, teamID int64, dir
 	return items, createCount, updateCount, unchangedCount, nil
 }
 
+func (s *Service) teamleadApplyPlanCounts(ctx context.Context, teamID int64, direction string, rows []imports.ParsedOrderRow, lookups teamleadAnalysisLookups) (int64, int64, int64, error) {
+	innerIDs := make([]string, 0, len(rows))
+	seenInnerID := make(map[string]struct{}, len(rows))
+	for _, row := range rows {
+		if _, exists := seenInnerID[row.ExternalInnerID]; exists {
+			continue
+		}
+		seenInnerID[row.ExternalInnerID] = struct{}{}
+		innerIDs = append(innerIDs, row.ExternalInnerID)
+	}
+
+	existingByInnerID := map[string]TeamleadExternalOrderSnapshot{}
+	if len(innerIDs) > 0 {
+		existing, err := s.store.ListTeamleadReconciliationExternalOrders(ctx, teamID, direction, innerIDs)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		for _, item := range existing {
+			existingByInnerID[item.ExternalInnerID] = item
+		}
+	}
+
+	createCount := int64(0)
+	updateCount := int64(0)
+	unchangedCount := int64(0)
+	for _, row := range rows {
+		traderID := lookups.matchTrader(row.WorkerName)
+		existing, exists := existingByInnerID[row.ExternalInnerID]
+		if !exists {
+			createCount++
+			continue
+		}
+		if teamleadExternalOrderChanged(existing, row, traderID, nil) {
+			updateCount++
+		} else {
+			unchangedCount++
+		}
+	}
+
+	return createCount, updateCount, unchangedCount, nil
+}
+
 type teamleadAnalysisLookups struct {
 	traderByWorker map[string]int64
+	bankByAlias    map[string]string
 	requisites     []TeamleadRequisiteMatch
+}
+
+type teamleadTraderScope struct {
+	traderIDs      []int64
+	workerNameKeys map[string]struct{}
 }
 
 type requisiteMatchResult struct {
@@ -630,12 +694,64 @@ type requisiteMatchResult struct {
 	blocking    bool
 }
 
-func newTeamleadAnalysisLookups(traders []TeamleadTraderMatch, requisites []TeamleadRequisiteMatch) teamleadAnalysisLookups {
+func newTeamleadAnalysisLookups(traders []TeamleadTraderMatch, requisites []TeamleadRequisiteMatch, bankAliases []TeamleadBankAliasMatch) teamleadAnalysisLookups {
 	traderByWorker := make(map[string]int64, len(traders))
 	for _, trader := range traders {
 		traderByWorker[strings.ToLower(strings.TrimSpace(trader.ExternalWorkerName))] = trader.TraderID
 	}
-	return teamleadAnalysisLookups{traderByWorker: traderByWorker, requisites: requisites}
+	bankByAlias := make(map[string]string, len(bankAliases))
+	for _, bank := range bankAliases {
+		if bank.CSVAlias == nil {
+			continue
+		}
+		aliasKey := normalizeBankAliasKey(*bank.CSVAlias)
+		if aliasKey == "" {
+			continue
+		}
+		bankByAlias[aliasKey] = bank.BankCode
+	}
+	return teamleadAnalysisLookups{traderByWorker: traderByWorker, bankByAlias: bankByAlias, requisites: requisites}
+}
+
+func newTeamleadTraderScope(traderIDs []int64, traders []TeamleadTraderMatch) (teamleadTraderScope, error) {
+	if len(traderIDs) == 0 {
+		return teamleadTraderScope{}, nil
+	}
+
+	tradersByID := make(map[int64]TeamleadTraderMatch, len(traders))
+	for _, trader := range traders {
+		tradersByID[trader.TraderID] = trader
+	}
+
+	seen := make(map[int64]struct{}, len(traderIDs))
+	scope := teamleadTraderScope{
+		traderIDs:      make([]int64, 0, len(traderIDs)),
+		workerNameKeys: make(map[string]struct{}, len(traderIDs)),
+	}
+	for _, traderID := range traderIDs {
+		if traderID <= 0 {
+			return teamleadTraderScope{}, ErrInvalidInput
+		}
+		if _, exists := seen[traderID]; exists {
+			continue
+		}
+		trader, ok := tradersByID[traderID]
+		if !ok {
+			return teamleadTraderScope{}, ErrInvalidInput
+		}
+		seen[traderID] = struct{}{}
+		scope.traderIDs = append(scope.traderIDs, traderID)
+		scope.workerNameKeys[strings.ToLower(strings.TrimSpace(trader.ExternalWorkerName))] = struct{}{}
+	}
+	return scope, nil
+}
+
+func (s teamleadTraderScope) containsWorkerName(workerName string) bool {
+	if len(s.traderIDs) == 0 {
+		return true
+	}
+	_, ok := s.workerNameKeys[strings.ToLower(strings.TrimSpace(workerName))]
+	return ok
 }
 
 func (l teamleadAnalysisLookups) matchTrader(workerName string) *int64 {
@@ -647,12 +763,12 @@ func (l teamleadAnalysisLookups) matchTrader(workerName string) *int64 {
 }
 
 func (l teamleadAnalysisLookups) matchRequisite(row imports.ParsedOrderRow) requisiteMatchResult {
-	bankCode := normalizeBankCodeFromCSV(row.MethodName)
+	bankCode := l.matchBankCode(row.MethodName)
 	if bankCode == "" {
 		return requisiteMatchResult{issueType: "unmatched_requisite", severity: TeamleadItemSeverityBlocker, message: "CSV bank cannot be mapped to bank_code", blocking: true}
 	}
 	phone := normalizePhoneKey(firstPresentString(row.RequisitePhone, row.RequisiteRaw))
-	card := normalizeCardKey(row.RequisiteRaw)
+	card := normalizeRequisiteCardKey(row.RequisiteRaw)
 
 	if phone != "" && card != "" {
 		for _, requisite := range l.requisites {
@@ -684,6 +800,19 @@ func (l teamleadAnalysisLookups) matchRequisite(row imports.ParsedOrderRow) requ
 		if len(matches) > 1 {
 			return requisiteMatchResult{issueType: "ambiguous_requisite", severity: TeamleadItemSeverityBlocker, message: "CSV card matches several requisites", blocking: true}
 		}
+		var bankMismatchMatches []TeamleadRequisiteMatch
+		for _, requisite := range l.requisites {
+			if requisite.NormalizedCardNumber == card {
+				bankMismatchMatches = append(bankMismatchMatches, requisite)
+			}
+		}
+		if len(bankMismatchMatches) == 1 {
+			id := bankMismatchMatches[0].ID
+			return requisiteMatchResult{requisiteID: &id, issueType: "bank_mismatch_requisite", severity: TeamleadItemSeverityBlocker, message: "CSV card matches CRM requisite with another bank", blocking: true}
+		}
+		if len(bankMismatchMatches) > 1 {
+			return requisiteMatchResult{issueType: "ambiguous_requisite", severity: TeamleadItemSeverityBlocker, message: "CSV card matches several requisites in other banks", blocking: true}
+		}
 	}
 
 	if phone != "" {
@@ -700,9 +829,32 @@ func (l teamleadAnalysisLookups) matchRequisite(row imports.ParsedOrderRow) requ
 		if len(matches) > 1 {
 			return requisiteMatchResult{issueType: "ambiguous_requisite", severity: TeamleadItemSeverityBlocker, message: "CSV phone matches several requisite cards", blocking: true}
 		}
+		var bankMismatchMatches []TeamleadRequisiteMatch
+		for _, requisite := range l.requisites {
+			if requisite.NormalizedPhone == phone {
+				bankMismatchMatches = append(bankMismatchMatches, requisite)
+			}
+		}
+		if len(bankMismatchMatches) == 1 {
+			id := bankMismatchMatches[0].ID
+			return requisiteMatchResult{requisiteID: &id, issueType: "bank_mismatch_requisite", severity: TeamleadItemSeverityBlocker, message: "CSV phone matches CRM requisite with another bank", blocking: true}
+		}
+		if len(bankMismatchMatches) > 1 {
+			return requisiteMatchResult{issueType: "ambiguous_requisite", severity: TeamleadItemSeverityBlocker, message: "CSV phone matches several requisites in other banks", blocking: true}
+		}
 	}
 
 	return requisiteMatchResult{issueType: "unmatched_requisite", severity: TeamleadItemSeverityBlocker, message: "CSV requisite does not match CRM requisite identity", blocking: true}
+}
+
+func (l teamleadAnalysisLookups) matchBankCode(value *string) string {
+	if value == nil {
+		return ""
+	}
+	if bankCode, ok := l.bankByAlias[normalizeBankAliasKey(*value)]; ok {
+		return bankCode
+	}
+	return normalizeBankCodeFromCSV(value)
 }
 
 func filterRowsByPeriod(rows []imports.ParsedOrderRow, dateFrom time.Time, dateTo time.Time) []imports.ParsedOrderRow {
@@ -712,6 +864,20 @@ func filterRowsByPeriod(rows []imports.ParsedOrderRow, dateFrom time.Time, dateT
 	for _, row := range rows {
 		rowKey := dateKey(row.CreatedAtExternal)
 		if rowKey < fromKey || rowKey > toKey {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	return filtered
+}
+
+func filterRowsByTraderScope(rows []imports.ParsedOrderRow, scope teamleadTraderScope) []imports.ParsedOrderRow {
+	if len(scope.traderIDs) == 0 {
+		return rows
+	}
+	filtered := make([]imports.ParsedOrderRow, 0, len(rows))
+	for _, row := range rows {
+		if !scope.containsWorkerName(row.WorkerName) {
 			continue
 		}
 		filtered = append(filtered, row)
@@ -785,29 +951,225 @@ func teamleadRunCanBeRejected(status string) bool {
 }
 
 func teamleadPipelineSummary(directions []TeamleadDirectionAnalysisRecord, items []TeamleadItemRecord) []map[string]any {
+	result := make([]map[string]any, 0, len(directions)*5)
+	for _, direction := range directions {
+		stages := teamleadPipelineStages(direction.Direction)
+		for _, stage := range stages {
+			stageItems := make([]TeamleadItemRecord, 0)
+			for _, item := range items {
+				if item.Direction != direction.Direction || item.Severity == TeamleadItemSeverityInfo {
+					continue
+				}
+				if stage == TeamleadItemStagePreview || item.Stage == stage {
+					stageItems = append(stageItems, item)
+				}
+			}
+			stageIssues := int64(len(stageItems))
+			if stage == TeamleadItemStagePreview {
+				stageIssues = 0
+			}
+			result = append(result, map[string]any{
+				"direction":   direction.Direction,
+				"stage":       stage,
+				"status":      map[bool]string{true: "mismatch", false: "matched"}[stageIssues > 0],
+				"issuesCount": stageIssues,
+				"facts":       teamleadPipelineStageFacts(direction.Summary, stage, stageItems),
+			})
+		}
+	}
+	return result
+}
+
+func teamleadPipelineStages(direction string) []string {
 	stages := []string{
 		TeamleadItemStageNormalization,
 		TeamleadItemStageMatching,
 		TeamleadItemStageTurnoverCheck,
-		TeamleadItemStageTransactionCheck,
-		TeamleadItemStagePreview,
 	}
-	result := make([]map[string]any, 0, len(stages))
-	for _, stage := range stages {
-		stageIssues := int64(0)
-		for _, item := range items {
-			if item.Stage == stage && item.Severity != TeamleadItemSeverityInfo {
-				stageIssues++
-			}
+	if direction == imports.DirectionInbound {
+		stages = append(stages, TeamleadItemStageTransactionCheck)
+	}
+	return append(stages, TeamleadItemStagePreview)
+}
+
+func teamleadPipelineStageFacts(summary TeamleadDirectionSummary, stage string, items []TeamleadItemRecord) []map[string]any {
+	switch stage {
+	case TeamleadItemStageNormalization:
+		return []map[string]any{
+			{"label": "Отчет", "value": teamleadNormalizationReport(summary)},
+			{"label": "Строк всего", "value": summary.RowsTotal},
+			{"label": "Строк в периоде", "value": summary.RowsInPeriod},
+			{"label": "Успешных", "value": summary.SuccessCount},
+			{"label": "Неуспешных", "value": summary.FailedCount},
 		}
-		result = append(result, map[string]any{
-			"stage":           stage,
-			"status":          map[bool]string{true: "mismatch", false: "matched"}[stageIssues > 0],
-			"issuesCount":     stageIssues,
-			"directionsCount": len(directions),
+	case TeamleadItemStageMatching:
+		facts := []map[string]any{
+			{"label": "Отчет", "value": teamleadMatchingReport(summary, items)},
+			{"label": "Строк в периоде", "value": summary.RowsInPeriod},
+			{"label": "Блокеров", "value": countBlockingTeamleadItems(items)},
+		}
+		return appendNonZeroPipelineFacts(facts, []pipelineFactCount{
+			{Label: "Не найден трейдер", Value: countTeamleadItemsByIssue(items, "unmatched_trader")},
+			{Label: "Не найден реквизит", Value: countTeamleadItemsByIssue(items, "unmatched_requisite")},
+			{Label: "Конфликт реквизита", Value: countTeamleadItemsByIssueContains(items, "conflict")},
+			{Label: "Неоднозначный матчинг", Value: countTeamleadItemsByIssue(items, "ambiguous_requisite")},
+			{Label: "Банк отличается", Value: countTeamleadItemsByIssue(items, "bank_mismatch_requisite")},
 		})
+	case TeamleadItemStageTurnoverCheck:
+		return []map[string]any{
+			{"label": "Отчет", "value": teamleadTurnoverReport(summary)},
+			{"label": "Сумма TL", "value": summary.SuccessAmountMinor},
+			{"label": "Сумма CRM", "value": summary.CRMAmountMinor},
+			{"label": "Разница", "value": summary.DiffAmountMinor},
+		}
+	case TeamleadItemStageTransactionCheck:
+		facts := []map[string]any{
+			{"label": "Отчет", "value": teamleadTransactionReport(items)},
+		}
+		return appendNonZeroPipelineFacts(facts, []pipelineFactCount{
+			{Label: "Нет в CRM", Value: countTeamleadItemsByIssue(items, "missing_in_crm")},
+			{Label: "Нет в TL CSV", Value: countTeamleadItemsByIssue(items, "missing_in_tl")},
+			{Label: "Изменилась сумма", Value: countTeamleadItemsByIssue(items, "amount_changed")},
+			{Label: "Изменился статус", Value: countTeamleadItemsByIssue(items, "status_changed")},
+			{Label: "Изменился трейдер", Value: countTeamleadItemsByIssue(items, "trader_changed")},
+			{Label: "Изменился реквизит", Value: countTeamleadItemsByIssue(items, "requisite_changed")},
+			{Label: "Изменилась дата", Value: countTeamleadItemsByIssue(items, "date_changed")},
+		})
+	case TeamleadItemStagePreview:
+		return []map[string]any{
+			{"label": "Отчет", "value": teamleadPreviewReport(summary)},
+			{"label": "К применению", "value": summary.ApplyRowsCount},
+			{"label": "Создать", "value": summary.CreateCount},
+			{"label": "Обновить", "value": summary.UpdateCount},
+			{"label": "Без изменений", "value": summary.UnchangedCount},
+			{"label": "Блокеры", "value": summary.BlockedCount},
+		}
+	default:
+		return nil
 	}
-	return result
+}
+
+type pipelineFactCount struct {
+	Label string
+	Value int64
+}
+
+func appendNonZeroPipelineFacts(facts []map[string]any, counts []pipelineFactCount) []map[string]any {
+	for _, count := range counts {
+		if count.Value <= 0 {
+			continue
+		}
+		facts = append(facts, map[string]any{"label": count.Label, "value": count.Value})
+	}
+	return facts
+}
+
+func teamleadNormalizationReport(summary TeamleadDirectionSummary) string {
+	if summary.RowsInPeriod == summary.RowsTotal {
+		return fmt.Sprintf("Все %d строк попали в выбранный период. Успешных строк: %d, неуспешных: %d.", summary.RowsTotal, summary.SuccessCount, summary.FailedCount)
+	}
+	return fmt.Sprintf("Из %d строк CSV в выбранный период попало %d. Успешных строк: %d, неуспешных: %d.", summary.RowsTotal, summary.RowsInPeriod, summary.SuccessCount, summary.FailedCount)
+}
+
+func teamleadMatchingReport(summary TeamleadDirectionSummary, items []TeamleadItemRecord) string {
+	blockers := countBlockingTeamleadItems(items)
+	if blockers == 0 {
+		return fmt.Sprintf("В CSV %d транзакций. Расхождений по матчингу нет.", summary.RowsInPeriod)
+	}
+	parts := make([]string, 0)
+	if count := countTeamleadItemsByIssue(items, "unmatched_trader"); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d: трейдер из CSV не найден среди активных трейдеров CRM", count))
+	}
+	if count := countTeamleadItemsByIssue(items, "unmatched_requisite"); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d: банк, телефон и карта из CSV не совпали ни с одним реквизитом CRM", count))
+	}
+	if count := countTeamleadItemsByIssueContains(items, "conflict"); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d: реквизит конфликтует с уже существующей связкой CRM", count))
+	}
+	if count := countTeamleadItemsByIssue(items, "ambiguous_requisite"); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d: CSV реквизит подходит к нескольким реквизитам CRM", count))
+	}
+	if count := countTeamleadItemsByIssue(items, "bank_mismatch_requisite"); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d: банк в CSV отличается от банка реквизита в CRM", count))
+	}
+	details := strings.Join(parts, ", ")
+	if details == "" {
+		details = fmt.Sprintf("%d блокеров", blockers)
+	}
+	return fmt.Sprintf("В CSV %d транзакций. Найдено %d расхождений: %s.", summary.RowsInPeriod, blockers, details)
+}
+
+func teamleadTurnoverReport(summary TeamleadDirectionSummary) string {
+	if summary.DiffAmountMinor == 0 {
+		return "Обороты TL CSV и CRM за выбранный период сходятся."
+	}
+	return "Обороты TL CSV и CRM за выбранный период не сходятся. Проверьте сумму TL, сумму CRM и разницу ниже."
+}
+
+func teamleadTransactionReport(items []TeamleadItemRecord) string {
+	parts := make([]string, 0)
+	if count := countTeamleadItemsByIssue(items, "missing_in_crm"); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d: транзакция есть в TL CSV, но не найдена в CRM", count))
+	}
+	if count := countTeamleadItemsByIssue(items, "missing_in_tl"); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d: транзакция есть в CRM, но отсутствует в TL CSV", count))
+	}
+	if count := countTeamleadItemsByIssue(items, "amount_changed"); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d: изменилась сумма", count))
+	}
+	if count := countTeamleadItemsByIssue(items, "status_changed"); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d: изменился статус", count))
+	}
+	if count := countTeamleadItemsByIssue(items, "trader_changed"); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d: изменился трейдер", count))
+	}
+	if count := countTeamleadItemsByIssue(items, "requisite_changed"); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d: изменился реквизит", count))
+	}
+	if count := countTeamleadItemsByIssue(items, "date_changed"); count > 0 {
+		parts = append(parts, fmt.Sprintf("%d: изменилась дата", count))
+	}
+	if len(parts) == 0 {
+		return "Потранзакционная сверка прошла без расхождений."
+	}
+	return "Расхождения по статусам: " + strings.Join(parts, ", ") + "."
+}
+
+func teamleadPreviewReport(summary TeamleadDirectionSummary) string {
+	if summary.BlockedCount > 0 {
+		return fmt.Sprintf("Это план применения, не ошибка этапа. Перед подтверждением осталось %d блокеров; после исправления будет применено %d строк.", summary.BlockedCount, summary.ApplyRowsCount)
+	}
+	return fmt.Sprintf("Это план применения, не расхождение. При подтверждении будет применено %d строк.", summary.ApplyRowsCount)
+}
+
+func countBlockingTeamleadItems(items []TeamleadItemRecord) int64 {
+	var count int64
+	for _, item := range items {
+		if item.IsBlocking {
+			count++
+		}
+	}
+	return count
+}
+
+func countTeamleadItemsByIssue(items []TeamleadItemRecord, issueType string) int64 {
+	var count int64
+	for _, item := range items {
+		if item.IssueType == issueType {
+			count++
+		}
+	}
+	return count
+}
+
+func countTeamleadItemsByIssueContains(items []TeamleadItemRecord, pattern string) int64 {
+	var count int64
+	for _, item := range items {
+		if strings.Contains(item.IssueType, pattern) {
+			count++
+		}
+	}
+	return count
 }
 
 func teamleadSummaryJSON(directions []TeamleadDirectionAnalysisRecord) (map[string]any, map[string]any, map[string]any) {
@@ -828,11 +1190,13 @@ func teamleadSummaryJSON(directions []TeamleadDirectionAnalysisRecord) (map[stri
 			"crmAmountMinor":     summary.CRMAmountMinor,
 			"crmCount":           summary.CRMCount,
 			"diffAmountMinor":    summary.DiffAmountMinor,
+			"applyRowsCount":     summary.ApplyRowsCount,
 		}
 		preview[direction.Direction] = map[string]any{
 			"createCount":    summary.CreateCount,
 			"updateCount":    summary.UpdateCount,
 			"unchangedCount": summary.UnchangedCount,
+			"applyRowsCount": summary.ApplyRowsCount,
 			"blockedCount":   summary.BlockedCount,
 		}
 		if direction.Direction == imports.DirectionInbound {
@@ -883,11 +1247,32 @@ func teamleadOrderJSON(row imports.ParsedOrderRow, traderID *int64, requisiteID 
 		"workerName":        row.WorkerName,
 		"traderId":          traderID,
 		"requisiteId":       requisiteID,
+		"requisite":         optionalStringValue(row.RequisiteRaw),
+		"requisiteRaw":      optionalStringValue(row.RequisiteRaw),
+		"requisitePhone":    optionalStringValue(row.RequisitePhone),
+		"methodType":        optionalStringValue(row.MethodType),
+		"methodName":        optionalStringValue(row.MethodName),
+		"recipientName":     teamleadRecipientName(row),
 		"amountMinor":       row.AmountMinor,
 		"rawStatus":         row.RawStatus,
 		"normalizedStatus":  row.NormalizedStatus,
 		"createdAtExternal": row.CreatedAtExternal,
+		"rowNumber":         row.RowNumber,
 	}
+}
+
+func teamleadRecipientName(row imports.ParsedOrderRow) string {
+	return firstNonEmptyString(
+		optionalStringValue(row.Initials),
+		rawPayloadValue(row.RawPayload, "holderName"),
+		rawPayloadValue(row.RawPayload, "holder"),
+		rawPayloadValue(row.RawPayload, "cardHolder"),
+		rawPayloadValue(row.RawPayload, "recipientName"),
+		rawPayloadValue(row.RawPayload, "recipient"),
+		rawPayloadValue(row.RawPayload, "receiverName"),
+		rawPayloadValue(row.RawPayload, "receiver"),
+		rawPayloadValue(row.RawPayload, "clientInitials"),
+	)
 }
 
 func externalOrderJSON(order TeamleadExternalOrderSnapshot) map[string]any {
@@ -897,6 +1282,11 @@ func externalOrderJSON(order TeamleadExternalOrderSnapshot) map[string]any {
 		"workerName":        order.WorkerName,
 		"traderId":          order.TraderID,
 		"requisiteId":       order.RequisiteID,
+		"requisite":         optionalStringValue(order.RequisiteRaw),
+		"requisiteRaw":      optionalStringValue(order.RequisiteRaw),
+		"requisitePhone":    optionalStringValue(order.RequisitePhone),
+		"methodType":        optionalStringValue(order.MethodType),
+		"methodName":        optionalStringValue(order.MethodName),
 		"amountMinor":       order.AmountMinor,
 		"rawStatus":         order.RawStatus,
 		"normalizedStatus":  order.NormalizedStatus,
@@ -941,6 +1331,22 @@ func firstPresentString(values ...*string) string {
 	return ""
 }
 
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func rawPayloadValue(payload map[string]string, key string) string {
+	if payload == nil {
+		return ""
+	}
+	return strings.TrimSpace(payload[key])
+}
+
 func optionalStringValue(value *string) string {
 	if value == nil {
 		return ""
@@ -973,6 +1379,16 @@ func normalizeCardKey(value *string) string {
 	return digits
 }
 
+func normalizeRequisiteCardKey(value *string) string {
+	if value == nil {
+		return ""
+	}
+	if normalizePhoneKey(*value) != "" {
+		return ""
+	}
+	return normalizeCardKey(value)
+}
+
 func normalizeBankCodeFromCSV(value *string) string {
 	if value == nil {
 		return ""
@@ -1003,6 +1419,18 @@ func normalizeBankCodeFromCSV(value *string) string {
 	default:
 		return ""
 	}
+}
+
+func normalizeBankAliasKey(value string) string {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	normalized = strings.ReplaceAll(normalized, "ё", "е")
+	var builder strings.Builder
+	for _, char := range normalized {
+		if unicode.IsLetter(char) || unicode.IsDigit(char) {
+			builder.WriteRune(char)
+		}
+	}
+	return builder.String()
 }
 
 func digitsOnly(value string) string {

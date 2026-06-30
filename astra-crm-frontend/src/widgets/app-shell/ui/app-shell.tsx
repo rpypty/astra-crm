@@ -1,11 +1,11 @@
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
   BarChart3,
-  Bug,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
   CreditCard,
+  FileSpreadsheet,
   Landmark,
   LogOut,
   ReceiptText,
@@ -22,10 +22,11 @@ const teamleadNavigation = [
   { label: "Аналитика", to: "/teamlead/dashboard", icon: BarChart3 },
   { label: "Реквизиты", to: "/teamlead/requisites", icon: CreditCard },
   { label: "Сотрудники", to: "/teamlead/traders", icon: Users },
+  { label: "Банки", to: "/teamlead/banks", icon: Landmark },
   { label: "Транзакции", to: "/teamlead/transactions", icon: ReceiptText },
   { label: "Сверка", to: "/teamlead/periods", icon: ClipboardList },
   { label: "Отчеты", to: "/teamlead/reports", icon: ClipboardList },
-  { label: "Дебаг", to: "/teamlead/debug", icon: Bug },
+  { label: "Импорт отчета Fin_ALL", to: "/teamlead/debug", icon: FileSpreadsheet },
 ] as const;
 
 const traderNavigation = [

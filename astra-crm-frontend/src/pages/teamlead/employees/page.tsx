@@ -79,6 +79,7 @@ const traderSchema = z
     id: z.number().optional(),
     login: z.string().min(1, "Введите логин"),
     password: z.string().optional(),
+    externalWorkerName: z.string().min(1, "Введите alias сотрудника из CSV"),
     salaryPercent: z.coerce.number().min(0, "Минимум 0").max(100, "Максимум 100"),
     status: z.enum(["active", "disabled"]),
   })
@@ -173,6 +174,10 @@ export function TeamleadTradersPage() {
         accessorKey: "salaryRateBps",
         header: "Ставка",
         cell: ({ row }) => <span className="tabular-nums">{bpsToPercent(row.original.salaryRateBps)}%</span>,
+      },
+      {
+        accessorKey: "externalWorkerName",
+        header: "Alias CSV",
       },
       {
         accessorKey: "assignedRequisitesCount",
@@ -287,6 +292,7 @@ export function TeamleadTradersPage() {
             id: values.id,
             login: editingTrader?.login ?? values.login,
             password: values.password,
+            externalWorkerName: values.externalWorkerName,
             salaryRateBps: percentToBps(values.salaryPercent),
             status: values.status,
           })
@@ -314,7 +320,7 @@ function TraderFormDialog({
 }) {
   const form = useForm<TraderForm>({
     resolver: zodResolver(traderSchema),
-    defaultValues: { login: "", password: "", salaryPercent: 0.5, status: "active" },
+    defaultValues: { login: "", password: "", externalWorkerName: "", salaryPercent: 0.5, status: "active" },
   });
 
   useEffect(() => {
@@ -326,12 +332,14 @@ function TraderFormDialog({
             id: trader.id,
             login: trader.login,
             password: "",
+            externalWorkerName: trader.externalWorkerName,
             salaryPercent: bpsToPercent(trader.salaryRateBps),
             status: trader.status,
           }
         : {
             login: "",
             password: generateTraderPassword(),
+            externalWorkerName: "",
             salaryPercent: 0.5,
             status: "active",
           },
@@ -348,13 +356,22 @@ function TraderFormDialog({
         <DialogHeader>
           <DialogTitle className="text-base font-semibold">{trader ? "Редактировать трейдера" : "Добавить трейдера"}</DialogTitle>
           <DialogDescription>
-            {trader ? "Логин и пароль на форме редактирования не меняются." : "Пароль можно оставить сгенерированным или задать вручную."}
+            {trader
+              ? "Логин и пароль на форме редактирования не меняются. Alias CSV можно обновить отдельно."
+              : "Логин нужен для входа, alias CSV — для сопоставления строк отчета с сотрудником."}
           </DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
           {error ? <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div> : null}
           <FormField label="Логин" error={form.formState.errors.login?.message}>
             <Input {...form.register("login")} readOnly={Boolean(trader)} className={trader ? "bg-muted" : undefined} />
+          </FormField>
+          <FormField
+            label="Alias сотрудника в CSV"
+            help="Значение из колонки workerName во внешнем отчете. CRM использует его, чтобы сопоставить CSV-строки с сотрудником."
+            error={form.formState.errors.externalWorkerName?.message}
+          >
+            <Input {...form.register("externalWorkerName")} placeholder="Например: Bliss_OP2" />
           </FormField>
           {!trader ? (
             <FormField label="Пароль" error={form.formState.errors.password?.message}>

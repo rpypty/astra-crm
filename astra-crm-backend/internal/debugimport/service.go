@@ -13,14 +13,12 @@ import (
 	"unicode"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var ErrInvalidInput = errors.New("invalid debug import input")
 
 const (
-	defaultBankCode   = "other"
 	defaultMethodType = "C2C"
 	importComment     = "Исторический импорт данных из Fin_ALL: смена восстановлена по агрегированным оборотам Excel без исходной CSV-выписки. Расхождение подтверждено для переноса архивных данных в CRM."
 )
@@ -52,6 +50,7 @@ type ImportFinAllParams struct {
 	TeamID   int64
 	FileName string
 	Data     []byte
+	BankCode string
 	DryRun   bool
 }
 
@@ -110,7 +109,8 @@ func (s *Service) StartFinAllImport(ctx context.Context, params ImportFinAllPara
 	if s == nil || s.db == nil || s.hashPassword == nil {
 		return FinAllImportJob{}, errors.New("debug import service is not configured")
 	}
-	if params.ActorID <= 0 || params.TeamID <= 0 || len(params.Data) == 0 {
+	params.BankCode = strings.TrimSpace(params.BankCode)
+	if params.ActorID <= 0 || params.TeamID <= 0 || len(params.Data) == 0 || params.BankCode == "" {
 		return FinAllImportJob{}, ErrInvalidInput
 	}
 	sourceHash := hashBytes(params.Data)
@@ -125,6 +125,7 @@ func (s *Service) StartFinAllImport(ctx context.Context, params ImportFinAllPara
 		TeamID:   params.TeamID,
 		FileName: params.FileName,
 		Data:     data,
+		BankCode: params.BankCode,
 		DryRun:   params.DryRun,
 	})
 
@@ -146,6 +147,10 @@ func (s *Service) ImportFinAll(ctx context.Context, params ImportFinAllParams) (
 		return ImportFinAllResult{}, errors.New("debug import service is not configured")
 	}
 	if params.ActorID <= 0 || params.TeamID <= 0 || len(params.Data) == 0 {
+		return ImportFinAllResult{}, ErrInvalidInput
+	}
+	bankCode := strings.TrimSpace(params.BankCode)
+	if bankCode == "" {
 		return ImportFinAllResult{}, ErrInvalidInput
 	}
 
@@ -173,7 +178,7 @@ func (s *Service) ImportFinAll(ctx context.Context, params ImportFinAllParams) (
 		_ = tx.Rollback(ctx)
 	}()
 
-	state, err := s.loadState(ctx, tx, params.TeamID, sourceHash)
+	state, err := s.loadState(ctx, tx, params.TeamID, sourceHash, bankCode)
 	if err != nil {
 		return ImportFinAllResult{}, err
 	}
@@ -181,15 +186,15 @@ func (s *Service) ImportFinAll(ctx context.Context, params ImportFinAllParams) (
 	for _, row := range rows {
 		traderID, created, err := s.ensureTrader(ctx, tx, params.TeamID, params.ActorID, row.Operator, state)
 		if err != nil {
-			return ImportFinAllResult{}, err
+			return ImportFinAllResult{}, fmt.Errorf("ensure trader row %d: %w", row.SourceRow, err)
 		}
 		if created {
 			result.CreatedTraders++
 		}
 
-		requisiteID, created, err := s.ensureRequisite(ctx, tx, params.TeamID, params.ActorID, row, state)
+		requisiteID, created, err := s.ensureRequisite(ctx, tx, params.TeamID, params.ActorID, bankCode, row, state)
 		if err != nil {
-			return ImportFinAllResult{}, err
+			return ImportFinAllResult{}, fmt.Errorf("ensure requisite row %d phone %s card %s: %w", row.SourceRow, row.Phone, row.Card, err)
 		}
 		if created {
 			result.CreatedRequisites++
@@ -204,7 +209,7 @@ func (s *Service) ImportFinAll(ctx context.Context, params ImportFinAllParams) (
 
 			shiftID, created, err := s.ensureHistoricalShift(ctx, tx, params.TeamID, traderID, circle.Date, state)
 			if err != nil {
-				return ImportFinAllResult{}, err
+				return ImportFinAllResult{}, fmt.Errorf("ensure shift row %d circle %d: %w", row.SourceRow, circle.Number, err)
 			}
 			if created {
 				result.CreatedShifts++
@@ -212,28 +217,28 @@ func (s *Service) ImportFinAll(ctx context.Context, params ImportFinAllParams) (
 
 			assignmentID, err := s.createClosedAssignment(ctx, tx, params.TeamID, params.ActorID, traderID, requisiteID, circle)
 			if err != nil {
-				return ImportFinAllResult{}, err
+				return ImportFinAllResult{}, fmt.Errorf("create assignment row %d circle %d: %w", row.SourceRow, circle.Number, err)
 			}
 			result.CreatedAssignments++
 
 			shiftRequisiteID, err := s.createClosedShiftRequisite(ctx, tx, params.TeamID, traderID, requisiteID, assignmentID, shiftID, row, circle)
 			if err != nil {
-				return ImportFinAllResult{}, err
+				return ImportFinAllResult{}, fmt.Errorf("create shift requisite row %d circle %d: %w", row.SourceRow, circle.Number, err)
 			}
 			result.CreatedShiftRequisites++
 
 			if err := s.linkAssignmentToShiftRequisite(ctx, tx, params.TeamID, assignmentID, shiftRequisiteID, circle); err != nil {
-				return ImportFinAllResult{}, err
+				return ImportFinAllResult{}, fmt.Errorf("link assignment row %d circle %d: %w", row.SourceRow, circle.Number, err)
 			}
 			s.addShiftTotals(state, shiftID, traderID, circle)
 			if circle.Blocked {
 				if err := s.markRequisiteBlocked(ctx, tx, params.TeamID, requisiteID); err != nil {
-					return ImportFinAllResult{}, err
+					return ImportFinAllResult{}, fmt.Errorf("mark requisite blocked row %d circle %d: %w", row.SourceRow, circle.Number, err)
 				}
 				result.BlockedRequisites++
 			}
 			if err := s.rememberSourceItem(ctx, tx, params.TeamID, sourceHash, row.SourceRow, circle.Number, params.ActorID, traderID, requisiteID, assignmentID, shiftID, shiftRequisiteID); err != nil {
-				return ImportFinAllResult{}, err
+				return ImportFinAllResult{}, fmt.Errorf("remember source item row %d circle %d: %w", row.SourceRow, circle.Number, err)
 			}
 			state.existingSourceItems[sourceKey] = struct{}{}
 			result.ImportedCircles++
@@ -245,12 +250,12 @@ func (s *Service) ImportFinAll(ctx context.Context, params ImportFinAllParams) (
 
 	for shiftID, totals := range state.shiftTotals {
 		if err := s.insertAcceptedReconciliations(ctx, tx, params.TeamID, params.ActorID, shiftID, *totals); err != nil {
-			return ImportFinAllResult{}, err
+			return ImportFinAllResult{}, fmt.Errorf("insert accepted reconciliations shift %d: %w", shiftID, err)
 		}
 	}
 
 	if err := s.writeSummaryAudit(ctx, tx, params.TeamID, params.ActorID, result); err != nil {
-		return ImportFinAllResult{}, err
+		return ImportFinAllResult{}, fmt.Errorf("write import audit: %w", err)
 	}
 
 	if params.DryRun {
@@ -393,7 +398,7 @@ func userFacingJobError(err error) string {
 	}
 }
 
-func (s *Service) loadState(ctx context.Context, tx pgx.Tx, teamID int64, sourceHash string) (applyState, error) {
+func (s *Service) loadState(ctx context.Context, tx pgx.Tx, teamID int64, sourceHash string, bankCode string) (applyState, error) {
 	state := applyState{
 		tradersByWorker:     map[string]int64{},
 		requisitesByPhone:   map[string]int64{},
@@ -428,7 +433,7 @@ func (s *Service) loadState(ctx context.Context, tx pgx.Tx, teamID int64, source
 		SELECT id, phone
 		FROM requisites
 		WHERE team_id = $1 AND bank_code = $2 AND deleted_at IS NULL
-	`, teamID, defaultBankCode)
+	`, teamID, bankCode)
 	if err != nil {
 		return state, err
 	}
@@ -492,12 +497,13 @@ func (s *Service) ensureTrader(ctx context.Context, tx pgx.Tx, teamID int64, act
 		err = tx.QueryRow(ctx, `
 			INSERT INTO users (team_id, role, login, password_hash, status)
 			VALUES ($1, 'trader', $2, $3, 'active')
+			ON CONFLICT (login) DO NOTHING
 			RETURNING id
 		`, teamID, login, passwordHash).Scan(&userID)
 		if err == nil {
 			break
 		}
-		if !isUniqueViolation(err) {
+		if !errors.Is(err, pgx.ErrNoRows) {
 			return 0, false, err
 		}
 	}
@@ -522,30 +528,70 @@ func (s *Service) ensureTrader(ctx context.Context, tx pgx.Tx, teamID int64, act
 	return userID, true, nil
 }
 
-func (s *Service) ensureRequisite(ctx context.Context, tx pgx.Tx, teamID int64, actorID int64, row finAllRow, state applyState) (int64, bool, error) {
+func (s *Service) ensureRequisite(ctx context.Context, tx pgx.Tx, teamID int64, actorID int64, bankCode string, row finAllRow, state applyState) (int64, bool, error) {
 	if id, ok := state.requisitesByPhone[row.Phone]; ok {
+		if err := s.updateRequisiteDetails(ctx, tx, teamID, actorID, id, row); err != nil {
+			return 0, false, err
+		}
 		return id, false, nil
 	}
 
 	var requisiteID int64
 	err := tx.QueryRow(ctx, `
-		INSERT INTO requisites (team_id, phone, method_type, bank_code, status, employee_comment, created_by)
-		VALUES ($1, $2, $3, $4, 'active', $5, $6)
+		INSERT INTO requisites (
+			team_id, phone, method_type, bank_code, status,
+			holder_name, card_number, details_filled_at, details_filled_by,
+			employee_comment, created_by
+		)
+		VALUES ($1, $2, $3, $4, 'active', $5, $6, now(), $7, $8, $7)
 		RETURNING id
-	`, teamID, row.Phone, defaultMethodType, defaultBankCode, "Создано debug-импортом Fin_ALL", actorID).Scan(&requisiteID)
+	`, teamID, row.Phone, defaultMethodType, bankCode, row.Holder, row.Card, actorID, "Создано debug-импортом Fin_ALL").Scan(&requisiteID)
 	if err != nil {
 		return 0, false, err
 	}
 	state.requisitesByPhone[row.Phone] = requisiteID
 	if err := s.writeAudit(ctx, tx, teamID, actorID, "requisite.created", "requisite", requisiteID, map[string]any{
-		"id":       requisiteID,
-		"phone":    row.Phone,
-		"bankCode": defaultBankCode,
-		"source":   "fin_all_debug_import",
+		"id":         requisiteID,
+		"phone":      row.Phone,
+		"bankCode":   bankCode,
+		"cardNumber": row.Card,
+		"holderName": row.Holder,
+		"source":     "fin_all_debug_import",
 	}, nil); err != nil {
 		return 0, false, err
 	}
 	return requisiteID, true, nil
+}
+
+func (s *Service) updateRequisiteDetails(ctx context.Context, tx pgx.Tx, teamID int64, actorID int64, requisiteID int64, row finAllRow) error {
+	tag, err := tx.Exec(ctx, `
+		UPDATE requisites
+		SET holder_name = $4,
+			card_number = $5,
+			details_filled_at = COALESCE(details_filled_at, now()),
+			details_filled_by = COALESCE(details_filled_by, $3),
+			updated_at = now()
+		WHERE team_id = $1
+			AND id = $2
+			AND (
+				holder_name IS DISTINCT FROM $4
+				OR card_number IS DISTINCT FROM $5
+				OR details_filled_at IS NULL
+				OR details_filled_by IS NULL
+			)
+	`, teamID, requisiteID, actorID, row.Holder, row.Card)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil
+	}
+	return s.writeAudit(ctx, tx, teamID, actorID, "requisite.updated", "requisite", requisiteID, map[string]any{
+		"id":         requisiteID,
+		"cardNumber": row.Card,
+		"holderName": row.Holder,
+		"source":     "fin_all_debug_import",
+	}, nil)
 }
 
 func (s *Service) ensureHistoricalShift(ctx context.Context, tx pgx.Tx, teamID int64, traderID int64, shiftDate time.Time, state applyState) (int64, bool, error) {
@@ -738,9 +784,4 @@ func normalizeLogin(value string) string {
 		}
 	}
 	return strings.Trim(builder.String(), "_")
-}
-
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

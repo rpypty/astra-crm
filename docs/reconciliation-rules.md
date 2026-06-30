@@ -394,6 +394,7 @@ It must run even if aggregated turnover totals match.
 Requisite matching:
 
 ```text
+CSV bank is mapped to bank_code by global bank csv_alias first, then by built-in bank name fallback.
 Primary key: team_id + bank_code + normalized_phone + normalized_card_number
 If CSV has bank + phone + card -> match by all three values.
 If CSV has bank + card only -> match by card only when it is unique inside the team/bank.

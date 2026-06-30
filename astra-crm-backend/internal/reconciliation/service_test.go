@@ -260,6 +260,194 @@ func TestServiceCreateTeamleadReconciliationAlwaysRunsTransactionDiff(t *testing
 	}
 }
 
+func TestServiceCreateTeamleadReconciliationMatchesBankByAlias(t *testing.T) {
+	cardNumber := "1234567890123456"
+	traderID := int64(3)
+	requisiteID := int64(20)
+	bankAlias := "Project Ozon Alias"
+	store := &fakeStore{
+		teamleadTraders: []TeamleadTraderMatch{
+			{TraderID: traderID, ExternalWorkerName: "Bliss_OP1"},
+		},
+		teamleadRequisites: []TeamleadRequisiteMatch{
+			{
+				ID:                   requisiteID,
+				BankCode:             "ozon",
+				Phone:                "79991234567",
+				CardNumber:           &cardNumber,
+				NormalizedPhone:      "79991234567",
+				NormalizedCardNumber: cardNumber,
+			},
+		},
+		teamleadBankAliases: []TeamleadBankAliasMatch{
+			{BankCode: "ozon", BankName: "Ozon Банк", CSVAlias: &bankAlias},
+		},
+		teamleadInboundTurnover: TeamleadTurnoverSnapshot{
+			AmountMinor: 1000,
+			Count:       1,
+		},
+		teamleadExternalOrders: []TeamleadExternalOrderSnapshot{
+			{
+				ID:                900,
+				Direction:         imports.DirectionInbound,
+				ExternalInnerID:   "in-1",
+				WorkerName:        "Bliss_OP1",
+				TraderID:          &traderID,
+				RequisiteID:       &requisiteID,
+				AmountMinor:       1000,
+				RawStatus:         "hand_success",
+				NormalizedStatus:  imports.NormalizedStatusSuccess,
+				CreatedAtExternal: time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	service := NewService(store, nil)
+	inboundCSV := []byte("id|foreignId|innerId|requisite|requisitePhone|methodName|amount|currency|status|createdAt|workerName\n" +
+		"1|f1|in-1|1234567890123456|+7 (999) 123-45-67|Project Ozon Alias|10.00|RUB|hand_success|10.06.2026 12:00:00|Bliss_OP1\n")
+
+	_, err := service.CreateTeamleadReconciliation(context.Background(), CreateTeamleadReconciliationParams{
+		ActorID:  1,
+		TeamID:   2,
+		DateFrom: time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		DateTo:   time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		Inbound: &TeamleadCSVInput{
+			FileName: "inbound.csv",
+			Payload:  inboundCSV,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTeamleadReconciliation() error = %v", err)
+	}
+	if hasTeamleadItem(store.createdTeamleadAnalysis.Items, TeamleadItemStageMatching, "unmatched_requisite") {
+		t.Fatalf("items = %+v, did not expect unmatched_requisite", store.createdTeamleadAnalysis.Items)
+	}
+	if !hasTeamleadItemWithRequisiteID(store.createdTeamleadAnalysis.Items, requisiteID) {
+		t.Fatalf("items = %+v, want matched requisite id %d in analysis items", store.createdTeamleadAnalysis.Items, requisiteID)
+	}
+}
+
+func TestServiceCreateTeamleadReconciliationMatchesPhoneOnlyRequisiteFromRequisiteField(t *testing.T) {
+	traderID := int64(10)
+	requisiteID := int64(136)
+	store := &fakeStore{
+		teamleadTraders: []TeamleadTraderMatch{
+			{TraderID: traderID, ExternalWorkerName: "FinCore_Gos_Op2"},
+		},
+		teamleadRequisites: []TeamleadRequisiteMatch{
+			{
+				ID:                   requisiteID,
+				BankCode:             "ozon",
+				Phone:                "79196041583",
+				NormalizedPhone:      "79196041583",
+				NormalizedCardNumber: "",
+			},
+		},
+		teamleadInboundTurnover: TeamleadTurnoverSnapshot{
+			AmountMinor: 350700,
+			Count:       1,
+		},
+		teamleadExternalOrders: []TeamleadExternalOrderSnapshot{
+			{
+				ID:                900,
+				Direction:         imports.DirectionInbound,
+				ExternalInnerID:   "9fd0d322-c68d-49b3-8c21-169bab3a4d49",
+				WorkerName:        "FinCore_Gos_Op2",
+				TraderID:          &traderID,
+				RequisiteID:       &requisiteID,
+				AmountMinor:       350700,
+				RawStatus:         "hand_success",
+				NormalizedStatus:  imports.NormalizedStatusSuccess,
+				CreatedAtExternal: time.Date(2026, 6, 22, 12, 52, 25, 0, time.UTC),
+			},
+		},
+	}
+	service := NewService(store, nil)
+	inboundCSV := []byte("id|foreignId|innerId|requisite|requisitePhone|methodName|methodType|amount|currency|status|createdAt|workerName\n" +
+		"828856|WbzVNXaadoFAWVpsxphdpD|9fd0d322-c68d-49b3-8c21-169bab3a4d49|+79196041583||Озон Банк (Ozon)|СБП|3507.0|RUB|hand_success|22.06.2026 12:52:25|FinCore_Gos_Op2\n")
+
+	_, err := service.CreateTeamleadReconciliation(context.Background(), CreateTeamleadReconciliationParams{
+		ActorID:  1,
+		TeamID:   2,
+		DateFrom: time.Date(2026, 6, 5, 0, 0, 0, 0, time.UTC),
+		DateTo:   time.Date(2026, 6, 23, 0, 0, 0, 0, time.UTC),
+		Inbound: &TeamleadCSVInput{
+			FileName: "inbound.csv",
+			Payload:  inboundCSV,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTeamleadReconciliation() error = %v", err)
+	}
+	if hasTeamleadItem(store.createdTeamleadAnalysis.Items, TeamleadItemStageMatching, "unmatched_requisite") {
+		t.Fatalf("items = %+v, did not expect unmatched_requisite", store.createdTeamleadAnalysis.Items)
+	}
+	if !hasTeamleadItemWithRequisiteID(store.createdTeamleadAnalysis.Items, requisiteID) {
+		t.Fatalf("items = %+v, want matched requisite id %d in analysis items", store.createdTeamleadAnalysis.Items, requisiteID)
+	}
+}
+
+func TestServiceCreateTeamleadReconciliationFiltersBySelectedTraders(t *testing.T) {
+	cardNumber := "1234567890123456"
+	selectedTraderID := int64(3)
+	otherTraderID := int64(4)
+	store := &fakeStore{
+		teamleadTraders: []TeamleadTraderMatch{
+			{TraderID: selectedTraderID, ExternalWorkerName: "Bliss_OP1"},
+			{TraderID: otherTraderID, ExternalWorkerName: "Bliss_OP2"},
+		},
+		teamleadRequisites: []TeamleadRequisiteMatch{
+			{
+				ID:                   20,
+				BankCode:             "sber",
+				Phone:                "79991234567",
+				CardNumber:           &cardNumber,
+				NormalizedPhone:      "79991234567",
+				NormalizedCardNumber: cardNumber,
+			},
+		},
+		teamleadInboundTurnover: TeamleadTurnoverSnapshot{AmountMinor: 1000, Count: 1},
+		teamleadExternalOrdersInPeriod: []TeamleadExternalOrderSnapshot{
+			{
+				ID:                901,
+				Direction:         imports.DirectionInbound,
+				ExternalInnerID:   "other-crm",
+				WorkerName:        "Bliss_OP2",
+				TraderID:          &otherTraderID,
+				AmountMinor:       2000,
+				RawStatus:         "hand_success",
+				NormalizedStatus:  imports.NormalizedStatusSuccess,
+				CreatedAtExternal: time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	service := NewService(store, nil)
+	inboundCSV := []byte("id|foreignId|innerId|requisite|requisitePhone|methodName|amount|currency|status|createdAt|workerName\n" +
+		"1|f1|selected|1234567890123456|+7 (999) 123-45-67|Сбер|10.00|RUB|hand_success|10.06.2026 12:00:00|Bliss_OP1\n" +
+		"2|f2|other|1234567890123456|+7 (999) 123-45-67|Сбер|20.00|RUB|hand_success|10.06.2026 12:00:00|Bliss_OP2\n")
+
+	_, err := service.CreateTeamleadReconciliation(context.Background(), CreateTeamleadReconciliationParams{
+		ActorID:   1,
+		TeamID:    2,
+		DateFrom:  time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		DateTo:    time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		TraderIDs: []int64{selectedTraderID},
+		Inbound: &TeamleadCSVInput{
+			FileName: "inbound.csv",
+			Payload:  inboundCSV,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTeamleadReconciliation() error = %v", err)
+	}
+	summary := store.createdTeamleadAnalysis.Directions[0].Summary
+	if summary.RowsInPeriod != 1 || summary.SuccessAmountMinor != 1000 {
+		t.Fatalf("summary = %+v, want only selected trader row", summary)
+	}
+	if hasTeamleadItemWithInnerID(store.createdTeamleadAnalysis.Items, "other-crm") {
+		t.Fatalf("items = %+v, did not expect CRM item for unselected trader", store.createdTeamleadAnalysis.Items)
+	}
+}
+
 func TestServiceCreateTeamleadReconciliationRejectsDuplicateInnerID(t *testing.T) {
 	store := &fakeStore{}
 	service := NewService(store, nil)
@@ -286,6 +474,61 @@ func TestServiceCreateTeamleadReconciliationRejectsDuplicateInnerID(t *testing.T
 	}
 	if store.createdTeamleadAnalysis.TeamID != 0 {
 		t.Fatalf("created analysis = %+v, want no persisted run", store.createdTeamleadAnalysis)
+	}
+}
+
+func TestServiceCreateTeamleadReconciliationOutboundBuildsApplyPlanWithoutTransactionDiff(t *testing.T) {
+	traderID := int64(3)
+	store := &fakeStore{
+		teamleadTraders: []TeamleadTraderMatch{
+			{TraderID: traderID, ExternalWorkerName: "Bliss_OP1"},
+		},
+		teamleadOutboundTransfers: TeamleadTurnoverSnapshot{
+			AmountMinor: 1700,
+			Count:       2,
+		},
+		teamleadExternalOrders: []TeamleadExternalOrderSnapshot{
+			{
+				ID:                900,
+				Direction:         imports.DirectionOutbound,
+				ExternalInnerID:   "out-existing",
+				WorkerName:        "Bliss_OP1",
+				TraderID:          &traderID,
+				AmountMinor:       500,
+				RawStatus:         "paid",
+				NormalizedStatus:  imports.NormalizedStatusSuccess,
+				CreatedAtExternal: time.Date(2026, 6, 10, 13, 0, 0, 0, time.UTC),
+			},
+		},
+	}
+	service := NewService(store, nil)
+	outboundCSV := []byte("id|foreignId|innerId|requisite|requisitePhone|methodName|amount|currency|status|createdAt|workerName\n" +
+		"1|f1|out-new|+7 (999) 111-22-33||Озон Банк (Ozon)|10.00|RUB|paid|10.06.2026 12:00:00|Bliss_OP1\n" +
+		"2|f2|out-existing|+7 (999) 222-33-44||Озон Банк (Ozon)|7.00|RUB|paid|10.06.2026 13:00:00|Bliss_OP1\n")
+
+	_, err := service.CreateTeamleadReconciliation(context.Background(), CreateTeamleadReconciliationParams{
+		ActorID:  1,
+		TeamID:   2,
+		DateFrom: time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		DateTo:   time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		Outbound: &TeamleadCSVInput{
+			FileName: "outbound.csv",
+			Payload:  outboundCSV,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTeamleadReconciliation() error = %v", err)
+	}
+	if len(store.createdTeamleadAnalysis.Directions) != 1 {
+		t.Fatalf("directions count = %d, want 1", len(store.createdTeamleadAnalysis.Directions))
+	}
+	summary := store.createdTeamleadAnalysis.Directions[0].Summary
+	if summary.CreateCount != 1 || summary.UpdateCount != 1 || summary.UnchangedCount != 0 || summary.ApplyRowsCount != 2 {
+		t.Fatalf("outbound preview counts = create:%d update:%d unchanged:%d apply:%d, want 1/1/0/2", summary.CreateCount, summary.UpdateCount, summary.UnchangedCount, summary.ApplyRowsCount)
+	}
+	if hasTeamleadItem(store.createdTeamleadAnalysis.Items, TeamleadItemStageTransactionCheck, "missing_in_crm") ||
+		hasTeamleadItem(store.createdTeamleadAnalysis.Items, TeamleadItemStageTransactionCheck, "amount_changed") {
+		t.Fatalf("items = %+v, did not expect outbound transaction diff items", store.createdTeamleadAnalysis.Items)
 	}
 }
 
@@ -456,6 +699,53 @@ func TestServiceCreateTeamleadReconciliationDetectsCardPhoneConflict(t *testing.
 	}
 	if !hasTeamleadItem(store.createdTeamleadAnalysis.Items, TeamleadItemStageMatching, "conflict_requisite") {
 		t.Fatalf("items = %+v, want conflict_requisite", store.createdTeamleadAnalysis.Items)
+	}
+}
+
+func TestServiceCreateTeamleadReconciliationDetectsRequisiteBankMismatch(t *testing.T) {
+	store := &fakeStore{
+		teamleadTraders: []TeamleadTraderMatch{
+			{TraderID: 3, ExternalWorkerName: "Fin_Core_Op5"},
+		},
+		teamleadRequisites: []TeamleadRequisiteMatch{
+			{
+				ID:                   20,
+				BankCode:             "other",
+				Phone:                "79298009554",
+				NormalizedPhone:      "79298009554",
+				NormalizedCardNumber: "",
+			},
+		},
+		teamleadInboundTurnover: TeamleadTurnoverSnapshot{
+			AmountMinor: 1000,
+			Count:       1,
+		},
+	}
+	service := NewService(store, nil)
+	inboundCSV := []byte("id|foreignId|innerId|requisite|requisitePhone|methodName|amount|currency|status|createdAt|workerName\n" +
+		"1|f1|in-1||+7 (929) 800-95-54|Озон Банк (Ozon)|10.00|RUB|hand_success|10.06.2026 12:00:00|Fin_Core_Op5\n")
+
+	run, err := service.CreateTeamleadReconciliation(context.Background(), CreateTeamleadReconciliationParams{
+		ActorID:  1,
+		TeamID:   2,
+		DateFrom: time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		DateTo:   time.Date(2026, 6, 10, 0, 0, 0, 0, time.UTC),
+		Inbound: &TeamleadCSVInput{
+			FileName: "inbound.csv",
+			Payload:  inboundCSV,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateTeamleadReconciliation() error = %v", err)
+	}
+	if run.BlockedCount == 0 {
+		t.Fatalf("blocked count = %d, want blocker for bank mismatch", run.BlockedCount)
+	}
+	if !hasTeamleadItem(store.createdTeamleadAnalysis.Items, TeamleadItemStageMatching, "bank_mismatch_requisite") {
+		t.Fatalf("items = %+v, want bank_mismatch_requisite", store.createdTeamleadAnalysis.Items)
+	}
+	if !hasTeamleadItemWithRequisiteID(store.createdTeamleadAnalysis.Items, 20) {
+		t.Fatalf("items = %+v, want matched requisite id 20", store.createdTeamleadAnalysis.Items)
 	}
 }
 
@@ -808,6 +1098,24 @@ func hasTeamleadItem(items []TeamleadItemRecord, stage string, issueType string)
 	return false
 }
 
+func hasTeamleadItemWithInnerID(items []TeamleadItemRecord, innerID string) bool {
+	for _, item := range items {
+		if item.ExternalInnerID != nil && *item.ExternalInnerID == innerID {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTeamleadItemWithRequisiteID(items []TeamleadItemRecord, requisiteID int64) bool {
+	for _, item := range items {
+		if item.RequisiteID != nil && *item.RequisiteID == requisiteID {
+			return true
+		}
+	}
+	return false
+}
+
 type fakeStore struct {
 	recalculateCalled                        bool
 	recalculateRecord                        RecalculateTraderInboundRecord
@@ -847,6 +1155,7 @@ type fakeStore struct {
 	appliedTeamleadRun                       TeamleadRun
 	teamleadTraders                          []TeamleadTraderMatch
 	teamleadRequisites                       []TeamleadRequisiteMatch
+	teamleadBankAliases                      []TeamleadBankAliasMatch
 	teamleadExternalOrders                   []TeamleadExternalOrderSnapshot
 	teamleadExternalOrdersInPeriod           []TeamleadExternalOrderSnapshot
 	teamleadInboundTurnover                  TeamleadTurnoverSnapshot
@@ -1122,6 +1431,10 @@ func (s *fakeStore) ListTeamleadReconciliationRequisites(ctx context.Context, te
 	return s.teamleadRequisites, nil
 }
 
+func (s *fakeStore) ListTeamleadReconciliationBankAliases(ctx context.Context) ([]TeamleadBankAliasMatch, error) {
+	return s.teamleadBankAliases, nil
+}
+
 func (s *fakeStore) ListTeamleadReconciliationExternalOrders(ctx context.Context, teamID int64, direction string, innerIDs []string) ([]TeamleadExternalOrderSnapshot, error) {
 	result := make([]TeamleadExternalOrderSnapshot, 0, len(s.teamleadExternalOrders))
 	allowed := map[string]struct{}{}
@@ -1139,22 +1452,37 @@ func (s *fakeStore) ListTeamleadReconciliationExternalOrders(ctx context.Context
 	return result, nil
 }
 
-func (s *fakeStore) ListTeamleadReconciliationExternalOrdersInPeriod(ctx context.Context, teamID int64, direction string, dateFrom time.Time, dateTo time.Time) ([]TeamleadExternalOrderSnapshot, error) {
+func (s *fakeStore) ListTeamleadReconciliationExternalOrdersInPeriod(ctx context.Context, teamID int64, direction string, dateFrom time.Time, dateTo time.Time, traderIDs []int64) ([]TeamleadExternalOrderSnapshot, error) {
 	result := make([]TeamleadExternalOrderSnapshot, 0, len(s.teamleadExternalOrdersInPeriod))
 	for _, order := range s.teamleadExternalOrdersInPeriod {
-		if order.Direction == direction {
+		if order.Direction == direction && testTraderIDAllowed(order.TraderID, traderIDs) {
 			result = append(result, order)
 		}
 	}
 	return result, nil
 }
 
-func (s *fakeStore) CalculateTeamleadV2InboundTurnover(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time) (TeamleadTurnoverSnapshot, error) {
+func (s *fakeStore) CalculateTeamleadV2InboundTurnover(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time, traderIDs []int64) (TeamleadTurnoverSnapshot, error) {
 	return s.teamleadInboundTurnover, nil
 }
 
-func (s *fakeStore) CalculateTeamleadV2OutboundTransfers(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time) (TeamleadTurnoverSnapshot, error) {
+func (s *fakeStore) CalculateTeamleadV2OutboundTransfers(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time, traderIDs []int64) (TeamleadTurnoverSnapshot, error) {
 	return s.teamleadOutboundTransfers, nil
+}
+
+func testTraderIDAllowed(traderID *int64, allowed []int64) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	if traderID == nil {
+		return false
+	}
+	for _, allowedID := range allowed {
+		if *traderID == allowedID {
+			return true
+		}
+	}
+	return false
 }
 
 type fakeAuditService struct {

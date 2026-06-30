@@ -30,6 +30,33 @@ CREATE TABLE teams (
 
 ---
 
+## banks
+
+```sql
+CREATE TABLE banks (
+    id BIGSERIAL PRIMARY KEY,
+    code TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    csv_alias TEXT,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+    sort_order BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX uq_banks_csv_alias_normalized
+ON banks (regexp_replace(replace(lower(btrim(csv_alias)), 'ё', 'е'), '[^[:alpha:][:digit:]]+', '', 'g'))
+WHERE csv_alias IS NOT NULL
+  AND regexp_replace(replace(lower(btrim(csv_alias)), 'ё', 'е'), '[^[:alpha:][:digit:]]+', '', 'g') <> '';
+```
+
+Notes:
+
+- `csv_alias` is global for MVP. Later it can move to a team/project-scoped bank settings table.
+- Teamlead reconciliation uses `csv_alias` to map external CSV bank names to CRM `bank_code`.
+
+---
+
 ## users
 
 ```sql

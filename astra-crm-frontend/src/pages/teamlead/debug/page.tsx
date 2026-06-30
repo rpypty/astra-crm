@@ -1,21 +1,28 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Bug, FileSpreadsheet, Upload } from "lucide-react";
-import { useEffect, useState } from "react";
+import { AlertTriangle, FileSpreadsheet, RefreshCw, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { MoneyCell } from "@/entities/order/ui/money-cell";
 import { api } from "@/shared/api/api";
+import { queryKeys } from "@/shared/api/query-keys";
 import type { DebugFinAllImportJob, DebugFinAllImportResult } from "@/shared/model/domain";
+import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
 import { FormField } from "@/shared/ui/form-field";
-import { Input } from "@/shared/ui/input";
+import { SearchableSelect, type SearchableSelectOption } from "@/shared/ui/searchable-select";
 
 export function TeamleadDebugPage() {
   const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const [dryRun, setDryRun] = useState(true);
+  const [bankCode, setBankCode] = useState("");
   const [jobId, setJobId] = useState<number | null>(null);
   const [invalidatedJobId, setInvalidatedJobId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const banksQuery = useQuery({
+    queryKey: queryKeys.banks,
+    queryFn: api.banks.list,
+  });
   const jobQuery = useQuery({
     queryKey: ["debug", "fin-all-import-job", jobId],
     queryFn: () => api.debug.finAllImportJob(jobId ?? 0),
@@ -25,6 +32,10 @@ export function TeamleadDebugPage() {
       return status === "queued" || status === "running" ? 1500 : false;
     },
   });
+  const bankOptions: SearchableSelectOption[] = [
+    { value: "", label: "Выберите банк" },
+    ...(banksQuery.data ?? []).map((bank) => ({ value: bank.code, label: bank.name })),
+  ];
 
   const mutation = useMutation({
     mutationFn: api.debug.importFinAll,
@@ -40,6 +51,11 @@ export function TeamleadDebugPage() {
   const result = job?.result ?? null;
   const isProcessing = mutation.isPending || (jobId !== null && !job) || job?.status === "queued" || job?.status === "running";
   useEffect(() => {
+    if (!bankCode && banksQuery.data?.[0]) {
+      setBankCode(banksQuery.data[0].code);
+    }
+  }, [bankCode, banksQuery.data]);
+  useEffect(() => {
     if (!job || job.status !== "succeeded" || job.dryRun || invalidatedJobId === job.id) {
       return;
     }
@@ -49,37 +65,64 @@ export function TeamleadDebugPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-foreground">Дебаг</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Служебные операции тимлида</p>
+          <h1 className="text-2xl font-semibold tracking-normal text-foreground">Импорт отчета Fin_ALL</h1>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            Загрузка Excel-отчета Fin_ALL для восстановления исторических смен, реквизитов и оборотов команды.
+            Сначала запустите проверку без записи, затем применяйте импорт после просмотра результата.
+          </p>
         </div>
       </div>
 
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
-            <Bug className="h-4 w-4" />
-            Импорт Fin_ALL
+            <FileSpreadsheet className="h-4 w-4 text-primary" />
+            Параметры импорта
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
-            <FormField label="Excel">
-              <Input
-                type="file"
-                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-              />
-            </FormField>
-            <label className="flex h-10 items-center gap-2 self-end rounded-md border border-border px-3 text-sm">
-              <input
-                type="checkbox"
-                checked={dryRun}
-                onChange={(event) => setDryRun(event.target.checked)}
-              />
-              Dry run
-            </label>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <FinAllFileDropzone selectedFile={file} disabled={isProcessing} onFileChange={setFile} />
+
+            <div className="space-y-4">
+              <FormField
+                label="Банк для созданных реквизитов"
+                help="Выберите банк, который будет записан у реквизитов из Fin_ALL. Значение применяется ко всем строкам файла, где импорт создает реквизиты."
+              >
+                <SearchableSelect
+                  value={bankCode}
+                  onValueChange={setBankCode}
+                  options={bankOptions}
+                  placeholder={banksQuery.isLoading ? "Загрузка банков..." : "Выберите банк"}
+                  searchPlaceholder="Поиск банка..."
+                  emptyText="Банк не найден"
+                  disabled={banksQuery.isLoading || isProcessing}
+                />
+              </FormField>
+
+              <label
+                className={cn(
+                  "flex gap-3 rounded-md border border-border bg-background p-3 text-sm shadow-sm transition hover:border-primary/50 hover:bg-primary/5",
+                  isProcessing ? "cursor-not-allowed opacity-60" : "cursor-pointer",
+                )}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-primary"
+                  checked={dryRun}
+                  disabled={isProcessing}
+                  onChange={(event) => setDryRun(event.target.checked)}
+                />
+                <span className="space-y-1">
+                  <span className="block font-medium">Только проверить файл, ничего не записывать</span>
+                  <span className="block text-xs leading-5 text-muted-foreground">
+                    Оставьте включенным для безопасного предпросмотра. Снимите галочку, чтобы применить импорт и записать данные в CRM.
+                  </span>
+                </span>
+              </label>
+            </div>
           </div>
 
           {error ? <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div> : null}
@@ -87,13 +130,13 @@ export function TeamleadDebugPage() {
           <div className="flex justify-end">
             <Button
               type="button"
-              disabled={!file || isProcessing}
+              disabled={!file || !bankCode || isProcessing}
               onClick={() => {
-                if (!file) return;
-                mutation.mutate({ file, dryRun });
+                if (!file || !bankCode) return;
+                mutation.mutate({ file, dryRun, bankCode });
               }}
             >
-              <Upload className="h-4 w-4" />
+              {isProcessing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {dryRun ? "Проверить" : "Импортировать"}
             </Button>
           </div>
@@ -102,6 +145,78 @@ export function TeamleadDebugPage() {
 
       {job ? <DebugImportJob job={job} /> : null}
       {result ? <DebugImportResult result={result} /> : null}
+    </div>
+  );
+}
+
+function FinAllFileDropzone({
+  selectedFile,
+  disabled,
+  onFileChange,
+}: {
+  selectedFile: File | null;
+  disabled?: boolean;
+  onFileChange: (file: File | null) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleFile = (file?: File) => {
+    if (!file || disabled) return;
+    onFileChange(file);
+  };
+
+  return (
+    <div className="space-y-2">
+      <div>
+        <div className="text-sm font-medium">Excel-файл Fin_ALL</div>
+        <div className="text-xs text-muted-foreground">
+          Загрузите книгу .xlsx с листом Fin_ALL. Поддерживается выбор файла кнопкой или перетаскивание в область ниже.
+        </div>
+      </div>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => inputRef.current?.click()}
+        onDragOver={(event) => {
+          event.preventDefault();
+          if (!disabled) setIsDragging(true);
+        }}
+        onDragLeave={() => setIsDragging(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setIsDragging(false);
+          handleFile(event.dataTransfer.files?.[0]);
+        }}
+        className={cn(
+          "flex min-h-[148px] w-full items-center justify-between gap-4 rounded-md border border-dashed border-border bg-white p-4 text-left transition hover:border-primary hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-60",
+          isDragging ? "border-primary bg-primary/10" : undefined,
+        )}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          className="sr-only"
+          disabled={disabled}
+          onChange={(event) => handleFile(event.target.files?.[0])}
+        />
+        <span className="min-w-0 space-y-1">
+          <span className="flex items-center gap-2 text-sm font-semibold">
+            <FileSpreadsheet className="h-4 w-4 shrink-0 text-primary" />
+            <span className="min-w-0 truncate">{selectedFile?.name ?? "Перетащите Excel сюда"}</span>
+          </span>
+          <span className="block text-xs leading-5 text-muted-foreground">
+            {selectedFile
+              ? "Файл выбран и будет отправлен после запуска импорта."
+              : "Нужен Excel .xlsx с листом Fin_ALL. Сначала можно выполнить проверку без записи в CRM."}
+          </span>
+        </span>
+        <span className="inline-flex shrink-0 items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground">
+          <Upload className="h-4 w-4" />
+          {selectedFile ? "Заменить" : "Выбрать"}
+        </span>
+      </button>
     </div>
   );
 }
@@ -149,7 +264,7 @@ function DebugImportResult({ result }: { result: DebugFinAllImportResult }) {
           <FileSpreadsheet className="h-4 w-4" />
           Результат
           <span className="rounded-md border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground">
-            {result.dryRun ? "dry run" : "applied"}
+            {result.dryRun ? "проверка без записи" : "импорт применен"}
           </span>
         </CardTitle>
       </CardHeader>

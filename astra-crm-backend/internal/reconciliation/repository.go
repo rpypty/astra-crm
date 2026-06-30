@@ -94,7 +94,29 @@ func (r *Repository) ListTeamleadReconciliationItems(ctx context.Context, teamID
 		OffsetCount:              paginationOffset32(page),
 		LimitCount:               paginationLimit32(page),
 	}
-	queries := db.New(r.db)
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return pagination.Result[TeamleadItem]{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	queries := db.New(tx)
+	runRow, err := queries.GetTeamleadReconciliation(ctx, db.GetTeamleadReconciliationParams{
+		TeamID: teamID,
+		ID:     runID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return pagination.Result[TeamleadItem]{}, ErrRunNotFound
+		}
+		return pagination.Result[TeamleadItem]{}, err
+	}
+
 	rows, err := queries.ListTeamleadReconciliationItems(ctx, params)
 	if err != nil {
 		return pagination.Result[TeamleadItem]{}, err
@@ -103,6 +125,11 @@ func (r *Repository) ListTeamleadReconciliationItems(ctx context.Context, teamID
 	for _, row := range rows {
 		items = append(items, fromDBTeamleadItem(row))
 	}
+	items, err = enrichTeamleadItemsWithCSVContext(ctx, tx, fromDBTeamleadRun(runRow), items)
+	if err != nil {
+		return pagination.Result[TeamleadItem]{}, err
+	}
+
 	total, err := queries.CountTeamleadReconciliationItems(ctx, db.CountTeamleadReconciliationItemsParams{
 		TeamID:                   params.TeamID,
 		TeamleadReconciliationID: params.TeamleadReconciliationID,
@@ -117,6 +144,10 @@ func (r *Repository) ListTeamleadReconciliationItems(ctx context.Context, teamID
 	if err != nil {
 		return pagination.Result[TeamleadItem]{}, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return pagination.Result[TeamleadItem]{}, err
+	}
+	committed = true
 	return pagination.NewResult(items, page, total), nil
 }
 
@@ -410,11 +441,19 @@ func (r *Repository) applyTeamleadDirection(ctx context.Context, run TeamleadRun
 	if err != nil {
 		return result, err
 	}
-	requisiteRows, err := queries.ListTeamleadReconciliationRequisites(ctx, run.TeamID)
+	var requisiteMatches []TeamleadRequisiteMatch
+	if direction == imports.DirectionInbound {
+		requisiteRows, err := queries.ListTeamleadReconciliationRequisites(ctx, run.TeamID)
+		if err != nil {
+			return result, err
+		}
+		requisiteMatches = fromDBTeamleadRequisiteMatches(requisiteRows)
+	}
+	bankRows, err := queries.ListActiveBanks(ctx)
 	if err != nil {
 		return result, err
 	}
-	lookups := newTeamleadAnalysisLookups(fromDBTeamleadTraderMatches(traderRows), fromDBTeamleadRequisiteMatches(requisiteRows))
+	lookups := newTeamleadAnalysisLookups(fromDBTeamleadTraderMatches(traderRows), requisiteMatches, fromDBTeamleadBankAliasMatches(bankRows))
 
 	rows, err := loadTeamleadImportRows(ctx, tx, batchID)
 	if err != nil {
@@ -442,9 +481,13 @@ func (r *Repository) applyTeamleadDirection(ctx context.Context, run TeamleadRun
 		if traderID == nil {
 			return result, fmt.Errorf("row %d: unmatched trader %q", parsedRow.RowNumber, parsedRow.WorkerName)
 		}
-		requisiteMatch := lookups.matchRequisite(parsedRow)
-		if requisiteMatch.issueType != "" || requisiteMatch.requisiteID == nil {
-			return result, fmt.Errorf("row %d: %s", parsedRow.RowNumber, requisiteMatch.message)
+		var requisiteID *int64
+		if direction == imports.DirectionInbound {
+			requisiteMatch := lookups.matchRequisite(parsedRow)
+			if requisiteMatch.issueType != "" || requisiteMatch.requisiteID == nil {
+				return result, fmt.Errorf("row %d: %s", parsedRow.RowNumber, requisiteMatch.message)
+			}
+			requisiteID = requisiteMatch.requisiteID
 		}
 
 		existing, err := selectTeamleadExternalOrderSnapshot(ctx, tx, run.TeamID, direction, parsedRow.ExternalInnerID)
@@ -452,7 +495,7 @@ func (r *Repository) applyTeamleadDirection(ctx context.Context, run TeamleadRun
 			return result, err
 		}
 		tlStatus := TLStatusUpdatedByTL
-		if existing != nil && !teamleadExternalOrderChanged(*existing, parsedRow, traderID, requisiteMatch.requisiteID) {
+		if existing != nil && !teamleadExternalOrderChanged(*existing, parsedRow, traderID, requisiteID) {
 			tlStatus = TLStatusConfirmedByTL
 		}
 		orderID, err := upsertTeamleadExternalOrder(ctx, tx, teamleadExternalOrderApplyRecord{
@@ -462,7 +505,7 @@ func (r *Repository) applyTeamleadDirection(ctx context.Context, run TeamleadRun
 			Direction:   direction,
 			Row:         parsedRow,
 			TraderID:    traderID,
-			RequisiteID: requisiteMatch.requisiteID,
+			RequisiteID: requisiteID,
 			TLStatus:    tlStatus,
 		})
 		if err != nil {
@@ -484,9 +527,13 @@ func (r *Repository) applyTeamleadDirection(ctx context.Context, run TeamleadRun
 		}
 	}
 
-	discrepancyOrderIDs, err := markMissingTeamleadOrdersDiscrepant(ctx, tx, run, direction, seenInnerIDs)
-	if err != nil {
-		return result, err
+	discrepancyOrderIDs := make([]int64, 0)
+	if direction == imports.DirectionInbound {
+		var err error
+		discrepancyOrderIDs, err = markMissingTeamleadOrdersDiscrepant(ctx, tx, run, direction, seenInnerIDs)
+		if err != nil {
+			return result, err
+		}
 	}
 	result.DiscrepancyOrders = int64(len(discrepancyOrderIDs))
 	if err := markAffectedShiftTLStatus(ctx, tx, run.TeamID, run.ID, confirmedOrderIDs, TLStatusConfirmedByTL); err != nil {
@@ -556,6 +603,17 @@ func (r *Repository) ListTeamleadReconciliationRequisites(ctx context.Context, t
 	return result, nil
 }
 
+func (r *Repository) ListTeamleadReconciliationBankAliases(ctx context.Context) ([]TeamleadBankAliasMatch, error) {
+	if r.db == nil {
+		return nil, ErrRepositoryNotConfigured
+	}
+	rows, err := db.New(r.db).ListActiveBanks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return fromDBTeamleadBankAliasMatches(rows), nil
+}
+
 func (r *Repository) ListTeamleadReconciliationExternalOrders(ctx context.Context, teamID int64, direction string, innerIDs []string) ([]TeamleadExternalOrderSnapshot, error) {
 	if r.db == nil {
 		return nil, ErrRepositoryNotConfigured
@@ -574,7 +632,7 @@ func (r *Repository) ListTeamleadReconciliationExternalOrders(ctx context.Contex
 	return fromDBExternalOrderSnapshots(rows), nil
 }
 
-func (r *Repository) ListTeamleadReconciliationExternalOrdersInPeriod(ctx context.Context, teamID int64, direction string, dateFrom time.Time, dateTo time.Time) ([]TeamleadExternalOrderSnapshot, error) {
+func (r *Repository) ListTeamleadReconciliationExternalOrdersInPeriod(ctx context.Context, teamID int64, direction string, dateFrom time.Time, dateTo time.Time, traderIDs []int64) ([]TeamleadExternalOrderSnapshot, error) {
 	if r.db == nil {
 		return nil, ErrRepositoryNotConfigured
 	}
@@ -584,6 +642,7 @@ func (r *Repository) ListTeamleadReconciliationExternalOrdersInPeriod(ctx contex
 		Direction:       direction,
 		DateFrom:        timestamptzValueFromTime(dateFrom),
 		DateToExclusive: timestamptzValueFromTime(dateToExclusive),
+		TraderIds:       traderIDs,
 	})
 	if err != nil {
 		return nil, err
@@ -591,14 +650,15 @@ func (r *Repository) ListTeamleadReconciliationExternalOrdersInPeriod(ctx contex
 	return fromDBExternalOrderPeriodSnapshots(rows), nil
 }
 
-func (r *Repository) CalculateTeamleadV2InboundTurnover(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time) (TeamleadTurnoverSnapshot, error) {
+func (r *Repository) CalculateTeamleadV2InboundTurnover(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time, traderIDs []int64) (TeamleadTurnoverSnapshot, error) {
 	if r.db == nil {
 		return TeamleadTurnoverSnapshot{}, ErrRepositoryNotConfigured
 	}
 	row, err := db.New(r.db).CalculateTeamleadV2InboundTurnover(ctx, db.CalculateTeamleadV2InboundTurnoverParams{
-		TeamID:   teamID,
-		DateFrom: dateValue(dateFrom),
-		DateTo:   dateValue(dateTo),
+		TeamID:    teamID,
+		DateFrom:  dateValue(dateFrom),
+		DateTo:    dateValue(dateTo),
+		TraderIds: traderIDs,
 	})
 	if err != nil {
 		return TeamleadTurnoverSnapshot{}, err
@@ -606,19 +666,20 @@ func (r *Repository) CalculateTeamleadV2InboundTurnover(ctx context.Context, tea
 	return TeamleadTurnoverSnapshot{AmountMinor: row.AmountMinor, Count: row.RequisitesCount}, nil
 }
 
-func (r *Repository) CalculateTeamleadV2OutboundTransfers(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time) (TeamleadTurnoverSnapshot, error) {
+func (r *Repository) CalculateTeamleadV2OutboundTransfers(ctx context.Context, teamID int64, dateFrom time.Time, dateTo time.Time, traderIDs []int64) (TeamleadTurnoverSnapshot, error) {
 	if r.db == nil {
 		return TeamleadTurnoverSnapshot{}, ErrRepositoryNotConfigured
 	}
 	row, err := db.New(r.db).CalculateTeamleadV2OutboundTransfers(ctx, db.CalculateTeamleadV2OutboundTransfersParams{
-		TeamID:   teamID,
-		DateFrom: dateValue(dateFrom),
-		DateTo:   dateValue(dateTo),
+		TeamID:    teamID,
+		DateFrom:  dateValue(dateFrom),
+		DateTo:    dateValue(dateTo),
+		TraderIds: traderIDs,
 	})
 	if err != nil {
 		return TeamleadTurnoverSnapshot{}, err
 	}
-	return TeamleadTurnoverSnapshot{AmountMinor: row.AmountMinor, Count: row.TransfersCount}, nil
+	return TeamleadTurnoverSnapshot{AmountMinor: row.AmountMinor, Count: row.RequisitesCount}, nil
 }
 
 func (r *Repository) RecalculateTraderInbound(ctx context.Context, record RecalculateTraderInboundRecord) (Run, error) {
@@ -2252,9 +2313,77 @@ func parsedOrderRowFromImportRow(row teamleadImportRow) (imports.ParsedOrderRow,
 	return parsed, nil
 }
 
+func enrichTeamleadItemsWithCSVContext(ctx context.Context, tx pgx.Tx, run TeamleadRun, items []TeamleadItem) ([]TeamleadItem, error) {
+	if len(items) == 0 {
+		return items, nil
+	}
+
+	rowsByDirectionAndInnerID := make(map[string]imports.ParsedOrderRow)
+	loadDirection := func(direction string, batchID *int64) error {
+		if batchID == nil {
+			return nil
+		}
+		rows, err := loadTeamleadImportRows(ctx, tx, *batchID)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			parsed, err := parsedOrderRowFromImportRow(row)
+			if err != nil || parsed.ExternalInnerID == "" {
+				continue
+			}
+			rowsByDirectionAndInnerID[teamleadImportRowContextKey(direction, parsed.ExternalInnerID)] = parsed
+		}
+		return nil
+	}
+
+	if err := loadDirection(imports.DirectionInbound, run.InboundImportBatchID); err != nil {
+		return nil, err
+	}
+	if err := loadDirection(imports.DirectionOutbound, run.OutboundImportBatchID); err != nil {
+		return nil, err
+	}
+
+	for index := range items {
+		item := &items[index]
+		if item.ExternalInnerID == nil {
+			continue
+		}
+		parsed, ok := rowsByDirectionAndInnerID[teamleadImportRowContextKey(item.Direction, *item.ExternalInnerID)]
+		if !ok {
+			continue
+		}
+		csvContext := teamleadOrderJSON(parsed, item.TraderID, item.RequisiteID)
+		item.AfterJSON = mergeTeamleadItemJSON(item.AfterJSON, csvContext)
+	}
+
+	return items, nil
+}
+
+func teamleadImportRowContextKey(direction string, innerID string) string {
+	return direction + "\x00" + innerID
+}
+
+func mergeTeamleadItemJSON(raw json.RawMessage, extra map[string]any) json.RawMessage {
+	merged := make(map[string]any, len(extra))
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &merged)
+	}
+	for key, value := range extra {
+		if current, exists := merged[key]; !exists || current == nil {
+			merged[key] = value
+		}
+	}
+	payload, err := json.Marshal(merged)
+	if err != nil {
+		return raw
+	}
+	return payload
+}
+
 func selectTeamleadExternalOrderSnapshot(ctx context.Context, tx pgx.Tx, teamID int64, direction string, innerID string) (*TeamleadExternalOrderSnapshot, error) {
 	row := tx.QueryRow(ctx, `
-		SELECT id, direction, external_inner_id, worker_name, trader_id, requisite_id, amount_minor, raw_status, normalized_status, created_at_external
+		SELECT id, direction, external_inner_id, worker_name, trader_id, requisite_raw, requisite_phone, method_type, method_name, requisite_id, amount_minor, raw_status, normalized_status, created_at_external
 		FROM external_orders
 		WHERE team_id = $1
 		  AND direction = $2
@@ -2264,6 +2393,10 @@ func selectTeamleadExternalOrderSnapshot(ctx context.Context, tx pgx.Tx, teamID 
 
 	var snapshot TeamleadExternalOrderSnapshot
 	var traderID pgtype.Int8
+	var requisiteRaw pgtype.Text
+	var requisitePhone pgtype.Text
+	var methodType pgtype.Text
+	var methodName pgtype.Text
 	var requisiteID pgtype.Int8
 	var createdAt pgtype.Timestamptz
 	if err := row.Scan(
@@ -2272,6 +2405,10 @@ func selectTeamleadExternalOrderSnapshot(ctx context.Context, tx pgx.Tx, teamID 
 		&snapshot.ExternalInnerID,
 		&snapshot.WorkerName,
 		&traderID,
+		&requisiteRaw,
+		&requisitePhone,
+		&methodType,
+		&methodName,
 		&requisiteID,
 		&snapshot.AmountMinor,
 		&snapshot.RawStatus,
@@ -2284,6 +2421,10 @@ func selectTeamleadExternalOrderSnapshot(ctx context.Context, tx pgx.Tx, teamID 
 		return nil, err
 	}
 	snapshot.TraderID = int8Ptr(traderID)
+	snapshot.RequisiteRaw = textPtr(requisiteRaw)
+	snapshot.RequisitePhone = textPtr(requisitePhone)
+	snapshot.MethodType = textPtr(methodType)
+	snapshot.MethodName = textPtr(methodName)
 	snapshot.RequisiteID = int8Ptr(requisiteID)
 	if createdAt.Valid {
 		snapshot.CreatedAtExternal = createdAt.Time
@@ -2298,7 +2439,10 @@ func teamleadExternalOrderChanged(existing TeamleadExternalOrderSnapshot, row im
 	if existing.TraderID == nil || traderID == nil || *existing.TraderID != *traderID {
 		return true
 	}
-	if existing.RequisiteID == nil || requisiteID == nil || *existing.RequisiteID != *requisiteID {
+	if (existing.RequisiteID == nil) != (requisiteID == nil) {
+		return true
+	}
+	if existing.RequisiteID != nil && requisiteID != nil && *existing.RequisiteID != *requisiteID {
 		return true
 	}
 	return !sameExternalDate(existing.CreatedAtExternal, row.CreatedAtExternal)
@@ -2510,6 +2654,18 @@ func fromDBTeamleadRequisiteMatches(rows []db.ListTeamleadReconciliationRequisit
 	return result
 }
 
+func fromDBTeamleadBankAliasMatches(rows []db.Bank) []TeamleadBankAliasMatch {
+	result := make([]TeamleadBankAliasMatch, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, TeamleadBankAliasMatch{
+			BankCode: row.Code,
+			BankName: row.Name,
+			CSVAlias: textPtr(row.CsvAlias),
+		})
+	}
+	return result
+}
+
 func fromDBRun(row db.ReconciliationRun) Run {
 	return Run{
 		ID:                  row.ID,
@@ -2629,6 +2785,10 @@ func fromDBExternalOrderSnapshots(rows []db.ListTeamleadReconciliationExternalOr
 			ExternalInnerID:   row.ExternalInnerID,
 			WorkerName:        row.WorkerName,
 			TraderID:          int8Ptr(row.TraderID),
+			RequisiteRaw:      textPtr(row.RequisiteRaw),
+			RequisitePhone:    textPtr(row.RequisitePhone),
+			MethodType:        textPtr(row.MethodType),
+			MethodName:        textPtr(row.MethodName),
 			RequisiteID:       int8Ptr(row.RequisiteID),
 			AmountMinor:       row.AmountMinor,
 			RawStatus:         row.RawStatus,
@@ -2648,6 +2808,10 @@ func fromDBExternalOrderPeriodSnapshots(rows []db.ListTeamleadReconciliationExte
 			ExternalInnerID:   row.ExternalInnerID,
 			WorkerName:        row.WorkerName,
 			TraderID:          int8Ptr(row.TraderID),
+			RequisiteRaw:      textPtr(row.RequisiteRaw),
+			RequisitePhone:    textPtr(row.RequisitePhone),
+			MethodType:        textPtr(row.MethodType),
+			MethodName:        textPtr(row.MethodName),
 			RequisiteID:       int8Ptr(row.RequisiteID),
 			AmountMinor:       row.AmountMinor,
 			RawStatus:         row.RawStatus,

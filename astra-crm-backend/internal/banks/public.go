@@ -1,14 +1,16 @@
 package banks
 
 type PublicBank struct {
-	Code string `json:"code"`
-	Name string `json:"name"`
+	Code     string  `json:"code"`
+	Name     string  `json:"name"`
+	CSVAlias *string `json:"csvAlias,omitempty"`
 }
 
 func PublicBankFromDomain(bank Bank) PublicBank {
 	return PublicBank{
-		Code: bank.Code,
-		Name: bank.Name,
+		Code:     bank.Code,
+		Name:     bank.Name,
+		CSVAlias: bank.CSVAlias,
 	}
 }
 

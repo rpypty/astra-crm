@@ -14,6 +14,7 @@ type ConfirmDialogProps = {
   trigger: ReactNode;
   title: string;
   description: string;
+  children?: ReactNode;
   confirmText?: string;
   onConfirm: () => void;
   destructive?: boolean;
@@ -23,6 +24,7 @@ export function ConfirmDialog({
   trigger,
   title,
   description,
+  children,
   confirmText = "Подтвердить",
   onConfirm,
   destructive,
@@ -35,6 +37,7 @@ export function ConfirmDialog({
           <DialogTitle className="text-base font-semibold">{title}</DialogTitle>
           <DialogDescription className="text-sm text-muted-foreground">{description}</DialogDescription>
         </DialogHeader>
+        {children ? <div>{children}</div> : null}
         <div className="flex justify-end gap-2">
           <DialogClose asChild>
             <Button type="button" variant="outline">

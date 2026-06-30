@@ -12,6 +12,7 @@ export const queryKeys = {
   teamlead: {
     traders: (params?: QueryParams) => withParams(["teamlead", "traders"] as const, params),
     requisites: (params?: QueryParams) => withParams(["teamlead", "requisites"] as const, params),
+    requisite: (requisiteId: number | undefined) => ["teamlead", "requisites", requisiteId] as const,
     requisitePlans: (params?: QueryParams) => withParams(["teamlead", "requisites", "plans"] as const, params),
     requisiteActivity: (params?: QueryParams) => withParams(["teamlead", "requisites", "activity"] as const, params),
     requisiteReport: (requisiteId: number | undefined) => ["teamlead", "requisites", requisiteId, "report"] as const,

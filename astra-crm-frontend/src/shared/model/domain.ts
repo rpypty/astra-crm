@@ -22,6 +22,7 @@ export type Trader = {
 export type Bank = {
   code: string;
   name: string;
+  csvAlias?: string;
 };
 
 export type Requisite = {

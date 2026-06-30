@@ -6,6 +6,7 @@ import { LoadingSkeleton } from "@/shared/ui/loading-skeleton";
 
 const LoginPage = lazy(() => import("@/pages/login").then((module) => ({ default: module.LoginPage })));
 const TeamleadAuditPage = lazy(() => import("@/pages/teamlead/audit/page").then((module) => ({ default: module.TeamleadAuditPage })));
+const TeamleadBanksPage = lazy(() => import("@/pages/teamlead/banks/page").then((module) => ({ default: module.TeamleadBanksPage })));
 const TeamleadDashboardPage = lazy(() =>
   import("@/pages/teamlead/dashboard/page").then((module) => ({ default: module.TeamleadDashboardPage })),
 );
@@ -83,6 +84,12 @@ const teamleadTradersRoute = createRoute({
   getParentRoute: () => teamleadRoute,
   path: "traders",
   component: TeamleadTradersPage,
+});
+
+const teamleadBanksRoute = createRoute({
+  getParentRoute: () => teamleadRoute,
+  path: "banks",
+  component: TeamleadBanksPage,
 });
 
 const teamleadInboundRoute = createRoute({
@@ -186,6 +193,7 @@ const routeTree = rootRoute.addChildren([
     teamleadDashboardRoute,
     teamleadRequisitesRoute,
     teamleadTradersRoute,
+    teamleadBanksRoute,
     teamleadTransactionsRoute,
     teamleadInboundRoute,
     teamleadOutboundRoute,

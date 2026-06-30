@@ -79,6 +79,7 @@ func NewRouter(log *slog.Logger, cfg RouterConfig) http.Handler {
 			r.Patch("/traders/{traderId}", tradersHandler.Patch)
 			r.Delete("/traders/{traderId}", tradersHandler.Delete)
 			r.Post("/traders/{traderId}/reset-password", tradersHandler.ResetPassword)
+			r.Patch("/banks/{bankCode}", banksHandler.UpdateCSVAlias)
 			r.Get("/requisites", requisitesHandler.List)
 			r.Post("/requisites", requisitesHandler.Create)
 			r.Get("/requisites/activity", requisitesHandler.Activity)

@@ -10,7 +10,7 @@ import (
 )
 
 const listActiveBanks = `-- name: ListActiveBanks :many
-SELECT id, code, name, status, sort_order, created_at
+SELECT id, code, name, status, sort_order, created_at, csv_alias, updated_at
 FROM banks
 WHERE status = 'active'
 ORDER BY sort_order, name
@@ -32,6 +32,8 @@ func (q *Queries) ListActiveBanks(ctx context.Context) ([]Bank, error) {
 			&i.Status,
 			&i.SortOrder,
 			&i.CreatedAt,
+			&i.CsvAlias,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -41,4 +43,35 @@ func (q *Queries) ListActiveBanks(ctx context.Context) ([]Bank, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateBankCSVAlias = `-- name: UpdateBankCSVAlias :one
+UPDATE banks
+SET
+    csv_alias = NULLIF(btrim($1::text), ''),
+    updated_at = now()
+WHERE code = $2
+  AND status = 'active'
+RETURNING id, code, name, status, sort_order, created_at, csv_alias, updated_at
+`
+
+type UpdateBankCSVAliasParams struct {
+	CsvAlias string
+	Code     string
+}
+
+func (q *Queries) UpdateBankCSVAlias(ctx context.Context, arg UpdateBankCSVAliasParams) (Bank, error) {
+	row := q.db.QueryRow(ctx, updateBankCSVAlias, arg.CsvAlias, arg.Code)
+	var i Bank
+	err := row.Scan(
+		&i.ID,
+		&i.Code,
+		&i.Name,
+		&i.Status,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.CsvAlias,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

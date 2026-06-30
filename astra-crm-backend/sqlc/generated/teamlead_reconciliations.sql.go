@@ -19,14 +19,19 @@ FROM shift_requisites sr
 JOIN trader_shifts ts ON ts.id = sr.shift_id
 WHERE sr.team_id = $1
   AND sr.status IN ('worked_pending_review', 'worked_verified', 'worked_discrepancy', 'correction', 'blocked')
-  AND ts.started_at::date <= $2::date
-  AND COALESCE(ts.closed_at, ts.ended_at, ts.updated_at)::date >= $3::date
+  AND (
+    COALESCE(cardinality($2::bigint[]), 0) = 0
+    OR ts.trader_id = ANY($2::bigint[])
+  )
+  AND ts.started_at::date <= $3::date
+  AND COALESCE(ts.closed_at, ts.ended_at, ts.updated_at)::date >= $4::date
 `
 
 type CalculateTeamleadV2InboundTurnoverParams struct {
-	TeamID   int64
-	DateTo   pgtype.Date
-	DateFrom pgtype.Date
+	TeamID    int64
+	TraderIds []int64
+	DateTo    pgtype.Date
+	DateFrom  pgtype.Date
 }
 
 type CalculateTeamleadV2InboundTurnoverRow struct {
@@ -35,7 +40,12 @@ type CalculateTeamleadV2InboundTurnoverRow struct {
 }
 
 func (q *Queries) CalculateTeamleadV2InboundTurnover(ctx context.Context, arg CalculateTeamleadV2InboundTurnoverParams) (CalculateTeamleadV2InboundTurnoverRow, error) {
-	row := q.db.QueryRow(ctx, calculateTeamleadV2InboundTurnover, arg.TeamID, arg.DateTo, arg.DateFrom)
+	row := q.db.QueryRow(ctx, calculateTeamleadV2InboundTurnover,
+		arg.TeamID,
+		arg.TraderIds,
+		arg.DateTo,
+		arg.DateFrom,
+	)
 	var i CalculateTeamleadV2InboundTurnoverRow
 	err := row.Scan(&i.AmountMinor, &i.RequisitesCount)
 	return i, err
@@ -43,30 +53,41 @@ func (q *Queries) CalculateTeamleadV2InboundTurnover(ctx context.Context, arg Ca
 
 const calculateTeamleadV2OutboundTransfers = `-- name: CalculateTeamleadV2OutboundTransfers :one
 SELECT
-    COALESCE(sum(mpt.amount_minor), 0)::bigint AS amount_minor,
-    count(*)::bigint AS transfers_count
-FROM manual_payout_transfers mpt
-JOIN trader_shifts ts ON ts.id = mpt.shift_id
-WHERE mpt.team_id = $1
-  AND ts.started_at::date <= $2::date
-  AND COALESCE(ts.closed_at, ts.ended_at, ts.updated_at)::date >= $3::date
+    COALESCE(sum(sr.outbound_turnover_minor), 0)::bigint AS amount_minor,
+    count(*)::bigint AS requisites_count
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+WHERE sr.team_id = $1
+  AND sr.status IN ('worked_pending_review', 'worked_verified', 'worked_discrepancy', 'correction', 'blocked')
+  AND (
+    COALESCE(cardinality($2::bigint[]), 0) = 0
+    OR ts.trader_id = ANY($2::bigint[])
+  )
+  AND ts.started_at::date <= $3::date
+  AND COALESCE(ts.closed_at, ts.ended_at, ts.updated_at)::date >= $4::date
 `
 
 type CalculateTeamleadV2OutboundTransfersParams struct {
-	TeamID   int64
-	DateTo   pgtype.Date
-	DateFrom pgtype.Date
+	TeamID    int64
+	TraderIds []int64
+	DateTo    pgtype.Date
+	DateFrom  pgtype.Date
 }
 
 type CalculateTeamleadV2OutboundTransfersRow struct {
-	AmountMinor    int64
-	TransfersCount int64
+	AmountMinor     int64
+	RequisitesCount int64
 }
 
 func (q *Queries) CalculateTeamleadV2OutboundTransfers(ctx context.Context, arg CalculateTeamleadV2OutboundTransfersParams) (CalculateTeamleadV2OutboundTransfersRow, error) {
-	row := q.db.QueryRow(ctx, calculateTeamleadV2OutboundTransfers, arg.TeamID, arg.DateTo, arg.DateFrom)
+	row := q.db.QueryRow(ctx, calculateTeamleadV2OutboundTransfers,
+		arg.TeamID,
+		arg.TraderIds,
+		arg.DateTo,
+		arg.DateFrom,
+	)
 	var i CalculateTeamleadV2OutboundTransfersRow
-	err := row.Scan(&i.AmountMinor, &i.TransfersCount)
+	err := row.Scan(&i.AmountMinor, &i.RequisitesCount)
 	return i, err
 }
 
@@ -364,20 +385,24 @@ func (q *Queries) GetTeamleadReconciliation(ctx context.Context, arg GetTeamlead
 
 const listTeamleadReconciliationExternalOrders = `-- name: ListTeamleadReconciliationExternalOrders :many
 SELECT
-    id,
-    direction,
-    external_inner_id,
-    worker_name,
-    trader_id,
-    requisite_id,
-    amount_minor,
-    raw_status,
-    normalized_status,
-    created_at_external
-FROM external_orders
-WHERE team_id = $1
-  AND direction = $2
-  AND external_inner_id = ANY($3::text[])
+    eo.id,
+    eo.direction,
+    eo.external_inner_id,
+    eo.worker_name,
+    eo.trader_id,
+    eo.requisite_raw,
+    eo.requisite_phone,
+    eo.method_type,
+    eo.method_name,
+    eo.requisite_id,
+    eo.amount_minor,
+    eo.raw_status,
+    eo.normalized_status,
+    eo.created_at_external
+FROM external_orders eo
+WHERE eo.team_id = $1
+  AND eo.direction = $2
+  AND eo.external_inner_id = ANY($3::text[])
 `
 
 type ListTeamleadReconciliationExternalOrdersParams struct {
@@ -392,6 +417,10 @@ type ListTeamleadReconciliationExternalOrdersRow struct {
 	ExternalInnerID   string
 	WorkerName        string
 	TraderID          pgtype.Int8
+	RequisiteRaw      pgtype.Text
+	RequisitePhone    pgtype.Text
+	MethodType        pgtype.Text
+	MethodName        pgtype.Text
 	RequisiteID       pgtype.Int8
 	AmountMinor       int64
 	RawStatus         string
@@ -414,6 +443,10 @@ func (q *Queries) ListTeamleadReconciliationExternalOrders(ctx context.Context, 
 			&i.ExternalInnerID,
 			&i.WorkerName,
 			&i.TraderID,
+			&i.RequisiteRaw,
+			&i.RequisitePhone,
+			&i.MethodType,
+			&i.MethodName,
 			&i.RequisiteID,
 			&i.AmountMinor,
 			&i.RawStatus,
@@ -432,21 +465,34 @@ func (q *Queries) ListTeamleadReconciliationExternalOrders(ctx context.Context, 
 
 const listTeamleadReconciliationExternalOrdersInPeriod = `-- name: ListTeamleadReconciliationExternalOrdersInPeriod :many
 SELECT
-    id,
-    direction,
-    external_inner_id,
-    worker_name,
-    trader_id,
-    requisite_id,
-    amount_minor,
-    raw_status,
-    normalized_status,
-    created_at_external
-FROM external_orders
-WHERE team_id = $1
-  AND direction = $2
-  AND created_at_external >= $3::timestamptz
-  AND created_at_external < $4::timestamptz
+    eo.id,
+    eo.direction,
+    eo.external_inner_id,
+    eo.worker_name,
+    eo.trader_id,
+    eo.requisite_raw,
+    eo.requisite_phone,
+    eo.method_type,
+    eo.method_name,
+    eo.requisite_id,
+    eo.amount_minor,
+    eo.raw_status,
+    eo.normalized_status,
+    eo.created_at_external
+FROM external_orders eo
+LEFT JOIN import_batches last_batch ON last_batch.id = eo.last_import_batch_id
+WHERE eo.team_id = $1
+  AND eo.direction = $2
+  AND eo.created_at_external >= $3::timestamptz
+  AND eo.created_at_external < $4::timestamptz
+  AND (
+    COALESCE(cardinality($5::bigint[]), 0) = 0
+    OR eo.trader_id = ANY($5::bigint[])
+  )
+  AND (
+    last_batch.scope_type IS DISTINCT FROM 'teamlead_period'
+    OR eo.last_teamlead_reconciliation_id IS NOT NULL
+  )
 `
 
 type ListTeamleadReconciliationExternalOrdersInPeriodParams struct {
@@ -454,6 +500,7 @@ type ListTeamleadReconciliationExternalOrdersInPeriodParams struct {
 	Direction       string
 	DateFrom        pgtype.Timestamptz
 	DateToExclusive pgtype.Timestamptz
+	TraderIds       []int64
 }
 
 type ListTeamleadReconciliationExternalOrdersInPeriodRow struct {
@@ -462,6 +509,10 @@ type ListTeamleadReconciliationExternalOrdersInPeriodRow struct {
 	ExternalInnerID   string
 	WorkerName        string
 	TraderID          pgtype.Int8
+	RequisiteRaw      pgtype.Text
+	RequisitePhone    pgtype.Text
+	MethodType        pgtype.Text
+	MethodName        pgtype.Text
 	RequisiteID       pgtype.Int8
 	AmountMinor       int64
 	RawStatus         string
@@ -475,6 +526,7 @@ func (q *Queries) ListTeamleadReconciliationExternalOrdersInPeriod(ctx context.C
 		arg.Direction,
 		arg.DateFrom,
 		arg.DateToExclusive,
+		arg.TraderIds,
 	)
 	if err != nil {
 		return nil, err
@@ -489,6 +541,10 @@ func (q *Queries) ListTeamleadReconciliationExternalOrdersInPeriod(ctx context.C
 			&i.ExternalInnerID,
 			&i.WorkerName,
 			&i.TraderID,
+			&i.RequisiteRaw,
+			&i.RequisitePhone,
+			&i.MethodType,
+			&i.MethodName,
 			&i.RequisiteID,
 			&i.AmountMinor,
 			&i.RawStatus,

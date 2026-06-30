@@ -54,6 +54,8 @@ type Bank struct {
 	Status    string
 	SortOrder int64
 	CreatedAt pgtype.Timestamptz
+	CsvAlias  pgtype.Text
+	UpdatedAt pgtype.Timestamptz
 }
 
 type DebugFinAllImportItem struct {

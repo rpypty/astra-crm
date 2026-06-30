@@ -83,7 +83,7 @@ func run() int {
 		auditService := audit.NewService(auditRepository)
 
 		authService = auth.NewService(userRepository, sessionRepository)
-		bankService = banks.NewService(bankRepository)
+		bankService = banks.NewService(bankRepository, auditService)
 		traderService = users.NewTraderService(userRepository, auditService, auth.HashPassword, auth.NewSessionToken)
 		requisiteService = requisites.NewService(requisiteRepository, userRepository, auditService)
 		reconciliationService = reconciliation.NewService(reconciliationRepository, auditService)

@@ -268,6 +268,11 @@ func createTeamleadReconciliationParamsFromRequest(w http.ResponseWriter, r *htt
 		RespondError(w, ValidationError(fields))
 		return reconciliation.CreateTeamleadReconciliationParams{}, false
 	}
+	traderIDs, ok := optionalInt64List(r.MultipartForm.Value["traderIds"], "traderIds", fields)
+	if !ok {
+		RespondError(w, ValidationError(fields))
+		return reconciliation.CreateTeamleadReconciliationParams{}, false
+	}
 
 	inbound, inboundOK, ok := optionalTeamleadCSVInputFromRequest(w, r, "inboundFile")
 	if !ok {
@@ -285,8 +290,9 @@ func createTeamleadReconciliationParamsFromRequest(w http.ResponseWriter, r *htt
 	}
 
 	params := reconciliation.CreateTeamleadReconciliationParams{
-		DateFrom: dateFrom,
-		DateTo:   dateTo,
+		DateFrom:  dateFrom,
+		DateTo:    dateTo,
+		TraderIDs: traderIDs,
 	}
 	if inboundOK {
 		params.Inbound = &inbound

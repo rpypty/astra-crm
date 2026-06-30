@@ -70,12 +70,20 @@ func (h *TeamleadDebugHandler) ImportFinAll(w http.ResponseWriter, r *http.Reque
 		}))
 		return
 	}
+	bankCode := strings.TrimSpace(r.FormValue("bankCode"))
+	if bankCode == "" {
+		RespondError(w, ValidationError(map[string]string{
+			"bankCode": "Выберите банк реквизитов",
+		}))
+		return
+	}
 
 	job, err := h.service.StartFinAllImport(r.Context(), debugimport.ImportFinAllParams{
 		ActorID:  actor.ID,
 		TeamID:   actor.TeamID,
 		FileName: header.Filename,
 		Data:     data,
+		BankCode: bankCode,
 		DryRun:   r.FormValue("dryRun") == "true",
 	})
 	if err != nil {

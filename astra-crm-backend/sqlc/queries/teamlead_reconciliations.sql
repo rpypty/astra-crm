@@ -271,38 +271,55 @@ WHERE team_id = sqlc.arg(team_id)
 
 -- name: ListTeamleadReconciliationExternalOrders :many
 SELECT
-    id,
-    direction,
-    external_inner_id,
-    worker_name,
-    trader_id,
-    requisite_id,
-    amount_minor,
-    raw_status,
-    normalized_status,
-    created_at_external
-FROM external_orders
-WHERE team_id = sqlc.arg(team_id)
-  AND direction = sqlc.arg(direction)
-  AND external_inner_id = ANY(sqlc.arg(inner_ids)::text[]);
+    eo.id,
+    eo.direction,
+    eo.external_inner_id,
+    eo.worker_name,
+    eo.trader_id,
+    eo.requisite_raw,
+    eo.requisite_phone,
+    eo.method_type,
+    eo.method_name,
+    eo.requisite_id,
+    eo.amount_minor,
+    eo.raw_status,
+    eo.normalized_status,
+    eo.created_at_external
+FROM external_orders eo
+WHERE eo.team_id = sqlc.arg(team_id)
+  AND eo.direction = sqlc.arg(direction)
+  AND eo.external_inner_id = ANY(sqlc.arg(inner_ids)::text[]);
 
 -- name: ListTeamleadReconciliationExternalOrdersInPeriod :many
 SELECT
-    id,
-    direction,
-    external_inner_id,
-    worker_name,
-    trader_id,
-    requisite_id,
-    amount_minor,
-    raw_status,
-    normalized_status,
-    created_at_external
-FROM external_orders
-WHERE team_id = sqlc.arg(team_id)
-  AND direction = sqlc.arg(direction)
-  AND created_at_external >= sqlc.arg(date_from)::timestamptz
-  AND created_at_external < sqlc.arg(date_to_exclusive)::timestamptz;
+    eo.id,
+    eo.direction,
+    eo.external_inner_id,
+    eo.worker_name,
+    eo.trader_id,
+    eo.requisite_raw,
+    eo.requisite_phone,
+    eo.method_type,
+    eo.method_name,
+    eo.requisite_id,
+    eo.amount_minor,
+    eo.raw_status,
+    eo.normalized_status,
+    eo.created_at_external
+FROM external_orders eo
+LEFT JOIN import_batches last_batch ON last_batch.id = eo.last_import_batch_id
+WHERE eo.team_id = sqlc.arg(team_id)
+  AND eo.direction = sqlc.arg(direction)
+  AND eo.created_at_external >= sqlc.arg(date_from)::timestamptz
+  AND eo.created_at_external < sqlc.arg(date_to_exclusive)::timestamptz
+  AND (
+    COALESCE(cardinality(sqlc.arg(trader_ids)::bigint[]), 0) = 0
+    OR eo.trader_id = ANY(sqlc.arg(trader_ids)::bigint[])
+  )
+  AND (
+    last_batch.scope_type IS DISTINCT FROM 'teamlead_period'
+    OR eo.last_teamlead_reconciliation_id IS NOT NULL
+  );
 
 -- name: CalculateTeamleadV2InboundTurnover :one
 SELECT
@@ -312,15 +329,24 @@ FROM shift_requisites sr
 JOIN trader_shifts ts ON ts.id = sr.shift_id
 WHERE sr.team_id = sqlc.arg(team_id)
   AND sr.status IN ('worked_pending_review', 'worked_verified', 'worked_discrepancy', 'correction', 'blocked')
+  AND (
+    COALESCE(cardinality(sqlc.arg(trader_ids)::bigint[]), 0) = 0
+    OR ts.trader_id = ANY(sqlc.arg(trader_ids)::bigint[])
+  )
   AND ts.started_at::date <= sqlc.arg(date_to)::date
   AND COALESCE(ts.closed_at, ts.ended_at, ts.updated_at)::date >= sqlc.arg(date_from)::date;
 
 -- name: CalculateTeamleadV2OutboundTransfers :one
 SELECT
-    COALESCE(sum(mpt.amount_minor), 0)::bigint AS amount_minor,
-    count(*)::bigint AS transfers_count
-FROM manual_payout_transfers mpt
-JOIN trader_shifts ts ON ts.id = mpt.shift_id
-WHERE mpt.team_id = sqlc.arg(team_id)
+    COALESCE(sum(sr.outbound_turnover_minor), 0)::bigint AS amount_minor,
+    count(*)::bigint AS requisites_count
+FROM shift_requisites sr
+JOIN trader_shifts ts ON ts.id = sr.shift_id
+WHERE sr.team_id = sqlc.arg(team_id)
+  AND sr.status IN ('worked_pending_review', 'worked_verified', 'worked_discrepancy', 'correction', 'blocked')
+  AND (
+    COALESCE(cardinality(sqlc.arg(trader_ids)::bigint[]), 0) = 0
+    OR ts.trader_id = ANY(sqlc.arg(trader_ids)::bigint[])
+  )
   AND ts.started_at::date <= sqlc.arg(date_to)::date
   AND COALESCE(ts.closed_at, ts.ended_at, ts.updated_at)::date >= sqlc.arg(date_from)::date;

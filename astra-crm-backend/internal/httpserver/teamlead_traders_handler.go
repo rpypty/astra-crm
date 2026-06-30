@@ -318,7 +318,7 @@ func mapTraderError(err error) error {
 	case errors.Is(err, users.ErrDuplicateLogin):
 		return DomainError("TRADER_LOGIN_EXISTS", "Трейдер с таким логином уже существует").WithCause(err)
 	case errors.Is(err, users.ErrDuplicateWorkerName):
-		return DomainError("TRADER_WORKER_NAME_EXISTS", "Трейдер с таким логином уже существует").WithCause(err)
+		return DomainError("TRADER_WORKER_NAME_EXISTS", "Такой alias сотрудника в CSV уже используется").WithCause(err)
 	case errors.Is(err, users.ErrInvalidTraderInput):
 		return ValidationError(map[string]string{
 			"body": "Некоторые поля заполнены неверно",

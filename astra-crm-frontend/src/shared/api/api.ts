@@ -41,6 +41,7 @@ import type { PeriodFilter } from "@/shared/lib/period-filter";
 
 type AuthResponse = ApiSchema<"AuthResponse">;
 type BanksListResponse = ApiSchema<"BanksListResponse">;
+type BankResponse = ApiSchema<"BankResponse">;
 type TradersListResponse = ApiSchema<"TradersListResponse">;
 type TraderResponse = ApiSchema<"TraderResponse">;
 type ResetPasswordResponse = ApiSchema<"ResetTraderPasswordResponse">;
@@ -209,6 +210,12 @@ export const api = {
       const response = await apiClient.get<BanksListResponse>("/banks");
       return response.items;
     },
+    async updateAlias(input: { code: string; csvAlias: string }): Promise<Bank> {
+      const response = await apiClient.patch<BankResponse>(`/teamlead/banks/${input.code}`, {
+        csvAlias: input.csvAlias,
+      });
+      return response.bank;
+    },
   },
 
   traders: {
@@ -220,12 +227,14 @@ export const api = {
       id?: number;
       login: string;
       password?: string;
+      externalWorkerName: string;
       salaryRateBps: number;
       status: UserStatus;
     }) {
       if (input.id) {
         await apiClient.patch<TraderResponse>(`/teamlead/traders/${input.id}`, {
           salaryRateBps: input.salaryRateBps,
+          externalWorkerName: input.externalWorkerName,
           status: input.status,
         });
         return;
@@ -234,7 +243,7 @@ export const api = {
       await apiClient.post<TraderResponse>("/teamlead/traders", {
         login: input.login,
         password: input.password,
-        externalWorkerName: input.login,
+        externalWorkerName: input.externalWorkerName,
         salaryRateBps: input.salaryRateBps,
       });
     },
@@ -252,6 +261,10 @@ export const api = {
     async list(filters?: { search?: string; bankCode?: string; status?: string; traderId?: string; availableForPlanning?: boolean } & PaginationParams): Promise<Page<Requisite>> {
       const response = await apiClient.get<RequisitesListResponse>(`/teamlead/requisites${queryString(filters ?? {})}`);
       return toPage(response, toRequisite);
+    },
+    async get(requisiteId: number): Promise<Requisite> {
+      const response = await apiClient.get<RequisiteResponse>(`/teamlead/requisites/${requisiteId}`);
+      return toRequisite(response.requisite);
     },
     async save(input: {
       id?: number;
@@ -647,10 +660,13 @@ export const api = {
       const response = await apiClient.get<TeamleadReconciliationItemsResponse>(`/teamlead/reconciliations/${runId}/items${queryString(filters ?? {})}`);
       return toPage(response, (item) => item);
     },
-    async create(input: { dateFrom: string; dateTo: string; inboundFile?: File | null; outboundFile?: File | null }) {
+    async create(input: { dateFrom: string; dateTo: string; traderIds?: number[]; inboundFile?: File | null; outboundFile?: File | null }) {
       const formData = new FormData();
       formData.set("dateFrom", input.dateFrom);
       formData.set("dateTo", input.dateTo);
+      for (const traderId of input.traderIds ?? []) {
+        formData.append("traderIds", String(traderId));
+      }
       if (input.inboundFile) {
         formData.set("inboundFile", input.inboundFile);
       }
@@ -675,10 +691,11 @@ export const api = {
   },
 
   debug: {
-    async importFinAll(input: { file: File; dryRun: boolean }) {
+    async importFinAll(input: { file: File; dryRun: boolean; bankCode: string }) {
       const formData = new FormData();
       formData.set("file", input.file);
       formData.set("dryRun", String(input.dryRun));
+      formData.set("bankCode", input.bankCode);
       const response = await apiClient.upload<DebugFinAllImportJobResponse>("/teamlead/debug/fin-all/import", formData);
       return response.job;
     },

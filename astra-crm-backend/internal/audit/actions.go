@@ -4,6 +4,7 @@ const (
 	ActionUserCreated                       = "user.created"
 	ActionUserUpdated                       = "user.updated"
 	ActionUserPasswordReset                 = "user.password_reset"
+	ActionBankUpdated                       = "bank.updated"
 	ActionRequisiteCreated                  = "requisite.created"
 	ActionRequisiteUpdated                  = "requisite.updated"
 	ActionRequisiteArchived                 = "requisite.archived"

@@ -141,12 +141,13 @@ type TeamleadCSVInput struct {
 }
 
 type CreateTeamleadReconciliationParams struct {
-	ActorID  int64
-	TeamID   int64
-	DateFrom time.Time
-	DateTo   time.Time
-	Inbound  *TeamleadCSVInput
-	Outbound *TeamleadCSVInput
+	ActorID   int64
+	TeamID    int64
+	DateFrom  time.Time
+	DateTo    time.Time
+	TraderIDs []int64
+	Inbound   *TeamleadCSVInput
+	Outbound  *TeamleadCSVInput
 }
 
 type ConfirmTeamleadReconciliationParams struct {
@@ -189,6 +190,7 @@ type TeamleadDirectionSummary struct {
 	CreateCount        int64  `json:"createCount"`
 	UpdateCount        int64  `json:"updateCount"`
 	UnchangedCount     int64  `json:"unchangedCount"`
+	ApplyRowsCount     int64  `json:"applyRowsCount"`
 	BlockedCount       int64  `json:"blockedCount"`
 }
 
@@ -290,12 +292,22 @@ type TeamleadRequisiteMatch struct {
 	NormalizedCardNumber string
 }
 
+type TeamleadBankAliasMatch struct {
+	BankCode string
+	BankName string
+	CSVAlias *string
+}
+
 type TeamleadExternalOrderSnapshot struct {
 	ID                int64
 	Direction         string
 	ExternalInnerID   string
 	WorkerName        string
 	TraderID          *int64
+	RequisiteRaw      *string
+	RequisitePhone    *string
+	MethodType        *string
+	MethodName        *string
 	RequisiteID       *int64
 	AmountMinor       int64
 	RawStatus         string
